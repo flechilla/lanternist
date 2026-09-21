@@ -1,0 +1,52 @@
+# Copy to ./lanternist.toml or ~/.config/lanternist/lanternist.toml. Every key is optional;
+# the values below are the defaults, which match the machine this was built on.
+
+[paths]
+library = "~/Lanternist"                                      # database, assets, step cache, films
+voices = ["~/Lanternist/voices", "~/ai/bedtime-stories/voices"] # <name>.wav + optional <name>.txt
+
+[ollama]
+url = "http://127.0.0.1:11434"
+model = "qwen3.8:latest"
+num_ctx = 16384
+vram_gb = 22
+
+[comfyui]
+url = "http://127.0.0.1:8199"
+root = "~/comfyui"
+
+[engines.qwen3tts]
+python = "~/ai/bedtime-stories/engines/qwen3tts/.venv/bin/python"
+weights = "~/ai/bedtime-stories/engines/qwen3tts/weights"
+vram_gb = 8
+
+[engines.klein]
+python = "~/ai/qwen-image-2.1/.venv/bin/python"   # any venv whose diffusers has Flux2KleinPipeline
+weights = "~/ai/flux2-klein-9b/weights"
+vram_gb = 24
+
+[engines.ltx]                                     # file names as ComfyUI lists them
+unet = "ltx-2.5-22b-distilled-transformer-nvfp4.safetensors"
+text_encoder = "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors"
+vae = "ltx-2.5-video-vae-bf16.safetensors"
+audio_vae = "ltx-2.5-audio-vae-bf16.safetensors"
+upscaler = "ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors"
+width = 1280
+height = 704
+fps = 24
+max_seconds = 20.0
+strength = 0.7
+vram_gb = 26
+
+[render]
+width = 1920
+height = 1080
+fps = 24
+xfade = 0.8       # crossfade seconds, centred on each scene boundary
+gap = 0.45        # pause between scenes' narration
+chunk_gap = 0.25  # pause between synthesis chunks inside a scene
+lead_in = 0.5
+tail = 1.5
+ambience = 0.3    # the video model's own sound, under the voice
+encoder = "h264_nvenc"   # libx264 without an NVIDIA GPU
+bitrate = "12M"
