@@ -119,7 +119,7 @@ fieldset.field { border: 0; padding: 0; margin: 0; min-width: 0; }
 fieldset.field > legend { padding: 0; margin-bottom: 6px; }
 .stack > button, .stack > .btn { justify-self: start; }
 .stack > button.primary.wide { justify-self: stretch; justify-content: center; }
-input[type="text"], input[type="number"], input[type="file"], select, textarea {
+input[type="text"], input[type="password"], input[type="number"], input[type="file"], select, textarea {
   font: 400 1rem/1.45 var(--ui); color: var(--ink);
   background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 9px 11px; width: 100%;
 }
@@ -351,3 +351,14 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--ink-2); }
 .voice-row span { color: var(--ink-3); font-size: 0.86rem; overflow-wrap: anywhere; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .voice-row audio { width: 100%; max-width: 360px; height: 32px; margin: 4px 0; }
+
+/* ------------------------------------------------------------------ settings */
+.providers { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: 18px; align-items: start; }
+.provider-status { display: flex; gap: 10px; align-items: baseline; font-size: 0.95rem; }
+.provider-status .mark { font-weight: 800; }
+.provider-status.ok .mark { color: var(--viridian); }
+.provider-status.fail .mark { color: var(--madder); }
+.provider-status.none .mark { color: var(--ink-3); }
+.provider-status .detail { color: var(--ink-2); overflow-wrap: anywhere; }
+.key-form { display: flex; gap: 8px; flex-wrap: wrap; }
+.key-form input { flex: 1 1 220px; }

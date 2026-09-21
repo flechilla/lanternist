@@ -11,6 +11,7 @@ import httpx
 
 from .config import Settings
 from .gpu import vram
+from .keys import LABELS, get_key
 from .pipeline import find_voice
 
 LTX_NODES = ["LTXVImgToVideoInplace", "LTXVConcatAVLatent", "LTXVDualCFGGuider", "LTXVLatentUpsampler",
@@ -44,6 +45,42 @@ async def _py(python, code: str, timeout: float = 120) -> tuple[bool, str]:
     if proc.returncode:
         return False, err.decode(errors="replace").strip().splitlines()[-1][:300]
     return True, out.decode().strip()
+
+
+def needs(cfg: Settings) -> dict[str, bool]:
+    """Which engines and providers the default models use; the checks for the rest are advisory."""
+    d = cfg.defaults
+    media = (d.tts, d.image, d.video, d.ambience)
+    local = {"qwen3tts": d.tts.startswith("local/"), "klein": d.image.startswith("local/"),
+             "comfyui": d.video.startswith("local/"), "ollama": not d.writer or d.writer.startswith("ollama/")}
+    return local | {"gpu": any(local.values()), "ram": local["klein"],
+                    "openrouter": d.writer.startswith("openrouter/"),
+                    "fal": any(m.startswith("fal/") for m in media)}
+
+
+async def provider_rows(cfg: Settings) -> list[dict]:
+    """Each remote provider: is there a key, where it's from, and does the provider accept it."""
+    from .providers.fal import Fal
+    from .providers.openrouter import OpenRouter
+
+    need = needs(cfg)
+
+    async def one(name: str) -> dict:
+        key = get_key(name, fake=cfg.fake_engines)
+        row = {"name": name, "label": LABELS[name], "configured": bool(key.value), "source": key.source,
+               "last4": key.last4, "ok": None, "detail": "", "needed": need[name], "usage": None}
+        if not key.value:
+            row["detail"] = "no key"
+            return row
+        if name == "openrouter":
+            ok, detail, info = await OpenRouter(cfg, key.value).check()
+            row["usage"] = {k: info.get(k) for k in ("usage", "limit", "limit_remaining")} if info else None
+        else:
+            ok, detail = await Fal(cfg, None, key.value).check()
+        row["ok"], row["detail"] = ok, detail
+        return row
+
+    return list(await asyncio.gather(one("openrouter"), one("fal")))
 
 
 async def run_checks(cfg: Settings) -> list[Check]:
@@ -137,4 +174,21 @@ async def run_checks(cfg: Settings) -> list[Check]:
     cfg.library.mkdir(parents=True, exist_ok=True)
     free = shutil.disk_usage(cfg.library).free / 1e9
     add("library", "ok" if free > 20 else "warn", f"{cfg.library}, {free:.0f} GB free")
+
+    # Remote providers
+    for row in await provider_rows(cfg):
+        where = f" (key from {row['source']}, …{row['last4']})" if row["configured"] else ""
+        if not row["configured"]:
+            status = "fail" if row["needed"] else "ok"
+            detail = ("no key, and a default model needs one: add it in Settings" if row["needed"]
+                      else "no key (optional): add one in Settings to use its models")
+        else:
+            status, detail = ("ok" if row["ok"] else "fail"), row["detail"]
+        add(row["name"], status, detail + where)
+
+    # A local engine no default model uses can't stop a render: its problems are warnings.
+    need = needs(cfg)
+    for c in checks:
+        if c.status == "fail" and need.get(c.name) is False and c.name not in ("openrouter", "fal"):
+            c.status, c.detail = "warn", f"{c.detail} (not used by the default models)"
     return checks

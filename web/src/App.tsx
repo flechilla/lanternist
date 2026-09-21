@@ -4,6 +4,7 @@ import { api } from "./api";
 import Doctor from "./pages/Doctor";
 import Library from "./pages/Library";
 import NewStory from "./pages/NewStory";
+import Settings from "./pages/Settings";
 import Story from "./pages/Story";
 import Voices from "./pages/Voices";
 
@@ -25,6 +26,7 @@ export default function App() {
           <NavLink to="/new">New story</NavLink>
           <NavLink to="/voices">Voices</NavLink>
           <NavLink to="/check">System check</NavLink>
+          <NavLink to="/settings">Settings</NavLink>
         </nav>
       </header>
       {fake && (
@@ -41,6 +43,7 @@ export default function App() {
           <Route path="/stories/:id/:step" element={<Story />} />
           <Route path="/voices" element={<Voices />} />
           <Route path="/check" element={<Doctor />} />
+          <Route path="/settings" element={<Settings />} />
           <Route path="*" element={<p>There is nothing at this address. <Link to="/">Go to your stories</Link>.</p>} />
         </Routes>
       </main>

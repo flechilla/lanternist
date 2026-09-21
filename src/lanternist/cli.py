@@ -1,4 +1,4 @@
-"""lanternist: doctor · import · write · board · render · serve"""
+"""lanternist: doctor · import · write · board · render · serve · keys · models"""
 
 import asyncio
 import json
@@ -14,6 +14,8 @@ from .config import settings
 from .storyboard import Storyboard, slugify
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
+keys_app = typer.Typer(no_args_is_help=True, help="API keys for remote models (OpenRouter, fal.ai).")
+app.add_typer(keys_app, name="keys")
 
 MARK = {"ok": "✓", "warn": "!", "fail": "✗"}
 
@@ -36,12 +38,27 @@ def _printer():
     return emit
 
 
+def _db():
+    from .db import Database
+
+    db = Database(settings().library / "lanternist.db")
+    db.migrate()
+    return db
+
+
+def _effective():
+    from .prefs import effective
+
+    db = _db()
+    return effective(settings(), db), db
+
+
 @app.command()
 def doctor():
     """Check that every engine, model and tool a film needs is ready."""
     from .doctor import run_checks
 
-    checks = asyncio.run(run_checks(settings()))
+    checks = asyncio.run(run_checks(_effective()[0]))
     for c in checks:
         print(f" {MARK[c.status]} {c.name:<9} {c.detail}")
     if any(c.status == "fail" for c in checks):
@@ -148,3 +165,118 @@ def serve(host: str = "127.0.0.1", port: int = 8420, reload: bool = False):
 def schema():
     """Print the storyboard JSON schema."""
     json.dump(Storyboard.model_json_schema(), sys.stdout, indent=2)
+
+
+# ---------------------------------------------------------------------------------- keys
+@keys_app.command("set")
+def keys_set(provider: Annotated[str, typer.Argument(help="openrouter | fal")],
+             key: Annotated[str, typer.Option(prompt=True, hide_input=True, help="the API key")]):
+    """Store a key in the OS keychain (or a 0600 file when there is no keychain)."""
+    from .keys import PROVIDERS, set_key
+
+    if provider not in PROVIDERS:
+        raise typer.BadParameter(f"one of: {', '.join(PROVIDERS)}")
+    where = set_key(provider, key)
+    print(f"{provider} key saved in the {where}")
+    keys_status()
+
+
+@keys_app.command("clear")
+def keys_clear(provider: Annotated[str, typer.Argument(help="openrouter | fal")]):
+    """Remove a stored key."""
+    from .keys import PROVIDERS, clear_key, get_key
+
+    if provider not in PROVIDERS:
+        raise typer.BadParameter(f"one of: {', '.join(PROVIDERS)}")
+    clear_key(provider)
+    left = get_key(provider)
+    print(f"{provider} key removed" + (f"; {PROVIDERS[provider]} in the environment still sets one"
+                                       if left.source == "env" else ""))
+
+
+@keys_app.command("status")
+def keys_status():
+    """Show which keys are set, where they come from, and whether each provider accepts them."""
+    from .doctor import provider_rows
+
+    for r in asyncio.run(provider_rows(_effective()[0])):
+        if not r["configured"]:
+            print(f" · {r['label']:<11} no key")
+            continue
+        print(f" {MARK['ok' if r['ok'] else 'fail']} {r['label']:<11} {r['detail']} "
+              f"(from {r['source']}, …{r['last4']})")
+
+
+# ---------------------------------------------------------------------------------- models
+@app.command()
+def models(
+    capability: Annotated[str | None, typer.Option(help="tts.speak | image.keyframe | video.image_to_video | "
+                                                        "audio.ambience | writer.chat")] = None,
+    sync: Annotated[bool, typer.Option(help="refresh fal prices and status first (needs the fal key)")] = False,
+):
+    """List the models each stage can use, with today's prices."""
+    from . import registry
+
+    cfg, db = _effective()
+    if sync:
+        lines = asyncio.run(registry.sync_prices(cfg, db))
+        changed = [x for x in lines if x["changed"]]
+        print(f"synced {len(lines)} fal endpoints, {len(changed)} changed")
+        for x in lines:
+            if x["price"] is None:
+                print(f"  ! {x['model']}: fal returned no price for {x['endpoint']}")
+            elif not x["matches"]:
+                print(f"  ! {x['model']}: fal prices it per '{x['api_unit']}', the registry per another unit; "
+                      "kept the list price")
+            if x["status"] != "active":
+                print(f"  ! {x['model']}: {x['endpoint']} is {x['status']}")
+        print()
+    if capability == "writer.chat":
+        _writer_models(cfg)
+        return
+    defaults = {cfg.defaults.tts, cfg.defaults.image, cfg.defaults.video, cfg.defaults.ambience}
+    for cap in registry.CAPABILITIES[1:]:
+        if capability and cap != capability:
+            continue
+        print(cap)
+        for e in registry.by_capability(cap, cfg.library, db):
+            p = e.price
+            price = (f"${p.usd}/{p.unit}" if p.usd is not None else f"{p.gpu_seconds} GPU-s/{p.unit}")
+            when = f" · {p.source} {p.synced}" if p.synced else ""
+            flags = " ".join(f for f in ("default" if e.id in defaults else "",
+                                         "" if e.status == "active" else e.status,
+                                         "personal use" if e.commercial_use is False else "") if f)
+            print(f"  {'*' if e.id in defaults else ' '} {e.id:<30} {price:<28}{when}{f'  [{flags}]' if flags else ''}")
+        print()
+    if not capability:
+        _writer_models(cfg)
+
+
+def _writer_models(cfg) -> None:
+    import httpx
+
+    from .providers.openrouter import OpenRouter
+
+    print("writer.chat")
+    current = cfg.defaults.writer or f"ollama/{cfg.ollama.model}"
+    try:
+        tags = httpx.get(f"{cfg.ollama.url}/api/tags", timeout=5).json().get("models", [])
+        for m in tags:
+            mid = f"ollama/{m['name']}"
+            print(f"  {'*' if mid == current else ' '} {mid:<30} free, local")
+    except httpx.HTTPError:
+        print(f"    Ollama isn't reachable at {cfg.ollama.url}")
+    try:
+        listed = asyncio.run(OpenRouter(cfg).models())
+    except Exception as e:  # noqa: BLE001 - the list is informational
+        print(f"    OpenRouter's model list isn't available: {e}")
+        return
+    by_id = {m["id"]: m for m in listed}
+    shown = [by_id[i] for i in cfg.openrouter.recommended if i in by_id]
+    for m in shown:
+        pr = m.get("pricing") or {}
+        mid = f"openrouter/{m['id']}"
+        per_m = [float(pr.get(k) or 0) * 1e6 for k in ("prompt", "completion")]
+        print(f"  {'*' if mid == current else ' '} {mid:<30} ${per_m[0]:.2f} in / ${per_m[1]:.2f} out per 1M tokens")
+    print(f"    {len(listed)} OpenRouter models support structured output"
+          + ("; pin favourites with openrouter.recommended" if not shown else ""))

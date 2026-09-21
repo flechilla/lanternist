@@ -1,0 +1,70 @@
+# Narration. Clone engines take a reference clip from voices/; preset engines take a voice id.
+
+[[model]]
+id = "local/qwen3-tts-1.7b"
+label = "Qwen3-TTS 1.7B"
+capability = "tts.speak"
+provider = "local"
+engine_id = "qwen3-tts-1.7b@1"
+clone = true
+languages = ["en", "zh", "es", "fr", "de", "it", "ja", "ko", "pt", "ru"]
+commercial_use = true
+licence = "Apache 2.0"
+price = { unit = "audio_second", gpu_seconds = 0.46 }
+
+[[model]]
+id = "fal/qwen-3-tts-1.7b"
+label = "Qwen3-TTS 1.7B · fal"
+capability = "tts.speak"
+provider = "fal"
+family = "qwen_tts"
+endpoint = "fal-ai/qwen-3-tts/text-to-speech/1.7b"
+endpoints = { clone = "fal-ai/qwen-3-tts/clone-voice/1.7b" }   # clip + transcript -> speaker embedding
+clone = true
+voices = ["Vivian", "Serena", "Uncle_Fu", "Dylan", "Eric", "Ryan", "Aiden", "Ono_Anna", "Sohee"]
+languages = ["en", "zh", "es", "fr", "de", "it", "ja", "ko", "pt", "ru"]
+commercial_use = true
+licence = "Apache 2.0 model; fal commercial terms"
+defaults = { max_new_tokens = 4096 }   # the endpoint's default of 200 cuts long chunks short
+notes = "Same model as local; clones the same reference clip."
+price = { unit = "1k_chars", usd = "0.09", tiers = { clone_minute = "0.0008" }, synced = "2026-09-21" }
+
+[[model]]
+id = "fal/elevenlabs-v3"
+label = "ElevenLabs v3 · fal"
+capability = "tts.speak"
+provider = "fal"
+family = "elevenlabs"
+endpoint = "fal-ai/elevenlabs/tts/eleven-v3"
+voices = ["Rachel"]                    # the preset list is filled in Phase F
+commercial_use = true
+licence = "fal commercial terms; confirm on the endpoint page"
+notes = "Preset voices, no cloning from a clip. Takes an ISO 639-1 language code."
+price = { unit = "1k_chars", usd = "0.10", synced = "2026-09-21" }
+
+[[model]]
+id = "fal/minimax-speech-2.8-hd"
+label = "MiniMax Speech 2.8 HD · fal"
+capability = "tts.speak"
+provider = "fal"
+family = "minimax"
+endpoint = "fal-ai/minimax/speech-2.8-hd"
+voices = ["Wise_Woman"]                # the preset list is filled in Phase F
+commercial_use = true
+licence = "fal commercial terms; confirm on the endpoint page"
+defaults = { output_format = "url" }   # the default is hex in the response body
+price = { unit = "1k_chars", usd = "0.10", synced = "2026-09-21" }
+
+[[model]]
+id = "fal/chatterbox-multilingual"
+label = "Chatterbox Multilingual · fal"
+capability = "tts.speak"
+provider = "fal"
+family = "chatterbox"
+endpoint = "fal-ai/chatterbox/text-to-speech/multilingual"
+clone = true
+max_chars = 300
+commercial_use = true
+licence = "fal commercial terms; confirm on the endpoint page"
+notes = "Cheapest. 23 languages; clones from the reference clip's URL."
+price = { unit = "1k_chars", usd = "0.025", synced = "2026-09-21" }

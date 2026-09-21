@@ -158,6 +158,27 @@ export interface Check {
   detail: string;
 }
 
+export type ProviderName = "openrouter" | "fal";
+
+export interface Provider {
+  name: ProviderName;
+  label: string;
+  configured: boolean;
+  source: "env" | "keychain" | "file" | "fake" | null;
+  last4: string | null;
+  ok: boolean | null;
+  detail: string;
+  needed: boolean;
+  usage: { usage: number | null; limit: number | null; limit_remaining: number | null } | null;
+}
+
+export interface SettingRow {
+  key: string;
+  label: string;
+  value: unknown;
+  source: "app" | "file" | "default";
+}
+
 export class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
@@ -211,6 +232,12 @@ export const api = {
   run: (id: string, kind: "cast" | "board" | "render") => call<Job>("POST", `/api/stories/${id}/${kind}`),
   job: (id: string) => call<Job>("GET", `/api/jobs/${id}`),
   cancel: (id: string) => call<{ cancelled: boolean }>("POST", `/api/jobs/${id}/cancel`),
+  providers: () => call<Provider[]>("GET", "/api/providers"),
+  setKey: (name: ProviderName, key: string) =>
+    call<Provider & { stored_in: string }>("PUT", `/api/providers/${name}/key`, { key }),
+  clearKey: (name: ProviderName) => call<void>("DELETE", `/api/providers/${name}/key`),
+  settings: () => call<SettingRow[]>("GET", "/api/settings"),
+  saveSettings: (changes: Record<string, unknown>) => call<SettingRow[]>("PUT", "/api/settings", { changes }),
   voices: () => call<Voice[]>("GET", "/api/voices"),
   addVoice: (form: FormData) => call<Voice>("POST", "/api/voices", form),
 };

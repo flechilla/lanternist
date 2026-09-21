@@ -1,0 +1,72 @@
+# Image-to-video. `durations` are the clip lengths a model bills, for the shot planner.
+# Every fal model here generates audio by default at extra cost; `defaults` turns it off unless
+# the model's sound is the ambience we want (`audio = "ambience"`).
+
+[[model]]
+id = "local/ltx-2.5-22b-nvfp4"
+label = "LTX-2.5 22B"
+capability = "video.image_to_video"
+provider = "local"
+engine_id = "ltx-2.5-22b-nvfp4@1"
+audio = "ambience"
+commercial_use = "below_10m_revenue"
+licence = "LTX-2.x Community Licence"
+durations = { frames = "8k+1", fps = 24, max_seconds = 20 }
+price = { unit = "output_second", gpu_seconds = 4.3 }
+
+[[model]]
+id = "fal/kling-v3-standard"
+label = "Kling v3 Standard · fal"
+capability = "video.image_to_video"
+provider = "fal"
+family = "kling"
+endpoint = "fal-ai/kling-video/v3/standard/image-to-video"
+commercial_use = true
+licence = "fal commercial terms; confirm on the endpoint page"
+durations = { min = 3, max = 15, step = 1 }
+defaults = { generate_audio = false, negative_prompt = "blur, distort, low quality", cfg_scale = 0.5 }
+notes = "No seed or size input: it follows the start image."
+price = { unit = "output_second", usd = "0.084", tiers = { audio_on = "0.126", voice_control = "0.154" }, synced = "2026-09-21" }
+
+[[model]]
+id = "fal/ltx-2.5-fast"
+label = "LTX-2.5 fast · fal"
+capability = "video.image_to_video"
+provider = "fal"
+family = "ltx"
+endpoint = "lightricks/ltx-2.5/image-to-video/fast"
+audio = "ambience"
+commercial_use = true
+licence = "fal commercial terms; confirm on the endpoint page"
+durations = { values = [6, 8, 10, 12, 14, 16, 18, 20] }
+defaults = { resolution = "720p", aspect_ratio = "16:9", fps = 24, generate_audio = true }
+notes = "Same model as local, with its own ambience included in the price."
+price = { unit = "output_second", usd = "0.09", tiers = { "1080p" = "0.13", "1440p" = "0.19", "2160p" = "0.30" }, synced = "2026-09-21" }
+
+[[model]]
+id = "fal/veo-3.1-fast"
+label = "Veo 3.1 fast · fal"
+capability = "video.image_to_video"
+provider = "fal"
+family = "veo"
+endpoint = "fal-ai/veo3.1/fast/image-to-video"
+commercial_use = true
+licence = "fal commercial terms; confirm on the endpoint page"
+durations = { values = [4, 6, 8] }
+defaults = { generate_audio = false, resolution = "1080p", aspect_ratio = "16:9" }
+notes = "Premium look; slots over 8 s need two shots."
+price = { unit = "output_second", usd = "0.10", tiers = { audio_on = "0.15", "4k" = "0.30", "4k_audio_on" = "0.35" }, synced = "2026-09-21" }
+
+[[model]]
+id = "fal/wan-2.6-flash"
+label = "Wan 2.6 flash · fal"
+capability = "video.image_to_video"
+provider = "fal"
+family = "wan"
+endpoint = "wan/v2.6/image-to-video/flash"   # no fal-ai/ prefix
+commercial_use = true
+licence = "fal commercial terms; confirm on the endpoint page"
+durations = { values = [5, 10, 15] }
+defaults = { resolution = "720p", enable_prompt_expansion = false, generate_audio = false }
+notes = "Cheapest. Prompt expansion is off so the character lock isn't rewritten. Verify whether the list price includes audio."
+price = { unit = "output_second", usd = "0.05", tiers = { "1080p" = "0.075" }, synced = "2026-09-21" }
