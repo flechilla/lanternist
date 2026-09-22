@@ -154,6 +154,7 @@ export default function Story() {
   const discard = () => {
     markDirty(false);
     setDraft(structuredClone(detail.storyboard));
+    draftVersion.current = detail.version;
   };
   const ensureSaved = async () => {
     if (dirtyRef.current && draft) await saveBoard(draft, "edited");

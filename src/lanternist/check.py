@@ -62,6 +62,7 @@ class CheckError(RuntimeError):
 
 
 PICK_ANOTHER = "Pick a checker that takes pictures and structured output in Settings, or clear it."
+CANT = (400, 404)  # what OpenRouter answers a model that can't take a picture or a schema
 
 
 def question(sb: Storyboard, scene: Scene) -> str:
@@ -99,8 +100,12 @@ class Checker(Maker):
             return
         try:
             pricing = (await self.llm.info()).get("pricing") or {}
-        except (llms.LLMError, OpenRouterError) as e:
-            raise CheckError(f"The picture check can't use {self.model}: {e}. {PICK_ANOTHER}") from e
+        except llms.LLMError as e:  # OpenRouter doesn't list it
+            raise CheckError(
+                f"The picture check can't use {self.model}: OpenRouter doesn't list it. {PICK_ANOTHER}"
+            ) from e
+        except OpenRouterError as e:
+            raise CheckError(f"The picture check couldn't read {self.model}'s prices: {e}") from e
         self.per_check = to_micros(llms.token_price(pricing, TOKENS))
 
     def estimate(self, items: list[Item]) -> Estimate:
@@ -125,8 +130,13 @@ class Checker(Maker):
                         images=[picture.read_bytes()],
                     )
                     verdict = Verdict.model_validate_json(json_text(reply.text))
-                except (llms.LLMError, OpenRouterError) as e:
-                    raise CheckError(f"{why}: {e}. {PICK_ANOTHER}") from e
+                except OpenRouterError as e:
+                    # A 400 or 404 is the model refusing a picture or a schema. The key, credit or an
+                    # outage is no reason to change checkers, so those keep their own advice.
+                    advice = f" {PICK_ANOTHER}" if e.status in CANT else ""
+                    raise CheckError(f"{why}: {str(e).rstrip('.')}.{advice}") from e
+                except llms.LLMError as e:
+                    raise CheckError(f"{why}: {str(e).rstrip('.')}.") from e
                 except ValidationError as e:
                     raise CheckError(f"{why}: its answer wasn't a verdict. {PICK_ANOTHER}") from e
                 out = ctx.work / f"{it.id}.json"

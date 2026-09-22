@@ -58,8 +58,10 @@ async def _py(python, code: str, timeout: float = 120) -> tuple[bool, str]:
 
 
 def needs(cfg: Settings) -> dict[str, bool]:
-    """Which engines and providers the default models use; the checks for the rest are advisory."""
+    """Which engines and providers the default models use, the picture check among them; the checks for
+    the rest are advisory."""
     d = cfg.defaults
+    llms = (d.writer, d.checker)
     # Ambience only runs for a video model that makes no sound of its own.
     silent = registry.get(d.video, cfg.library).audio == "none"
     media = (d.tts, d.image, d.video, d.ambience if silent else "none")
@@ -67,13 +69,13 @@ def needs(cfg: Settings) -> dict[str, bool]:
         "qwen3tts": d.tts.startswith("local/"),
         "klein": d.image.startswith("local/"),
         "comfyui": d.video.startswith("local/"),
-        "ollama": not d.writer or d.writer.startswith("ollama/"),
+        "ollama": not d.writer or any(m.startswith("ollama/") for m in llms),
     }
     return local | {
         "gpu": any(local.values()),
         "ram": local["klein"],
         "voice": registry.get(d.tts, cfg.library).clone,  # a narrator with presets needs no recording
-        "openrouter": d.writer.startswith("openrouter/"),
+        "openrouter": any(m.startswith("openrouter/") for m in llms),
         "fal": any(m.startswith("fal/") for m in media),
     }
 

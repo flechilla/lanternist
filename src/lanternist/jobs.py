@@ -288,36 +288,47 @@ class Runner:
         try:
             b = await pipeline.board(sb)
         except BaseException:
-            self.keep_redraws(pipeline, job, before, sb)
+            # Run again after a restart, the job starts from the new seeds, not the pictures that failed.
+            self._take_version(job, self.keep_redraws(pipeline, job, before, sb))
             raise
         checked: dict = {"flagged": b.flagged} if b.flagged else {}
-        made_from = job.version
-        if version := self.keep_redraws(pipeline, job, before, sb):
-            checked |= {"version": version, "redrawn": b.redrawn}
-            if version == (job.version or 0) + 1:
-                # Nothing was saved while it ran: the new version is exactly what this job made.
-                self.db.update_job(job.id, version=version)
-                made_from = version
-        return b, checked, made_from
+        kept = self.keep_redraws(pipeline, job, before, sb)
+        if kept:
+            version, redrawn = kept
+            checked |= {"version": version, "redrawn": {n: b.redrawn[n] for n in redrawn}}
+        return b, checked, self._take_version(job, kept)
 
-    def keep_redraws(self, pipeline: Pipeline, job: Job, before: Storyboard, after: Storyboard) -> int | None:
+    def _take_version(self, job: Job, kept: tuple[int, list[int]] | None) -> int | None:
+        """The version the job's pictures come from: the one its check saved, when nothing else was
+        saved while it ran, so the new version is exactly what this job made; else the one it started on."""
+        if kept and kept[0] == (job.version or 0) + 1:
+            self.db.update_job(job.id, version=kept[0])
+            return kept[0]
+        return job.version
+
+    def keep_redraws(
+        self, pipeline: Pipeline, job: Job, before: Storyboard, after: Storyboard
+    ) -> tuple[int, list[int]] | None:
         """Save the seeds of the pictures the check drew again in the story's latest version, as a
         re-roll's would, on the scenes whose picture is still the one it checked, so an edit saved while
-        the job ran is kept. Returns the new version, or None when there was nothing to keep."""
+        the job ran is kept. Returns the new version and the scenes it kept seeds for, or None when
+        there was nothing to keep."""
         if not pipeline.redrawn or job.story_id is None:
             return None
         seeds = {sc.n: sc.seed for sc in after.scenes if sc.n in pipeline.redrawn}
         checked = pipeline.keyframe_keys(before)
+        kept: list[int] = []
 
-        def change(latest: Storyboard) -> None:
+        def change(latest: Storyboard) -> str:
             keys = pipeline.keyframe_keys(latest)
             for sc in latest.scenes:
                 if sc.n in seeds and keys.get(sc.n) is not None and keys.get(sc.n) == checked.get(sc.n):
                     sc.seed = seeds[sc.n]
+                    kept.append(sc.n)
+            return f"the picture check drew scene{'s' if len(kept) > 1 else ''} {', '.join(map(str, kept))} again"
 
-        scenes = ", ".join(str(n) for n in pipeline.redrawn)
-        note = f"the picture check drew scene{'s' if len(pipeline.redrawn) > 1 else ''} {scenes} again"
-        return self.db.change_story(job.story_id, change, note)
+        version = self.db.change_story(job.story_id, change)
+        return (version, kept) if version is not None else None
 
 
 def is_terminal(status: str) -> bool:
