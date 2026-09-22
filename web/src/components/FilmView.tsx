@@ -1,9 +1,12 @@
+import { useRef } from "react";
 import { asset, fmtSeconds, isActive, withPrice, type Job, type StoryDetail } from "../api";
-import { Log, Stages } from "./JobProgress";
+import Reel from "./Reel";
 
 interface Props {
   detail: StoryDetail;
   jobs: Job[];
+  /** A render that finished while the page was open: its reel stays up, finished, above the film. */
+  finished: Job | undefined;
   busy: boolean;
   /** What rendering again would cost now. */
   renderUsd: number | undefined;
@@ -11,30 +14,41 @@ interface Props {
   onCancel: (job: Job) => void;
 }
 
-export default function FilmView({ detail, jobs, busy, renderUsd, onRender, onCancel }: Props) {
+export default function FilmView({ detail, jobs, finished, busy, renderUsd, onRender, onCancel }: Props) {
+  const player = useRef<HTMLVideoElement>(null);
   const renders = jobs.filter((j) => j.kind === "render");
   const running = renders.find(isActive);
   const film = renders.find((j) => j.status === "done" && j.result?.film) ?? detail.film;
   const lastFinished = renders.find((j) => !isActive(j));
-  // A budget stop is shown at the top of the story, with the way to carry on.
-  const failed = lastFinished?.status === "failed" && !lastFinished.result?.budget ? lastFinished : undefined;
+  // A budget stop is shown at the top of the story, with the way to carry on; and a new render replaces it.
+  const failed =
+    !running && lastFinished?.status === "failed" && !lastFinished.result?.budget ? lastFinished : undefined;
   const result = film?.result;
   const name = detail.story.slug || "film";
+  const reel = running ?? finished;
+
+  function watch() {
+    const v = player.current;
+    if (!v) return;
+    v.scrollIntoView({
+      block: "center",
+      behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+    });
+    void v.play().catch(() => undefined);
+  }
 
   return (
     <div className="stack">
-      {running && (
-        <section className="panel stack" aria-live="polite">
-          <div className="row">
-            <h2>Rendering version {running.version}</h2>
-            <span className="spacer" />
-            <button className="small danger" onClick={() => onCancel(running)}>
-              Cancel render
-            </button>
-          </div>
-          <Stages job={running} />
-          <Log job={running} />
-        </section>
+      {reel && detail.storyboard && (
+        <Reel
+          key={reel.id}
+          sb={detail.storyboard}
+          board={detail.board}
+          job={reel}
+          budget={detail.budget}
+          onCancel={() => onCancel(reel)}
+          onWatch={watch}
+        />
       )}
 
       {failed && (
@@ -50,6 +64,7 @@ export default function FilmView({ detail, jobs, busy, renderUsd, onRender, onCa
       {result?.film ? (
         <section className="hall">
           <video
+            ref={player}
             key={result.film}
             controls
             preload="metadata"

@@ -118,7 +118,7 @@ export interface Progress {
   /** A board's or render's time left, in seconds, as a range: never a countdown. */
   eta_s?: [number, number];
   /** Each stage's share of the job's time, in the order they run, so a long stage is drawn long. */
-  phases?: { stage: string; share: number }[];
+  phases?: { stage: string; label: string; share: number }[];
   /** How far through the job it is, 0 to 1, by time. */
   fraction?: number;
   log?: string[];
@@ -538,6 +538,16 @@ export const LANGUAGE_NAMES: Record<string, string> = {
   zh: "Chinese",
   ja: "Japanese",
   ko: "Korean",
+};
+
+/** How a still scene's camera moves, as the Script step and the reel's cards name it. */
+export const CAMERA_NAMES: Record<Camera, string> = {
+  auto: "Auto",
+  push_in: "Push in",
+  pull_out: "Pull out",
+  pan_left: "Pan left",
+  pan_right: "Pan right",
+  static: "Static",
 };
 
 export const STYLE_NAMES: Record<string, string> = {

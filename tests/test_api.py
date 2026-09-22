@@ -76,7 +76,7 @@ def test_a_picture_is_served_small_and_made_once(client, wait, tmp_path):
     picture = client.get(f"/api/stories/{sid}").json()["board"]["scenes"][0]["keyframe"]
     full = client.get(f"/api/assets/{picture}")
 
-    small = client.get(f"/api/assets/{picture}?w=300")
+    small = client.get(f"/api/assets/{picture}?w=500")
     assert small.status_code == 200 and small.headers["content-type"] == "image/jpeg"
     assert len(small.content) * 5 < len(full.content)
     [kept] = (tmp_path / "lib" / "derived").rglob("*.jpg")
@@ -84,6 +84,7 @@ def test_a_picture_is_served_small_and_made_once(client, wait, tmp_path):
     made = kept.stat().st_mtime_ns
     assert client.get(f"/api/assets/{picture}?w=2000").content == small.content  # the largest there is
     assert kept.stat().st_mtime_ns == made  # served as kept, not made again
+    assert len(client.get(f"/api/assets/{picture}?w=300").content) < len(small.content)  # a reel's slide
     assert "immutable" not in small.headers["cache-control"]
 
     film = wait(client.post(f"/api/stories/{sid}/render").json()["id"])["result"]["film"]

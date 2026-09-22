@@ -96,7 +96,10 @@ export default function Story() {
   }, []);
 
   const allJobs = useMemo(() => [...started, ...(detail?.jobs ?? [])], [started, detail]);
-  const live = useJobStreams(allJobs, () => {
+  // The last job that ended while the page was open: a render's reel stays up, finished.
+  const [ended, setEnded] = useState<Job | null>(null);
+  const live = useJobStreams(allJobs, (job) => {
+    setEnded(job);
     load().catch(() => undefined);
   });
   const jobs = allJobs.map((j) => live[j.id] ?? j);
@@ -413,6 +416,7 @@ export default function Story() {
             <FilmView
               detail={detail}
               jobs={jobs}
+              finished={ended?.kind === "render" && ended.status === "done" ? ended : undefined}
               busy={busy}
               renderUsd={estimates?.render.total_usd}
               onRender={actions.render}

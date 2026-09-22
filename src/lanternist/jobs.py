@@ -190,7 +190,11 @@ class Progress:
         total = sum(whole.values())
         ran = now - self.t0
         self.snap["eta_s"] = [round(lo), round(hi)]
-        self.snap["phases"] = [{"stage": k, "share": round(v / total, 4)} for k, v in whole.items() if v > 0]
+        self.snap["phases"] = [
+            {"stage": k, "label": LABELS.get(k, k), "share": round(v / total, 4)}
+            for k, v in whole.items()
+            if v > 0
+        ]
         self.snap["fraction"] = round(ran / (ran + (lo + hi) / 2), 3) if ran + lo + hi else 0.0
 
     def _spend(self) -> None:

@@ -101,7 +101,10 @@ async def test_the_snapshot_says_how_long_is_left_and_where_the_time_goes(fake_c
     assert "secs" in snap["stages"]["narration"] and "mix" not in snap["stages"]
     lo, hi = snap["eta_s"]
     assert (lo, hi) == (15, 60)  # the mix alone is left: a guess of 30 s
-    assert [p["stage"] for p in snap["phases"]] == ["narration", "mix"]
+    assert [(p["stage"], p["label"]) for p in snap["phases"]] == [
+        ("narration", "Narration"),
+        ("mix", "Final mix"),
+    ]
     assert 0 < snap["fraction"] < 1
 
 

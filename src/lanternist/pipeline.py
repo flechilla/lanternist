@@ -43,7 +43,7 @@ from .writer import narration_seconds
 log = logging.getLogger(__name__)
 
 THUMBNAIL = "thumb@1"  # in every kept thumbnail's name: bump it when ffmpeg.thumbnail changes on purpose
-THUMBNAIL_WIDTHS = (768,)  # the widths a picture is also served at: a card on the Board
+THUMBNAIL_WIDTHS = (384, 768)  # the widths a picture is also served at: a slide on the reel, a Board card
 PICTURE_TYPES = (".png", ".jpg", ".jpeg", ".webp")
 CLIP = "clip@1"
 MIX = "mix@3"  # 2: loudness normalised; 3: cuts are concats, not zero-length crossfades

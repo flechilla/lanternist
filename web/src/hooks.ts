@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from "react";
 import { api, errorMessage, isActive, type Job, type Options, type VoiceCatalog } from "./api";
 
 /** Follow a set of jobs over SSE. Returns the freshest copy of each; calls onEnd when one finishes. */
@@ -119,4 +119,53 @@ export function usePlayer<K>() {
   }
 
   return { audio, playing, play };
+}
+
+/** A setting this browser remembers for the viewer, such as a panel left open. Storage can be blocked
+ * or empty (a private window), so it falls back to `initial` and still works for the visit. */
+export function useStored<T>(key: string, initial: T): [T, (value: T) => void] {
+  const name = `lanternist.${key}`;
+  const [value, setValue] = useState<T>(() => {
+    try {
+      const saved = localStorage.getItem(name);
+      return saved === null ? initial : (JSON.parse(saved) as T);
+    } catch {
+      return initial;
+    }
+  });
+  const store = useCallback(
+    (v: T) => {
+      setValue(v);
+      try {
+        localStorage.setItem(name, JSON.stringify(v));
+      } catch {
+        /* not remembered past this visit */
+      }
+    },
+    [name],
+  );
+  return [value, store];
+}
+
+/** An element's width as it changes; 0 until it's laid out. */
+export function useWidth(ref: React.RefObject<HTMLElement | null>): number {
+  const [width, setWidth] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const observer = new ResizeObserver(([entry]) => setWidth(entry.contentRect.width));
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [ref]);
+  return width;
+}
+
+function onVisibility(change: () => void) {
+  document.addEventListener("visibilitychange", change);
+  return () => document.removeEventListener("visibilitychange", change);
+}
+
+/** Whether the page is on screen. What arrives while it's hidden shouldn't all animate when it's back. */
+export function useVisible(): boolean {
+  return useSyncExternalStore(onVisibility, () => document.visibilityState === "visible");
 }
