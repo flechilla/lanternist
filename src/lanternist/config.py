@@ -5,7 +5,6 @@ Every key is optional; see lanternist.example.toml for the full set.
 """
 
 import os
-import re
 import tomllib
 from functools import lru_cache
 from pathlib import Path
@@ -13,7 +12,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .storyboard import WriterId
+from .storyboard import LlmId
 
 
 def _expand(v):
@@ -113,7 +112,7 @@ class Render(BaseModel):
 class Defaults(BaseModel):
     """The model each stage uses when a story doesn't pick one. Values saved on the Settings page win."""
 
-    writer: WriterId = ""  # empty: the local Ollama model above
+    writer: LlmId = ""  # empty: the local Ollama model above
     tts: str = "local/qwen3-tts-1.7b"
     image: str = "local/flux2-klein-9b"
     video: str = "local/ltx-2.5-22b-nvfp4"
@@ -121,18 +120,8 @@ class Defaults(BaseModel):
     ambience: str = "fal/mmaudio-v2"
     # A vision model that checks every picture before video is made from it, and has a faulty one
     # drawn again: openrouter/<id> or ollama/<tag>; empty skips the check.
-    checker: str = ""
+    checker: LlmId = ""
     budget_usd: float = 5.0  # per story, for remote models
-
-    @field_validator("checker", mode="after")
-    @classmethod
-    def _checker(cls, v: str) -> str:
-        v = v.strip()
-        if v and not re.fullmatch(r"(ollama|openrouter)/\S+", v):
-            raise ValueError(
-                "the picture check is ollama/<model> or openrouter/<model id>, or empty for none"
-            )
-        return v
 
 
 class OpenRouter(BaseModel):

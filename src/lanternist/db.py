@@ -229,14 +229,18 @@ class Database:
             raise KeyError(f"{story_id} v{v}")
         return story, row
 
-    def change_story(self, story_id: str, change: "Callable[[Storyboard], None]", note: str) -> int:
-        """Apply `change` to the story's latest version and save the result as its next; returns it."""
+    def change_story(self, story_id: str, change: "Callable[[Storyboard], None]", note: str) -> int | None:
+        """Apply `change` to the story's latest version and save the result as its next; returns its
+        number, or None when the change left the story as it was."""
         from .storyboard import Storyboard
 
         with self.session() as s:
             story, row = self.storyboard(s, story_id)
             sb = Storyboard.model_validate(row.storyboard)
+            was = sb.model_dump()
             change(sb)
+            if sb.model_dump() == was:
+                return None
             new = self.save_version(s, story, sb.model_dump(), note=note)
             s.commit()
             return new.version

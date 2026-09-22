@@ -18,7 +18,7 @@ from .config import Settings
 from .db import TERMINAL, Database, Job, now
 from .keys import redact
 from .llm import Calls
-from .pipeline import LABELS, Board, BudgetExceeded, Event, Pipeline, picture_inputs
+from .pipeline import LABELS, Board, BudgetExceeded, Event, Pipeline
 from .storyboard import Storyboard
 
 log = logging.getLogger(__name__)
@@ -251,22 +251,19 @@ class Runner:
             return {"cast": cast}
 
         if job.kind == "board":
-            before = sb.model_copy(deep=True)
-            b = await pipeline.board(sb)
+            b, checked, _ = await self.checked_board(pipeline, job, sb)
             return {
                 "cast": b.cast,
                 "keyframes": b.keyframes,
                 "total": round(b.timeline.total, 2),
                 "poster": b.keyframes[0] if b.keyframes else None,
-                **self.checked(job, before, sb, b),
+                **checked,
             }
 
         if job.kind == "render":
-            before = sb.model_copy(deep=True)
-            b = await pipeline.board(sb)
-            checked = self.checked(job, before, sb, b)
+            b, checked, made_from = await self.checked_board(pipeline, job, sb)
             film = await pipeline.render(sb, b)
-            dest = cfg.library / "films" / f"{story.slug}-v{checked.get('made_from', job.version)}.mp4"
+            dest = cfg.library / "films" / f"{story.slug}-v{made_from}.mp4"
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(pipeline.store.path(film.film), dest)
             return {
@@ -281,30 +278,46 @@ class Runner:
 
         raise ValueError(f"unknown job kind {job.kind}")
 
-    def checked(self, job: Job, before: Storyboard, after: Storyboard, board: Board) -> dict:
-        """What the picture check did. The seeds of the pictures it had drawn again go into the story's
-        latest version, as a re-roll's would, on the scenes whose picture is still the one it checked,
-        so an edit saved while the job ran is kept. The pictures that still fail are named."""
-        out: dict = {"flagged": board.flagged} if board.flagged else {}
-        if not board.redrawn or job.story_id is None:
-            return out
-        seeds = {sc.n: sc.seed for sc in after.scenes if sc.n in board.redrawn}
-        checked = {sc.n: picture_inputs(before, sc) for sc in before.scenes if sc.n in seeds}
+    async def checked_board(
+        self, pipeline: Pipeline, job: Job, sb: Storyboard
+    ) -> tuple[Board, dict, int | None]:
+        """The board, and what its picture check did for the job's result; with the version the job
+        then made its pictures from. The pictures the check drew again are kept even when the board
+        fails after them, so running it again carries on from there."""
+        before = sb.model_copy(deep=True)
+        try:
+            b = await pipeline.board(sb)
+        except BaseException:
+            self.keep_redraws(pipeline, job, before, sb)
+            raise
+        checked: dict = {"flagged": b.flagged} if b.flagged else {}
+        made_from = job.version
+        if version := self.keep_redraws(pipeline, job, before, sb):
+            checked |= {"version": version, "redrawn": b.redrawn}
+            if version == (job.version or 0) + 1:
+                # Nothing was saved while it ran: the new version is exactly what this job made.
+                self.db.update_job(job.id, version=version)
+                made_from = version
+        return b, checked, made_from
+
+    def keep_redraws(self, pipeline: Pipeline, job: Job, before: Storyboard, after: Storyboard) -> int | None:
+        """Save the seeds of the pictures the check drew again in the story's latest version, as a
+        re-roll's would, on the scenes whose picture is still the one it checked, so an edit saved while
+        the job ran is kept. Returns the new version, or None when there was nothing to keep."""
+        if not pipeline.redrawn or job.story_id is None:
+            return None
+        seeds = {sc.n: sc.seed for sc in after.scenes if sc.n in pipeline.redrawn}
+        checked = pipeline.keyframe_keys(before)
 
         def change(latest: Storyboard) -> None:
+            keys = pipeline.keyframe_keys(latest)
             for sc in latest.scenes:
-                if sc.n in seeds and picture_inputs(latest, sc) == checked[sc.n]:
+                if sc.n in seeds and keys.get(sc.n) is not None and keys.get(sc.n) == checked.get(sc.n):
                     sc.seed = seeds[sc.n]
 
-        scenes = ", ".join(str(n) for n in board.redrawn)
-        note = f"the picture check drew scene{'s' if len(board.redrawn) > 1 else ''} {scenes} again"
-        version = self.db.change_story(job.story_id, change, note)
-        out |= {"version": version, "redrawn": board.redrawn}
-        if version == (job.version or 0) + 1:
-            # Nothing was saved while it ran: the new version is exactly what this job made.
-            self.db.update_job(job.id, version=version)
-            out["made_from"] = version
-        return out
+        scenes = ", ".join(str(n) for n in pipeline.redrawn)
+        note = f"the picture check drew scene{'s' if len(pipeline.redrawn) > 1 else ''} {scenes} again"
+        return self.db.change_story(job.story_id, change, note)
 
 
 def is_terminal(status: str) -> bool:

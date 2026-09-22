@@ -159,21 +159,6 @@ def _portraits(sb: Storyboard) -> bool:
     return sb.portraits and not sb.cast_sheet_prompt
 
 
-def picture_inputs(sb: Storyboard, sc: Scene) -> tuple:
-    """What a scene's picture is drawn from, as the storyboard decides it: whether an edit reached it."""
-    m = sb.models
-    keyframe = prompts.keyframe(sb, sc, numbered=_numbered(sb, sc))
-    return (
-        keyframe,
-        sb.scene_seed(sc),
-        prompts.cast_sheet(sb),
-        sb.seed,
-        sb.portraits,
-        m.image,
-        m.image_quality,
-    )
-
-
 def _characters_in(sb: Storyboard, sc: Scene) -> int:
     return sum(c.id in sc.cast for c in sb.characters)
 
@@ -201,6 +186,8 @@ class Pipeline:
         self.db, self.story_id, self.job_id = db, story_id, job_id
         self.user_cancelled = user_cancelled
         self.budget_micros = budget_micros  # the story's; None checks nothing (the CLI)
+        # By scene, why the picture check had it drawn again, from the moment its new seed is set.
+        self.redrawn: dict[int, str] = {}
 
     def emit(self, stage: str, status: str, **kw) -> None:
         self._emit(Event(stage, status, **kw))
@@ -446,6 +433,11 @@ class Pipeline:
             keyframes = [self.keyframe_item(eng, sb, sc, [cast] if cast else []) for sc in sb.scenes]
         return sheet, portraits, keyframes
 
+    def keyframe_keys(self, sb: Storyboard) -> dict[int, str | None]:
+        """Each scene's picture key as the cache stands; None for one whose references aren't drawn."""
+        _, _, keyframes = self.picture_items(self.image(sb), sb)
+        return {it.scene: it.key for it in keyframes if it.scene is not None}
+
     def cached(self, it: Item) -> dict | None:
         """The item's step record if the cache holds it; an item without a key yet is never cached."""
         return self.store.get_step(it.key) if it.key else None
@@ -484,12 +476,12 @@ class Pipeline:
 
     async def board(self, sb: Storyboard) -> Board:
         """Narration and pictures. With a checker, a picture that fails its check is drawn again with a
-        new seed, set on its scene in `sb`, which the caller keeps as a new version of the story. Only
-        a verdict given in this board redraws: one the cache held was the last word on that picture."""
+        new seed, set on its scene in `sb`, which the caller keeps as a new version of the story; also
+        when the board fails later, from `self.redrawn`, so nothing drawn again is lost. Only a verdict
+        given in this board redraws: one the cache held was the last word on that picture."""
         narration = await self.narrate(sb)
         cast, keyframes = await self.draw(sb)
         checked = await self.check(sb, keyframes)
-        redrawn: dict[int, str] = {}
         for _ in range(check.MAX_REDRAWS):
             again = {n: why for n, why in checked.failed.items() if n in checked.asked}
             if not again:
@@ -497,14 +489,15 @@ class Pipeline:
             for sc in sb.scenes:
                 if sc.n in again:
                     sc.seed = next_seed(sb.scene_seed(sc))
-            redrawn |= again
+            self.redrawn |= again
             self.emit("check", "progress", message=f"drawing again: {_scenes(again)}")
             cast, keyframes = await self.draw(sb)
             checked = await self.check(sb, keyframes)
         if checked.failed:
-            self.emit("check", "progress", message=f"still failing, to look at: {_scenes(checked.failed)}")
+            n = len(sb.scenes)
+            self.emit("check", "finish", done=n, total=n, message=f"still failing: {_scenes(checked.failed)}")
         tl = self.timeline(sb, [n.duration for n in narration])
-        return Board(narration, cast, keyframes, tl, redrawn, checked.failed)
+        return Board(narration, cast, keyframes, tl, dict(self.redrawn), checked.failed)
 
     # ---------------------------------------------------------------- the picture check
     def check_items(self, sb: Storyboard, keyframes: list[str], model: str) -> list[Item]:
@@ -523,8 +516,9 @@ class Pipeline:
         checker = check.Checker(
             self.cfg, model, llms.Calls(self.db, self.story_id, self.job_id, stage="check")
         )
-        await checker.price()
         items = self.check_items(sb, keyframes, model)
+        if any(not self.cached(it) for it in items):
+            await checker.price()  # a board all cached asks nothing, so it needs no prices, nor the network
         records = await self._stage("check", checker, items, "verdict")
         verdicts = {it.scene: records[it.id]["meta"] for it in items if it.scene is not None}
         return Checked({n: v["reason"] for n, v in verdicts.items() if v["verdict"] == "fail"}, checker.asked)

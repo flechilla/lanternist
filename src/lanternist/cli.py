@@ -11,10 +11,10 @@ from typing import TYPE_CHECKING, Annotated
 import typer
 
 from .config import settings
+from .storyboard import Effort, Mode, Storyboard, Subtitles, slugify
 
 if TYPE_CHECKING:
     from .pipeline import Board
-from .storyboard import Effort, Mode, Storyboard, Subtitles, slugify
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 keys_app = typer.Typer(no_args_is_help=True, help="API keys for remote models (OpenRouter, fal.ai).")
@@ -142,20 +142,24 @@ def write(
     )
 
 
-def _checked(path: Path, sb: Storyboard, b: "Board") -> None:
-    """Keep the new seeds of the pictures the check had drawn again in the storyboard file, and
-    nothing else this run changed in memory (--mode, --subtitles)."""
-    for n, why in b.redrawn.items():
+def _keep_redraws(path: Path, sb: Storyboard, redrawn: dict[int, str]) -> None:
+    """Save the new seeds of the pictures the check drew again in the storyboard file, and nothing
+    else this run changed in memory (--mode, --subtitles)."""
+    if not redrawn:
+        return
+    for n, why in redrawn.items():
         print(f"  the picture check drew scene {n} again: {why}")
+    seeds = {sc.n: sc.seed for sc in sb.scenes if sc.n in redrawn}
+    saved = _load(path)
+    for sc in saved.scenes:
+        sc.seed = seeds.get(sc.n, sc.seed)
+    path.write_text(saved.model_dump_json(indent=2), encoding="utf-8")
+    print(f"  new seeds saved in {path}")
+
+
+def _flagged(b: "Board") -> None:
     for n, why in b.flagged.items():
         print(f"  scene {n} still fails its check: {why} Give it a new seed or change its picture.")
-    if b.redrawn:
-        seeds = {sc.n: sc.seed for sc in sb.scenes if sc.n in b.redrawn}
-        saved = _load(path)
-        for sc in saved.scenes:
-            sc.seed = seeds.get(sc.n, sc.seed)
-        path.write_text(saved.model_dump_json(indent=2), encoding="utf-8")
-        print(f"  new seeds saved in {path}")
 
 
 @app.command()
@@ -166,8 +170,11 @@ def board(story: Path):
     sb = _load(story)
     cfg, db = _effective()
     p = Pipeline(cfg, _printer(), db=db)
-    b = asyncio.run(p.board(sb))
-    _checked(story, sb, b)
+    try:
+        b = asyncio.run(p.board(sb))
+    finally:
+        _keep_redraws(story, sb, p.redrawn)
+    _flagged(b)
     print(f"board ready: {len(b.keyframes)} keyframes, {b.timeline.total:.1f}s of film")
     for sc, kf, nar in zip(sb.scenes, b.keyframes, b.narration, strict=True):
         print(f"  {sc.n:3d} {nar.duration:5.1f}s  {p.store.path(kf)}")
@@ -193,8 +200,11 @@ def render(
     p = Pipeline(cfg, _printer(), db=db)
 
     async def make():
-        b = await p.board(sb)
-        _checked(story, sb, b)
+        try:
+            b = await p.board(sb)
+        finally:
+            _keep_redraws(story, sb, p.redrawn)
+        _flagged(b)
         return await p.render(sb, b)
 
     film = asyncio.run(make())

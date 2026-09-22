@@ -181,7 +181,7 @@ def test_settings_precedence(tmp_path, db, monkeypatch):
         ({"paths.library": "/tmp"}, "can't change"),
         ({"defaults.video": "fal/flux-2-klein-9b"}, "image.keyframe model"),
         ({"defaults.tts": "fal/nope"}, "no model"),
-        ({"defaults.writer": "gpt"}, "the writer is"),
+        ({"defaults.writer": "gpt"}, "an LLM is"),
         ({"fal.max_concurrency": 0}, "concurrency"),
         ({"defaults.budget_usd": "lots"}, "budget_usd"),
     ],

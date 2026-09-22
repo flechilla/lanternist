@@ -23,6 +23,7 @@ from .db import to_micros
 from .engines import ffmpeg
 from .engines.base import Estimate, Item, Maker, OnItem, Output, StepContext, gather_all
 from .prompts import members
+from .providers.openrouter import OpenRouterError
 from .storyboard import Scene, Storyboard
 from .writer import inline_schema, json_text
 
@@ -60,6 +61,9 @@ class CheckError(RuntimeError):
     """The checker couldn't give a verdict on a picture."""
 
 
+PICK_ANOTHER = "Pick a checker that takes pictures and structured output in Settings, or clear it."
+
+
 def question(sb: Storyboard, scene: Scene) -> str:
     """What the checker is asked about a scene's picture: who should be in it, once each."""
     who = "\n".join(f"- {m.name}: {m.look}" for m in members(sb, scene, "character")) or "- nobody"
@@ -90,9 +94,14 @@ class Checker(Maker):
         self.asked: set[int] = set()
 
     async def price(self) -> None:
-        if isinstance(self.llm, llms.OpenRouterLLM):
+        """Read what a check costs, before a batch of them: nothing on the local model."""
+        if not isinstance(self.llm, llms.OpenRouterLLM):
+            return
+        try:
             pricing = (await self.llm.info()).get("pricing") or {}
-            self.per_check = to_micros(llms.token_price(pricing, TOKENS))
+        except (llms.LLMError, OpenRouterError) as e:
+            raise CheckError(f"The picture check can't use {self.model}: {e}. {PICK_ANOTHER}") from e
+        self.per_check = to_micros(llms.token_price(pricing, TOKENS))
 
     def estimate(self, items: list[Item]) -> Estimate:
         return Estimate(items=len(items), micros=self.per_check * len(items))
@@ -116,13 +125,10 @@ class Checker(Maker):
                         images=[picture.read_bytes()],
                     )
                     verdict = Verdict.model_validate_json(json_text(reply.text))
-                except llms.LLMError as e:
-                    raise CheckError(f"{why}: {e}. Pick another checker in Settings, or clear it.") from e
+                except (llms.LLMError, OpenRouterError) as e:
+                    raise CheckError(f"{why}: {e}. {PICK_ANOTHER}") from e
                 except ValidationError as e:
-                    raise CheckError(
-                        f"{why}: its answer wasn't a verdict. Pick a checker that takes pictures and "
-                        "structured output in Settings, or clear it."
-                    ) from e
+                    raise CheckError(f"{why}: its answer wasn't a verdict. {PICK_ANOTHER}") from e
                 out = ctx.work / f"{it.id}.json"
                 out.write_text(verdict.model_dump_json(), encoding="utf-8")
                 if it.scene is not None:

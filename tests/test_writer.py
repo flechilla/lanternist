@@ -120,9 +120,9 @@ def test_pick_effort_uses_what_the_model_supports():
 def test_the_writer_and_effort_are_checked_wherever_they_enter():
     assert brief(writer=" openrouter/x/y ").writer == "openrouter/x/y"
     for bad in ("gpt-5", "openrouter/", "local/qwen"):
-        with pytest.raises(ValidationError, match="the writer is ollama/<model> or openrouter/<model id>"):
+        with pytest.raises(ValidationError, match="an LLM is ollama/<model> or openrouter/<model id>"):
             brief(writer=bad)
-        with pytest.raises(ValidationError, match="the writer is"):  # a storyboard saved from the editor
+        with pytest.raises(ValidationError, match="an LLM is"):  # a storyboard saved from the editor
             Models(writer=bad)
     with pytest.raises(ValidationError, match="effort"):
         brief(effort="huge")

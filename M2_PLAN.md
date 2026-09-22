@@ -656,8 +656,10 @@ together and merged a jug into a mug. It made 4¼ minutes of video in 90 s.
   second characters, and fish as intruders, so 9 of 37 pictures were drawn again for nothing. The
   question now says a reflection doesn't count and animals in the scenery are fine. It's off until
   `defaults.checker` is set.
-  - [ ] The estimate box counts neither the checks (about $0.02 a film) nor the pictures they have
-    drawn again; the budget check before the stage does.
+  - [ ] The estimate counts neither the checks (about $0.02 a film) nor the pictures they have
+    drawn again. The budget check before the check stage does, but when it's the check that stops a
+    board, "Raise the budget to $X" can offer too little. OpenRouter's prices need an async fetch,
+    which the estimate route doesn't do yet.
 - A small character drawn alone (a fox cub) loses its scale, and scenes then draw it adult-sized.
 - The demo voice narrates at about 185 words a minute against the 150 the writer plans for, so films
   run 10% short. Measuring each narrator's pace would fix the length.

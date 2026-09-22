@@ -6,7 +6,8 @@ import pytest
 from sqlalchemy import select
 
 from lanternist import check
-from lanternist.cli import _checked
+from lanternist.check import CheckError
+from lanternist.cli import _flagged, _keep_redraws
 from lanternist.config import Settings
 from lanternist.db import Job, StepRun, to_micros
 from lanternist.jobs import Runner
@@ -107,23 +108,102 @@ async def test_without_a_checker_nothing_is_asked(fake_cfg, db, fakes, make_stor
     assert not fakes.openrouter.chats and not b.redrawn and not check_runs(db)
 
 
-def test_a_board_job_keeps_the_new_seed_as_a_version(client, wait, make_story):
-    from lanternist import providers
+NO_PICTURES = (404, {"error": {"code": 404, "message": "No endpoints found that support image input"}})
 
-    assert (
-        client.put(
-            "/api/settings", json={"changes": {"defaults.checker": "openrouter/fake/cheap"}}
-        ).status_code
-        == 200
-    )
-    sid = client.post("/api/stories", json={"storyboard": make_story(("still",)).model_dump()}).json()[
-        "story"
-    ]["id"]
-    providers.transport(Settings(fake_engines=True))  # the app's fake OpenRouter, to steer
-    world = providers.fake_world()
-    assert world is not None
-    world.openrouter.replies = [TWICE]
-    job = wait(client.post(f"/api/stories/{sid}/board").json()["id"])
+
+async def test_a_checker_that_cant_see_pictures_says_to_pick_another(fake_cfg, db, fakes, make_story):
+    fakes.openrouter.replies = [NO_PICTURES]
+    with pytest.raises(
+        CheckError, match=r"couldn't judge scene 1's picture.*Pick a checker that takes pictures"
+    ):
+        await Pipeline(checking(fake_cfg), db=db).board(make_story(("still",)))
+
+
+async def test_a_checker_openrouter_doesnt_list_says_to_pick_another(fake_cfg, db, fakes, make_story):
+    with pytest.raises(CheckError, match=r"can't use openrouter/fake/nowhere.*Pick a checker"):
+        await Pipeline(checking(fake_cfg, "openrouter/fake/nowhere"), db=db).board(make_story(("still",)))
+
+
+async def test_a_cached_board_needs_no_prices(fake_cfg, db, fakes, make_story, monkeypatch):
+    sb = make_story(("still",))
+    await Pipeline(checking(fake_cfg), db=db).board(sb)
+
+    async def offline(self):
+        raise AssertionError("a board with every verdict cached asked for prices")
+
+    monkeypatch.setattr(check.Checker, "price", offline)
+    assert not (await Pipeline(checking(fake_cfg), db=db).board(sb)).flagged
+
+
+def job_row(db, story_id: str, version: int, kind: str = "board") -> Job:
+    with db.session() as s:
+        job = Job(story_id=story_id, kind=kind, version=version, params={}, progress={})
+        s.add(job)
+        s.commit()
+        s.refresh(job)
+        return job
+
+
+async def test_the_new_seeds_keep_an_edit_saved_while_the_job_ran(fake_cfg, db, story_row, make_story):
+    before = make_story(("still", "still"))
+    started = db.add_version(story_row, before.model_dump(), note="the version the board runs")
+    p = Pipeline(fake_cfg, db=db, story_id=story_row)
+    await p.draw(before)
+    # While the board runs, the user retitles the story and changes scene 2's picture.
+    edited = before.model_copy(deep=True)
+    edited.title, edited.scenes[1].visual = "Retitled", "a different picture"
+    db.add_version(story_row, edited.model_dump(), note="saved while it ran")
+    after = before.model_copy(deep=True)
+    after.scenes[0].seed, after.scenes[1].seed = 111, 222
+    p.redrawn = {1: "twice", 2: "twice"}
+    runner = Runner(fake_cfg, db)
+    assert runner.keep_redraws(p, job_row(db, story_row, started), before, after) == started + 2
+    with db.session() as s:
+        _, row = db.storyboard(s, story_row)
+        latest = Storyboard.model_validate(row.storyboard)
+    assert latest.title == "Retitled" and latest.scenes[1].visual == "a different picture"
+    # Scene 1's picture is still the one checked, so it takes its new seed; scene 2 was redrawn by
+    # the edit, so its check no longer applies.
+    assert [sc.seed for sc in latest.scenes] == [111, None]
+
+    # When every scene drawn again was edited meanwhile, nothing is saved.
+    p.redrawn = {2: "twice"}
+    assert runner.keep_redraws(p, job_row(db, story_row, started), before, after) is None
+
+
+async def test_a_board_that_fails_after_a_redraw_keeps_its_new_seed(
+    fake_cfg, db, fakes, story_row, make_story
+):
+    sb = make_story(("still",))
+    first = sb.scene_seed(sb.scenes[0])
+    started = db.add_version(story_row, sb.model_dump(), note="the version the board runs")
+    fakes.openrouter.replies = [TWICE, NO_PICTURES]  # the second look fails outright
+    p = Pipeline(checking(fake_cfg), db=db, story_id=story_row)
+    with pytest.raises(CheckError):
+        await Runner(fake_cfg, db).checked_board(p, job_row(db, story_row, started), sb)
+    with db.session() as s:
+        story, row = db.storyboard(s, story_row)
+        assert story.version == started + 1
+        assert Storyboard.model_validate(row.storyboard).scenes[0].seed == next_seed(first)
+
+
+def job_with_a_redraw(client, wait, fakes, story: Storyboard, kind: str) -> tuple[str, dict]:
+    """A board or render job, through the API, whose check fails its one picture once."""
+    changes = {"defaults.checker": "openrouter/fake/cheap"}
+    assert client.put("/api/settings", json={"changes": changes}).status_code == 200
+    sid = client.post("/api/stories", json={"storyboard": story.model_dump()}).json()["story"]["id"]
+    fakes.openrouter.replies = [TWICE]
+    return sid, wait(client.post(f"/api/stories/{sid}/{kind}").json()["id"])
+
+
+def test_a_render_job_names_its_film_for_the_version_its_check_saved(client, wait, fakes, make_story):
+    _, job = job_with_a_redraw(client, wait, fakes, make_story(("still",)), "render")
+    assert job["version"] == 2 and job["result"]["version"] == 2 and job["result"]["path"].endswith("-v2.mp4")
+    assert "made_from" not in job["result"]
+
+
+def test_a_board_job_keeps_the_new_seed_as_a_version(client, wait, fakes, make_story):
+    sid, job = job_with_a_redraw(client, wait, fakes, make_story(("still",)), "board")
     assert job["result"]["redrawn"] == {"1": "Ann appears twice."} and job["result"]["version"] == 2
     assert job["version"] == 2  # nothing else was saved meanwhile: the job made version 2
     story = client.get(f"/api/stories/{sid}").json()
@@ -131,31 +211,9 @@ def test_a_board_job_keeps_the_new_seed_as_a_version(client, wait, make_story):
     assert story["board"]["scenes"][0]["keyframe"] == job["result"]["keyframes"][0]
 
 
-def test_the_new_seeds_keep_an_edit_saved_while_the_job_ran(cfg, db, story_row, make_story):
-    before = make_story(("still", "still"))
-    started = db.add_version(story_row, before.model_dump(), note="the version the board runs")
-    # While the board runs, the user retitles the story and changes scene 2's picture.
-    edited = before.model_copy(deep=True)
-    edited.title, edited.scenes[1].visual = "Retitled", "a different picture"
-    db.add_version(story_row, edited.model_dump(), note="saved while it ran")
-    after = before.model_copy(deep=True)
-    after.scenes[0].seed, after.scenes[1].seed = 111, 222
-    tl = timing.timeline([1.0, 1.0], 0.5, 0.5, 1.5, 0.8)
-    board = Board([], None, [], tl, redrawn={1: "twice", 2: "twice"})
-    with db.session() as s:
-        job = Job(story_id=story_row, kind="board", version=started, params={}, progress={})
-        s.add(job)
-        s.commit()
-        s.refresh(job)
-    out = Runner(cfg, db).checked(job, before, after, board)
-    with db.session() as s:
-        _, row = db.storyboard(s, story_row)
-        latest = Storyboard.model_validate(row.storyboard)
-    assert out["version"] == started + 2 and "made_from" not in out
-    assert latest.title == "Retitled" and latest.scenes[1].visual == "a different picture"
-    # Scene 1's picture is still the one checked, so it takes its new seed; scene 2 was redrawn by
-    # the edit, so its check no longer applies.
-    assert [sc.seed for sc in latest.scenes] == [111, None]
+def test_a_checker_that_isnt_an_llm_is_refused(client):
+    r = client.put("/api/settings", json={"changes": {"defaults.checker": "gpt"}})
+    assert r.status_code == 422 and "an LLM is ollama/<model> or openrouter/<model id>" in r.json()["detail"]
 
 
 def test_the_cli_writes_back_only_the_new_seeds(tmp_path, make_story, capsys):
@@ -167,8 +225,9 @@ def test_the_cli_writes_back_only_the_new_seeds(tmp_path, make_story, capsys):
         "video",
         999,
     )  # --subtitles, --mode, a redraw
+    _keep_redraws(path, sb, {2: "twice"})
     tl = timing.timeline([1.0, 1.0], 0.5, 0.5, 1.5, 0.8)
-    _checked(path, sb, Board([], None, [], tl, redrawn={2: "twice"}, flagged={1: "text"}))
+    _flagged(Board([], None, [], tl, flagged={1: "text"}))
     saved = Storyboard.model_validate_json(path.read_text(encoding="utf-8"))
     assert saved.subtitles == "sidecar" and [s.mode for s in saved.scenes] == ["still", "still"]
     assert [s.seed for s in saved.scenes] == [None, 999]

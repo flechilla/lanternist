@@ -22,12 +22,12 @@ from .storyboard import (
     CastMember,
     Effort,
     Line,
+    LlmId,
     Mode,
     Models,
     Place,
     Scene,
     Storyboard,
-    WriterId,
     slugify,
 )
 from .text import LANGUAGES, sentences, word_count
@@ -110,7 +110,7 @@ class Brief(BaseModel):
     notes: str = ""
     mode: Literal["still", "video", "hybrid"] = "still"
     voice: str = "demo"
-    writer: WriterId = Field(
+    writer: LlmId = Field(
         "", description="ollama/<model> or openrouter/<model id>; empty is the default writer"
     )
     effort: Effort | None = Field(None, description="reasoning effort; None is the model's default")

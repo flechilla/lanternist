@@ -19,15 +19,16 @@ Subtitles = Literal["off", "sidecar", "burned"]
 Effort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 
 
-def _writer_id(v: str) -> str:
+def _llm_id(v: str) -> str:
     v = v.strip()
     if v and not re.fullmatch(r"(ollama|openrouter)/\S.*", v):
-        raise ValueError("the writer is ollama/<model> or openrouter/<model id>")
+        raise ValueError("an LLM is ollama/<model> or openrouter/<model id>")
     return v
 
 
-# The model that writes a story: "ollama/<tag>" or "openrouter/<model id>". Empty means the default.
-WriterId = Annotated[str, AfterValidator(_writer_id)]
+# An LLM: the model that writes a story, or the one that checks its pictures. "ollama/<tag>" or
+# "openrouter/<model id>"; empty means the default.
+LlmId = Annotated[str, AfterValidator(_llm_id)]
 
 
 def _model_id(v: str) -> str:
@@ -95,7 +96,7 @@ class Scene(BaseModel):
 class Models(BaseModel):
     """Which model makes each stage; empty means the default from Settings."""
 
-    writer: WriterId = Field("", description="ollama/<model> or openrouter/<model id>; rewrites use it too")
+    writer: LlmId = Field("", description="ollama/<model> or openrouter/<model id>; rewrites use it too")
     writer_effort: Effort | None = Field(
         None, description="the writer's reasoning effort; None is the model's default"
     )

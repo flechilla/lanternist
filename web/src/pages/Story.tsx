@@ -46,9 +46,16 @@ export default function Story() {
     setDirty(value);
   };
 
+  // The version the draft was taken from: a save is based on it, so a version saved meanwhile (a
+  // picture check's new seeds) makes the save a conflict instead of being overwritten.
+  const draftVersion = useRef<number | null>(null);
+
   const apply = useCallback((d: StoryDetail) => {
     setDetail(d);
-    if (!dirtyRef.current) setDraft(d.storyboard ? structuredClone(d.storyboard) : null);
+    if (!dirtyRef.current) {
+      setDraft(d.storyboard ? structuredClone(d.storyboard) : null);
+      draftVersion.current = d.version;
+    }
     setStarted((s) => s.filter((j) => !d.jobs.some((x) => x.id === j.id)));
   }, []);
   const load = useCallback(() => api.story(id).then(apply), [id, apply]);
@@ -134,7 +141,7 @@ export default function Story() {
 
   async function saveBoard(sb: Storyboard, note: string) {
     try {
-      await api.save(id, sb, detail!.version, note);
+      await api.save(id, sb, draftVersion.current ?? detail!.version, note);
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) setStale(true);
       throw e;
