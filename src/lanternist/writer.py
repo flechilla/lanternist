@@ -1,9 +1,9 @@
-"""The writer: a one-line idea becomes a storyboard, with the local LLM through Ollama.
+"""The writer: a one-line idea becomes a storyboard, with the local LLM or an OpenRouter model (llm.py).
 
 Two passes. Pass 1 writes the story as plain prose in the story's language, because prose written
-into a JSON field comes out worse. Pass 2 reads that story and returns, through Ollama's
-schema-constrained output, the cast and each paragraph's English picture, motion and sound
-prompts. Narration is taken verbatim from pass 1, so the LLM can't drift it while formatting.
+into a JSON field comes out worse. Pass 2 reads that story and returns, through schema-constrained
+output, the cast and each paragraph's English picture, motion and sound prompts. Narration is
+taken verbatim from pass 1, so the LLM can't drift it while formatting.
 """
 
 import random
@@ -11,12 +11,23 @@ import re
 from collections.abc import Callable
 from typing import Literal
 
-import httpx
 from pydantic import BaseModel, Field, ValidationError
 
+from . import llm as llms
 from .config import Settings
-from .gpu import lease
-from .storyboard import Camera, CastMember, Line, Scene, Storyboard, slugify
+from .db import to_usd
+from .storyboard import (
+    Camera,
+    CastMember,
+    Effort,
+    Line,
+    Mode,
+    Models,
+    Scene,
+    Storyboard,
+    WriterId,
+    slugify,
+)
 from .text import LANGUAGES, word_count
 
 STYLES = {
@@ -81,6 +92,10 @@ class Brief(BaseModel):
     notes: str = ""
     mode: Literal["still", "video", "hybrid"] = "still"
     voice: str = "demo"
+    writer: WriterId = Field(
+        "", description="ollama/<model> or openrouter/<model id>; empty is the default writer"
+    )
+    effort: Effort | None = Field(None, description="reasoning effort; None is the model's default")
 
     @property
     def target_words(self) -> int:
@@ -156,28 +171,6 @@ def inline_schema(model: type[BaseModel]) -> dict:
     return walk(schema)
 
 
-class Ollama:
-    def __init__(self, cfg: Settings):
-        self.cfg = cfg
-
-    async def chat(self, system: str, user: str, schema: dict | None = None, temperature: float = 0.8) -> str:
-        body = {
-            "model": self.cfg.ollama.model,
-            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-            "stream": False,
-            "think": False,
-            "keep_alive": "2m",
-            "options": {"num_ctx": self.cfg.ollama.num_ctx, "temperature": temperature},
-        }
-        if schema:
-            body["format"] = schema
-        async with httpx.AsyncClient(timeout=httpx.Timeout(600, connect=10)) as client:
-            r = await client.post(f"{self.cfg.ollama.url}/api/chat", json=body)
-        if r.status_code != 200:
-            raise RuntimeError(f"Ollama error {r.status_code}: {r.text[:500]}")
-        return r.json()["message"]["content"]
-
-
 def _language_name(code: str) -> str:
     return LANGUAGES.get(code, code)
 
@@ -231,7 +224,7 @@ def story_prompt(b: Brief) -> tuple[str, str]:
     return system, user
 
 
-def board_prompt(b: Brief, title: str, paras: list[str]) -> tuple[str, str]:
+def board_prompt(b: Brief, title: str | None, paras: list[str]) -> tuple[str, str]:
     system = (
         "You are the storyboard artist for an illustrated, narrated film. You turn a story into image and "
         "motion prompts for AI image and video models. All prompts are in English, whatever the story's "
@@ -239,7 +232,7 @@ def board_prompt(b: Brief, title: str, paras: list[str]) -> tuple[str, str]:
     )
     numbered = "\n\n".join(f"[{i}] {p}" for i, p in enumerate(paras, 1))
     user = (
-        f"Story: {title}\nAudience: {AUDIENCES.get(b.audience, b.audience)}\n\n{numbered}\n\n"
+        f"Story: {title or '(untitled)'}\nAudience: {AUDIENCES.get(b.audience, b.audience)}\n\n{numbered}\n\n"
         f"Return the cast and exactly {len(paras)} scenes, one per numbered paragraph, in order (n = 1..{len(paras)}).\n"
         "Cast: every recurring character, with a concrete visual 'look'. Their looks are added to every prompt "
         "automatically, so in scene prompts refer to characters by name only.\n"
@@ -251,18 +244,31 @@ def board_prompt(b: Brief, title: str, paras: list[str]) -> tuple[str, str]:
     return system, user
 
 
-async def write_storyboard(cfg: Settings, b: Brief, emit: Callable[[str], None] | None = None) -> Storyboard:
+def _spent(reply: llms.Reply) -> str:
+    return f" (${to_usd(reply.cost_micros):.4f})" if reply.cost_micros else ""
+
+
+async def write_storyboard(
+    cfg: Settings,
+    b: Brief,
+    emit: Callable[[str], None] | None = None,
+    calls: llms.Calls | None = None,
+) -> Storyboard:
     emit = emit or (lambda m: None)
-    llm = Ollama(cfg)
-    async with lease(cfg, "ollama", cfg.ollama.vram_gb):
-        emit(f"writing the story ({b.scenes} scenes, ~{b.target_words} words, {_language_name(b.language)})")
+    llm = llms.make(cfg, b.writer, b.effort, calls)
+    async with llm.session():
+        emit(
+            f"writing the story with {llm.id} ({b.scenes} scenes, ~{b.target_words} words, "
+            f"{_language_name(b.language)})"
+        )
         system, user = story_prompt(b)
-        raw = await llm.chat(system, user)
+        reply = await llm.chat(system, user, name="story")
+        raw = reply.text
         title, paras = _parse_story(raw)
         if len(paras) < 2:
             raise RuntimeError("the writer returned no usable paragraphs")
         words = sum(word_count(p) for p in paras)
-        emit(f"story written: {len(paras)} paragraphs, {words} words")
+        emit(f"story written: {len(paras)} paragraphs, {words} words{_spent(reply)}")
         for _ in range(2):
             if abs(words / b.target_words - 1) <= 0.15:
                 break
@@ -279,12 +285,13 @@ async def write_storyboard(cfg: Settings, b: Brief, emit: Callable[[str], None] 
                 f"about {WORDS_PER_SCENE} words. Make it {advice}. Keep the title, characters and plot. Same "
                 f"output format.\n\n{raw}"
             )
-            raw2 = await llm.chat(system, revise, temperature=0.5)
+            reply = await llm.chat(system, revise, temperature=0.5, name="story")
+            raw2 = reply.text
             t2, p2 = _parse_story(raw2)
             w2 = sum(word_count(p) for p in p2)
             if len(p2) >= 2 and abs(w2 / b.target_words - 1) < abs(words / b.target_words - 1):
                 raw, title, paras, words = raw2, t2 or title, p2, w2
-                emit(f"revised: {len(paras)} paragraphs, {words} words")
+                emit(f"revised: {len(paras)} paragraphs, {words} words{_spent(reply)}")
 
         emit("storyboarding: cast, pictures, motion and sound")
         schema = inline_schema(WriterBoard)
@@ -292,9 +299,9 @@ async def write_storyboard(cfg: Settings, b: Brief, emit: Callable[[str], None] 
         wb, error = None, None
         for _ in range(2):
             prompt = user if not error else f"{user}\n\nYour previous answer was invalid: {error}. Fix it."
-            raw = await llm.chat(system, prompt, schema=schema, temperature=0.4)
+            reply = await llm.chat(system, prompt, schema=schema, temperature=0.4, name="storyboard")
             try:
-                wb = WriterBoard.model_validate_json(raw)
+                wb = WriterBoard.model_validate_json(_json_text(reply.text))
                 if len(wb.scenes) != len(paras):
                     raise ValueError(f"returned {len(wb.scenes)} scenes for {len(paras)} paragraphs")
                 break
@@ -304,8 +311,18 @@ async def write_storyboard(cfg: Settings, b: Brief, emit: Callable[[str], None] 
                 wb = None
         if wb is None:
             raise RuntimeError(f"the storyboard didn't validate twice: {error}")
+        emit(f"storyboard ready: {len(wb.cast)} characters, {len(wb.scenes)} scenes{_spent(reply)}")
 
-    return assemble(b, title or wb.title, paras, wb)
+    sb = assemble(b, title or wb.title, paras, wb)
+    sb.models = Models(writer=llm.id, writer_effort=b.effort)
+    return sb
+
+
+def _json_text(text: str) -> str:
+    """The JSON object in a reply; a few models wrap structured output in a code fence anyway."""
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    m = re.match(r"^```(?:json)?\s*(.*?)\s*```$", text, flags=re.DOTALL)
+    return m.group(1) if m else text
 
 
 _NOT_AMBIENCE = re.compile(
@@ -332,7 +349,8 @@ def ambience_only(sound: str) -> str:
 
 
 def assemble(b: Brief, title: str, paras: list[str], wb: WriterBoard) -> Storyboard:
-    cast, ids = [], set()
+    cast: list[CastMember] = []
+    ids: set[str] = set()
     for c in wb.cast:
         cid = slugify(c.id or c.name) or f"c{len(cast) + 1}"
         if cid not in ids:
@@ -351,10 +369,10 @@ def assemble(b: Brief, title: str, paras: list[str], wb: WriterBoard) -> Storybo
     for i, (p, ws) in enumerate(zip(paras, wb.scenes, strict=True), 1):
         members = []
         for ref in ws.cast:
-            cid = slugify(ref) if slugify(ref) in ids else by_name.get(ref.lower())
-            if cid and cid not in members:
-                members.append(cid)
-        mode = {"still": "still", "video": "video"}.get(b.mode, "video" if i - 1 in video else "still")
+            found = slugify(ref) if slugify(ref) in ids else by_name.get(ref.lower())
+            if found and found not in members:
+                members.append(found)
+        mode: Mode = ("video" if i - 1 in video else "still") if b.mode == "hybrid" else b.mode
         # A still with a static camera is a slide; stills always get a move ("auto" alternates in and out).
         camera = "auto" if mode == "still" and ws.camera == "static" else ws.camera
         scenes.append(
@@ -382,8 +400,14 @@ def assemble(b: Brief, title: str, paras: list[str], wb: WriterBoard) -> Storybo
     )
 
 
-async def rewrite_scene(cfg: Settings, sb: Storyboard, n: int, instruction: str) -> Scene:
-    """Rewrite one scene; the LLM sees the whole storyboard so the story stays consistent."""
+async def rewrite_scene(
+    cfg: Settings,
+    sb: Storyboard,
+    n: int,
+    instruction: str,
+    calls: llms.Calls | None = None,
+) -> Scene:
+    """Rewrite one scene with the story's own writer; the LLM sees the whole storyboard so the story stays consistent."""
     scene = next(s for s in sb.scenes if s.n == n)
     lang = _language_name(sb.language)
     system = (
@@ -391,14 +415,16 @@ async def rewrite_scene(cfg: Settings, sb: Storyboard, n: int, instruction: str)
         f"and sound prompts stay in English and refer to characters by name only. {ALWAYS}"
     )
     user = (
-        f"The whole storyboard, for context:\n{sb.model_dump_json(exclude={'cast_sheet_prompt'})}\n\n"
+        f"The whole storyboard, for context:\n{sb.model_dump_json(exclude={'cast_sheet_prompt', 'models'})}\n\n"
         f"Rewrite scene {n} following this instruction: {instruction}\n"
         f"Keep it consistent with the scenes before and after it. Return the full rewritten scene."
     )
-    llm = Ollama(cfg)
-    async with lease(cfg, "ollama", cfg.ollama.vram_gb):
-        raw = await llm.chat(system, user, schema=inline_schema(RewrittenScene), temperature=0.6)
-    r = RewrittenScene.model_validate_json(raw)
+    llm = llms.make(cfg, sb.models.writer, sb.models.writer_effort, calls)
+    async with llm.session():
+        reply = await llm.chat(
+            system, user, schema=inline_schema(RewrittenScene), temperature=0.6, name="scene"
+        )
+    r = RewrittenScene.model_validate_json(_json_text(reply.text))
     ids = {c.id for c in sb.cast}
     return scene.model_copy(
         update={

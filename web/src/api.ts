@@ -37,6 +37,7 @@ export interface Storyboard {
   subtitles: "off" | "sidecar" | "burned";
   cast: CastMember[];
   cast_sheet_prompt: string | null;
+  models?: { writer: string; writer_effort: Effort | null };
   scenes: Scene[];
 }
 
@@ -52,6 +53,17 @@ export interface Progress {
   stages?: Record<string, StageState>;
   log?: string[];
   message?: string;
+}
+
+export type Effort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+
+/** What a write or rewrite job reports: which model wrote it and what OpenRouter charged. */
+export interface WriterResult {
+  writer?: string | null;
+  cost_usd?: number | null;
+  calls?: number;
+  tokens_in?: number;
+  tokens_out?: number;
 }
 
 export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled";
@@ -73,7 +85,9 @@ export interface Job {
   status: JobStatus;
   params: Record<string, unknown>;
   progress: Progress;
-  result: (Partial<FilmResult> & { version?: number; cast?: string | null; keyframes?: string[] }) | null;
+  result:
+    | (Partial<FilmResult> & WriterResult & { version?: number; cast?: string | null; keyframes?: string[] })
+    | null;
   error: string | null;
   created_at: string | null;
   started_at: string | null;
@@ -121,6 +135,15 @@ export interface StoryDetail {
   jobs: Job[];
   versions: { version: number; note: string; created_at: string }[];
   film: Job | null;
+  writer: StoryWriter | null;
+}
+
+/** Who wrote a story, and what writing and rewriting it has cost, failed attempts included. */
+export interface StoryWriter {
+  id: string;
+  model: string;
+  local: boolean;
+  cost_usd: number;
 }
 
 export interface Voice {
@@ -136,7 +159,6 @@ export interface Options {
   styles: { id: string; name: string; prompt: string }[];
   cameras: Camera[];
   voices: Voice[];
-  writer_model: string;
   fake_engines: boolean;
 }
 
@@ -150,6 +172,37 @@ export interface Brief {
   notes: string;
   mode: "still" | "hybrid" | "video";
   voice: string;
+  writer: string;
+  effort: Effort | null;
+}
+
+export interface WriterModel {
+  id: string;
+  label: string;
+  provider: "ollama" | "openrouter";
+  /** The provider's own id for it, e.g. "openai/gpt-5.6-luna". */
+  model: string;
+  local: boolean;
+  recommended: boolean;
+  /** Estimated cost per minute of story; 0 for local models, null when unknown. */
+  usd_per_minute: number | null;
+  /** Where the token counts behind the estimate come from: your stories, our trials, or a median. */
+  basis: "free" | "measured" | "trial" | "typical" | "unknown";
+  efforts: { id: Effort; name: string }[] | null;
+  default_effort: Effort | null;
+  price_in: number | null;
+  price_out: number | null;
+  /** The default writer, though neither Ollama nor OpenRouter offers it right now. */
+  unavailable: boolean;
+}
+
+export interface WriterCatalog {
+  default: string;
+  models: WriterModel[];
+  providers: {
+    ollama: { ok: boolean; error: string | null };
+    openrouter: { ok: boolean; error: string | null; configured: boolean };
+  };
 }
 
 export interface Check {
@@ -249,6 +302,7 @@ export const api = {
   clearKey: (name: ProviderName) => call<void>("DELETE", `/api/providers/${name}/key`),
   settings: () => call<SettingRow[]>("GET", "/api/settings"),
   saveSettings: (changes: Record<string, unknown>) => call<SettingRow[]>("PUT", "/api/settings", { changes }),
+  writers: () => call<WriterCatalog>("GET", "/api/models?capability=writer.chat"),
   voices: () => call<Voice[]>("GET", "/api/voices"),
   addVoice: (form: FormData) => call<Voice>("POST", "/api/voices", form),
 };
@@ -279,6 +333,14 @@ export const STYLE_NAMES: Record<string, string> = {
   ink_pencil: "Ink and pencil",
   anime: "Anime",
 };
+
+/** Dollars as people read them: cents for small amounts, never "$0.00" for something that cost money. */
+export function fmtUsd(usd: number | null | undefined): string {
+  if (usd == null) return "";
+  if (usd === 0) return "free";
+  if (usd < 0.01) return `$${usd.toFixed(usd < 0.001 ? 4 : 3)}`;
+  return `$${usd.toFixed(2)}`;
+}
 
 export function fmtSeconds(s: number | null | undefined): string {
   if (s == null) return "";

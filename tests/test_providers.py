@@ -337,10 +337,15 @@ async def test_key_usage_and_the_model_list(cfg, router, world):
     ok, detail, _ = await OpenRouter(cfg, key="bad", transport_=world.transport()).check()
     assert not ok and "rejected the key" in detail
     models = await router.models(refresh=True)
-    assert [m["id"] for m in models] == ["fake/frontier", "fake/cheap"]
+    assert [m["id"] for m in models] == [
+        "fake/frontier",
+        "fake/reasoner",
+        "fake/reasoner:batch",
+        "fake/cheap",
+    ]
     world.openrouter.models.pop()
-    assert len(await router.models()) == 2  # cached for a day
-    assert len(await router.models(refresh=True)) == 1
+    assert len(await router.models()) == 4  # cached for a day
+    assert len(await router.models(refresh=True)) == 3
 
 
 async def test_no_openrouter_key(cfg, world):

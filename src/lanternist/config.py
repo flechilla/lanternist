@@ -12,6 +12,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from .storyboard import WriterId
+
 
 def _expand(v):
     return Path(os.path.expanduser(str(v)))
@@ -108,7 +110,7 @@ class Render(BaseModel):
 class Defaults(BaseModel):
     """The model each stage uses when a story doesn't pick one. Values saved on the Settings page win."""
 
-    writer: str = ""  # empty: the local Ollama model above
+    writer: WriterId = ""  # empty: the local Ollama model above
     tts: str = "local/qwen3-tts-1.7b"
     image: str = "local/flux2-klein-9b"
     video: str = "local/ltx-2.5-22b-nvfp4"
@@ -118,7 +120,13 @@ class Defaults(BaseModel):
 
 class OpenRouter(BaseModel):
     url: str = "https://openrouter.ai/api/v1"
-    recommended: list[str] = []  # model ids pinned at the top of the writer picker
+    # Pinned at the top of the writer picker: the best value from the Phase B trials (M2_PLAN.md).
+    recommended: list[str] = [
+        "anthropic/claude-opus-5",
+        "anthropic/claude-sonnet-5",
+        "deepseek/deepseek-v4.1-flash",
+        "openai/gpt-5.6-luna",
+    ]
     data_collection: Literal["allow", "deny"] = "deny"  # route only to providers that don't store prompts
     title: str = "Lanternist"  # attribution headers OpenRouter shows for the app
     referer: str = "https://github.com/lanternist/lanternist"

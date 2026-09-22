@@ -1,8 +1,9 @@
-"""In-process fakes of fal.ai and OpenRouter, served through an httpx transport.
+"""In-process fakes of fal.ai, OpenRouter and Ollama, served through an httpx transport.
 
 Fake mode (LANTERNIST_FAKE_ENGINES=1) and the tests use these, so the real clients run end to
 end with no keys and no network. fal's queue walks IN_QUEUE -> IN_PROGRESS -> COMPLETED and its
-results are ffmpeg test media; OpenRouter answers a JSON schema with a sample that fits it.
+results are ffmpeg test media; OpenRouter and Ollama answer a JSON schema with a sample that fits
+it (a storyboard gets one scene per numbered paragraph), and plain prompts with a short story.
 Tests steer failures through the attributes on FakeFal and FakeOpenRouter.
 """
 
@@ -20,25 +21,41 @@ import httpx
 from ..engines import fake as media
 
 
-def sample(schema: dict):
-    """The simplest value that fits a JSON schema."""
+def sample(schema: dict, lengths: dict[str, int] | None = None):
+    """The simplest value that fits a JSON schema; `lengths` sizes the arrays of the named properties."""
+    lengths = lengths or {}
     if "enum" in schema:
         return schema["enum"][0]
     for k in ("anyOf", "oneOf"):
         if k in schema:
-            return sample(schema[k][0])
+            return sample(schema[k][0], lengths)
     t = schema.get("type")
     if isinstance(t, list):
-        return sample({**schema, "type": t[0]})
+        return sample({**schema, "type": t[0]}, lengths)
     if t == "object":
-        return {k: sample(v) for k, v in (schema.get("properties") or {}).items()}
+        out = {}
+        for k, v in (schema.get("properties") or {}).items():
+            if v.get("type") == "array" and k in lengths:
+                out[k] = [sample(v.get("items") or {}, lengths) for _ in range(lengths[k])]
+            else:
+                out[k] = sample(v, lengths)
+        return out
     if t == "array":
-        return [sample(schema.get("items") or {}) for _ in range(max(schema.get("minItems", 1), 1))]
+        return [sample(schema.get("items") or {}, lengths) for _ in range(max(schema.get("minItems", 1), 1))]
     return (
         {"string": "text", "integer": 1, "number": 1.0, "boolean": False}.get(t)
         if isinstance(t, str)
         else None
     )
+
+
+def answer(messages: list[dict], schema: dict | None) -> str:
+    """What the fake LLMs reply: a schema sample (one scene per '[n]' paragraph), else a short story."""
+    if schema is None:
+        return FAKE_STORY
+    prompt = (messages[-1].get("content") or "") if messages else ""
+    paragraphs = len(re.findall(r"^\[\d+\] ", prompt, flags=re.MULTILINE))
+    return json.dumps(sample(schema, {"scenes": paragraphs} if paragraphs else None))
 
 
 def _json(data, status: int = 200, headers: dict | None = None) -> httpx.Response:
@@ -275,10 +292,12 @@ FAKE_STORY = "TITLE: The Fake Lantern\n\n" + "\n\n".join(
 @dataclass
 class FakeOpenRouter:
     bad_keys: set[str] = field(default_factory=lambda: {"bad"})
-    replies: list = field(default_factory=list)  # next answers: a string, or (status, error body)
+    # Next answers: a string (the content), a dict (the whole 200 body), or (status, error body).
+    replies: list = field(default_factory=list)
     chats: list[dict] = field(default_factory=list)
     usage: float = 1.25
     limit: float | None = 10.0
+    endpoints_down: bool = False  # the per-model provider lists answer 503
     models: list[dict] = field(
         default_factory=lambda: [
             {
@@ -286,8 +305,38 @@ class FakeOpenRouter:
                 "name": "Fake Frontier",
                 "context_length": 200000,
                 "pricing": {"prompt": "0.000003", "completion": "0.000015"},
-                "supported_parameters": ["structured_outputs", "response_format", "reasoning", "temperature"],
-                "reasoning": {"mandatory": False},
+                "supported_parameters": [
+                    "structured_outputs",
+                    "response_format",
+                    "reasoning",
+                    "temperature",
+                    "max_tokens",
+                ],
+                "top_provider": {"max_completion_tokens": 128000},
+                "reasoning": {
+                    "mandatory": False,
+                    "supported_efforts": ["max", "high", "medium", "low", "none"],
+                    "default_effort": "medium",
+                },
+            },
+            {
+                "id": "fake/reasoner",
+                "name": "Fake Reasoner",
+                "context_length": 400000,
+                "pricing": {"prompt": "0.000001", "completion": "0.000005"},
+                "supported_parameters": ["structured_outputs", "response_format", "reasoning", "max_tokens"],
+                "reasoning": {
+                    "mandatory": True,
+                    "supported_efforts": ["high", "medium", "low"],
+                    "default_effort": "high",
+                },
+            },
+            {
+                "id": "fake/reasoner:batch",
+                "name": "Fake Reasoner (batch)",
+                "context_length": 400000,
+                "pricing": {"prompt": "0.0000005", "completion": "0.0000025"},
+                "supported_parameters": ["structured_outputs", "response_format", "reasoning"],
             },
             {
                 "id": "fake/cheap",
@@ -299,8 +348,30 @@ class FakeOpenRouter:
         ]
     )
 
+    def endpoints(self, model_id: str) -> list[list[str]] | None:
+        """A model's providers, as the parameters each takes: its "endpoints" if given, else one taking all."""
+        model = next((x for x in self.models if x["id"] == model_id), None)
+        return None if model is None else model.get("endpoints") or [model["supported_parameters"]]
+
     async def handle(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
+        if m := re.search(r"/models/(.+)/endpoints$", path):
+            if self.endpoints_down:
+                return _json({"error": {"code": 503, "message": "unavailable"}}, 503)
+            params = self.endpoints(m.group(1))
+            if params is None:
+                return _json({"error": {"code": 404, "message": "model not found"}}, 404)
+            return _json(
+                {
+                    "data": {
+                        "id": m.group(1),
+                        "endpoints": [
+                            {"provider_name": f"Fake {i}", "supported_parameters": ps}
+                            for i, ps in enumerate(params)
+                        ],
+                    }
+                }
+            )
         if path.endswith("/models") and request.method == "GET":
             want = request.url.params.get("supported_parameters")
             return _json({"data": [m for m in self.models if not want or want in m["supported_parameters"]]})
@@ -321,15 +392,30 @@ class FakeOpenRouter:
         if path.endswith("/chat/completions"):
             body = json.loads(request.content)
             self.chats.append(body)
+            if (body.get("provider") or {}).get("require_parameters"):
+                # Like OpenRouter: one provider must take every parameter sent, or nothing serves it.
+                sent = {p for p in ("temperature", "max_tokens", "reasoning") if p in body}
+                sent |= {"structured_outputs"} if "response_format" in body else set()
+                if not any(sent <= set(ps) for ps in self.endpoints(body["model"]) or []):
+                    return _json(
+                        {
+                            "error": {
+                                "code": 404,
+                                "message": "No endpoints found that can handle the requested parameters.",
+                            }
+                        },
+                        404,
+                    )
             if self.replies:
                 reply = self.replies.pop(0)
                 if isinstance(reply, tuple):
                     return _json(reply[1], reply[0])
+                if isinstance(reply, dict):
+                    return _json(reply)
                 text = reply
-            elif fmt := body.get("response_format"):
-                text = json.dumps(sample(fmt["json_schema"]["schema"]))
             else:
-                text = FAKE_STORY
+                fmt = body.get("response_format")
+                text = answer(body["messages"], fmt["json_schema"]["schema"] if fmt else None)
             prompt = sum(len(m.get("content") or "") for m in body["messages"]) // 4
             completion = max(len(text) // 4, 1)
             return _json(
@@ -349,16 +435,41 @@ class FakeOpenRouter:
         return _json({"error": {"code": 404, "message": f"no route for {path}"}}, 404)
 
 
+@dataclass
+class FakeOllama:
+    models: list[str] = field(default_factory=lambda: ["qwen3.8:latest", "nomic-embed-text:latest"])
+    chats: list[dict] = field(default_factory=list)
+
+    async def handle(self, request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/tags":
+            return _json({"models": [{"name": m} for m in self.models]})
+        body = json.loads(request.content)
+        self.chats.append(body)
+        text = answer(body["messages"], body.get("format"))
+        return _json(
+            {
+                "model": body["model"],
+                "message": {"role": "assistant", "content": text},
+                "done": True,
+                "prompt_eval_count": sum(len(m["content"]) for m in body["messages"]) // 4,
+                "eval_count": max(len(text) // 4, 1),
+            }
+        )
+
+
 class FakeWorld:
-    """Both fakes behind one transport, routed by host."""
+    """The fakes behind one transport, routed by host and path."""
 
     def __init__(self):
         self.fal = FakeFal()
         self.openrouter = FakeOpenRouter()
+        self.ollama = FakeOllama()
 
     async def handle(self, request: httpx.Request) -> httpx.Response:
         if request.url.host == "openrouter.ai":
             return await self.openrouter.handle(request)
+        if request.url.path in ("/api/chat", "/api/tags"):
+            return await self.ollama.handle(request)
         return await self.fal.handle(request)
 
     def transport(self) -> httpx.MockTransport:

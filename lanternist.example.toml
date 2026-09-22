@@ -11,6 +11,28 @@ model = "qwen3.8:latest"
 num_ctx = 16384
 vram_gb = 22
 
+[defaults]                                        # the model each stage uses unless a story picks one
+writer = ""                                       # empty: the Ollama model above; or openrouter/<model id>
+tts = "local/qwen3-tts-1.7b"
+image = "local/flux2-klein-9b"
+video = "local/ltx-2.5-22b-nvfp4"
+ambience = "none"                                 # or a registry id such as "fal/mmaudio-v2"
+budget_usd = 5.0                                  # per story, for remote models
+
+[openrouter]
+recommended = [                                   # pinned at the top of the writer picker
+  "anthropic/claude-opus-5",
+  "anthropic/claude-sonnet-5",
+  "deepseek/deepseek-v4.1-flash",
+  "openai/gpt-5.6-luna",
+]
+data_collection = "deny"                          # route only to providers that don't store prompts
+
+[fal]
+max_concurrency = 4                               # requests running at once; fal queues the rest
+media_ttl_hours = 24                              # how long fal keeps the files it makes for us
+voice_ttl_hours = 1                               # reference voice clips we upload
+
 [comfyui]
 url = "http://127.0.0.1:8199"
 root = "~/comfyui"

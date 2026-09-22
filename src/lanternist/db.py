@@ -213,6 +213,40 @@ class Database:
             raise KeyError(f"{story_id} v{v}")
         return story, row
 
+    def create_story(self, title: str, language: str, storyboard: dict | None = None) -> Story:
+        """A new story; with a storyboard (an import) it starts at version 1, else at 0 until it's written."""
+        from .storyboard import slugify
+
+        with self.session() as s:
+            story = Story(slug=slugify(title), title=title, language=language, version=0)
+            s.add(story)
+            s.flush()
+            if storyboard is not None:
+                self.save_version(s, story, storyboard, note="imported")
+            s.commit()
+            return story
+
+    def get_story(self, story_id: str) -> Story | None:
+        with self.session() as s:
+            return s.get(Story, story_id)
+
+    def get_version(self, story_id: str, version: int) -> StoryVersion | None:
+        with self.session() as s:
+            return s.query(StoryVersion).filter_by(story_id=story_id, version=version).one_or_none()
+
+    def story_versions(self, story_id: str) -> list[StoryVersion]:
+        """Newest first."""
+        with self.session() as s:
+            q = s.query(StoryVersion).filter_by(story_id=story_id).order_by(StoryVersion.version.desc())
+            return q.all()
+
+    def story_jobs(self, story_id: str, limit: int) -> list[Job]:
+        """The newest `limit` jobs of a story, newest first."""
+        with self.session() as s:
+            return (
+                s.query(Job).filter_by(story_id=story_id).order_by(Job.created_at.desc()).limit(limit).all()
+            )
+
     def save_version(self, s: Session, story: Story, storyboard: dict, note: str = "") -> StoryVersion:
         from .storyboard import slugify
 
@@ -224,6 +258,27 @@ class Database:
         row = StoryVersion(story_id=story.id, version=story.version, storyboard=storyboard, note=note)
         s.add(row)
         return row
+
+    def add_version(self, story_id: str, storyboard: dict, note: str = "") -> int:
+        """Save a storyboard as the story's next version, in a session of its own; returns the version."""
+        with self.session() as s:
+            story = s.get(Story, story_id)
+            if story is None:
+                raise KeyError(story_id)  # deleted while a job was writing it
+            row = self.save_version(s, story, storyboard, note=note)
+            s.commit()
+            return row.version
+
+    # jobs -------------------------------------------------------------------------------------
+    def update_job(self, job_id: str, **fields) -> Job | None:
+        """Set fields on a job; None if it's gone, deleted with its story."""
+        with self.session() as s:
+            job = s.get(Job, job_id)
+            if job is not None:
+                for k, v in fields.items():
+                    setattr(job, k, v)
+                s.commit()
+            return job
 
     # step runs --------------------------------------------------------------------------------
     def start_run(self, **fields) -> int:
@@ -256,17 +311,53 @@ class Database:
             ).first()
 
     def spend_micros(
-        self, story_id: str | None = None, job_id: str | None = None, since: datetime | None = None
+        self,
+        story_id: str | None = None,
+        job_id: str | None = None,
+        since: datetime | None = None,
+        stage: str | None = None,
     ) -> int:
         q = select(func.coalesce(func.sum(StepRun.cost_micros), 0))
         if story_id:
             q = q.where(StepRun.story_id == story_id)
         if job_id:
             q = q.where(StepRun.job_id == job_id)
+        if stage:
+            q = q.where(StepRun.stage == stage)
         if since:
             q = q.where(StepRun.created_at >= since)
         with self.session() as s:
             return int(s.scalar(q))
+
+    def writer_tokens_per_minute(self) -> dict[str, dict]:
+        """For each writer model: average tokens in and out per minute of story, over finished write jobs."""
+        q = (
+            select(StepRun.model_id, StepRun.job_id, StepRun.meta, Job.params)
+            .join(Job, Job.id == StepRun.job_id)
+            .where(
+                StepRun.stage == "write", StepRun.status == "done", Job.kind == "write", Job.status == "done"
+            )
+        )
+        jobs: dict[tuple[str, str], dict] = {}
+        with self.session() as s:
+            for model_id, job_id, meta, params in s.execute(q):
+                j = jobs.setdefault(
+                    (model_id, job_id), {"in": 0, "out": 0, "minutes": (params or {}).get("minutes")}
+                )
+                j["in"] += (meta or {}).get("tokens_in") or 0
+                j["out"] += (meta or {}).get("tokens_out") or 0
+        per_model: dict[str, list[dict]] = {}
+        for (model_id, _), j in jobs.items():
+            if j["minutes"]:
+                per_model.setdefault(model_id, []).append(j)
+        return {
+            m: {
+                "in": round(sum(j["in"] / j["minutes"] for j in js) / len(js)),
+                "out": round(sum(j["out"] / j["minutes"] for j in js) / len(js)),
+                "jobs": len(js),
+            }
+            for m, js in per_model.items()
+        }
 
     # settings ---------------------------------------------------------------------------------
     def saved_settings(self) -> dict:

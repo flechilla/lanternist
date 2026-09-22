@@ -2,6 +2,7 @@
 environment, and gets its own library folder."""
 
 import importlib
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -21,10 +22,13 @@ def _isolated_keys(request, tmp_path, monkeypatch):
     monkeypatch.delenv("FAL_KEY", raising=False)
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     from lanternist import providers
+    from lanternist.providers import openrouter
 
     providers.reset_fake()
+    openrouter._models_cache.clear()
     yield
     providers.reset_fake()
+    openrouter._models_cache.clear()
 
 
 @pytest.fixture
@@ -62,3 +66,20 @@ def client(tmp_path, voices, monkeypatch):
     with TestClient(appmod.app) as c:
         yield c
     config.settings.cache_clear()
+
+
+@pytest.fixture
+def wait(client):
+    """Waits for a job to finish and returns it; the test fails unless it finished as done."""
+
+    def wait_for(job_id: str, timeout: float = 60) -> dict:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            job = client.get(f"/api/jobs/{job_id}").json()
+            if job["status"] in ("done", "failed", "cancelled"):
+                assert job["status"] == "done", job["error"]
+                return job
+            time.sleep(0.2)
+        raise TimeoutError(job_id)
+
+    return wait_for

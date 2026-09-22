@@ -6,14 +6,27 @@ models follow best.
 """
 
 import re
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field
 
 Mode = Literal["still", "video"]
 Camera = Literal["auto", "push_in", "pull_out", "pan_left", "pan_right", "static"]
 Audience = Literal["toddlers", "kids_5_8", "kids_9_12", "teens", "adults"]
 Subtitles = Literal["off", "sidecar", "burned"]
+# OpenRouter's reasoning efforts, lowest first; each model supports some of them.
+Effort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+
+
+def _writer_id(v: str) -> str:
+    v = v.strip()
+    if v and not re.fullmatch(r"(ollama|openrouter)/\S.*", v):
+        raise ValueError("the writer is ollama/<model> or openrouter/<model id>")
+    return v
+
+
+# The model that writes a story: "ollama/<tag>" or "openrouter/<model id>". Empty means the default.
+WriterId = Annotated[str, AfterValidator(_writer_id)]
 
 
 class CastMember(BaseModel):
@@ -43,6 +56,15 @@ class Scene(BaseModel):
         return " ".join(line.text.strip() for line in self.narration if line.text.strip())
 
 
+class Models(BaseModel):
+    """Which model makes each stage; empty means the default from Settings."""
+
+    writer: WriterId = Field("", description="ollama/<model> or openrouter/<model id>; rewrites use it too")
+    writer_effort: Effort | None = Field(
+        None, description="the writer's reasoning effort; None is the model's default"
+    )
+
+
 class Storyboard(BaseModel):
     title: str
     language: str = "en"
@@ -55,6 +77,7 @@ class Storyboard(BaseModel):
     cast: list[CastMember] = Field(default_factory=list)
     # Overrides the cast sheet prompt built from `cast` (imported stories carry their own).
     cast_sheet_prompt: str | None = None
+    models: Models = Field(default_factory=Models)
     scenes: list[Scene]
 
     def scene_seed(self, scene: Scene) -> int:

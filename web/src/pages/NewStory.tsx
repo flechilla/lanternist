@@ -1,6 +1,7 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, STYLE_NAMES, type Brief } from "../api";
+import { api, errorMessage, STYLE_NAMES, type Brief, type WriterCatalog } from "../api";
+import WriterPicker from "../components/WriterPicker";
 import { useAction, useOptions } from "../hooks";
 
 const MODES: { id: Brief["mode"]; name: string; hint: string }[] = [
@@ -39,8 +40,16 @@ export default function NewStory() {
     notes: "",
     mode: "hybrid",
     voice: "demo",
+    writer: "",
+    effort: null,
   });
   const set = <K extends keyof Brief>(k: K, v: Brief[K]) => setBrief((b) => ({ ...b, [k]: v }));
+  const [writers, setWriters] = useState<WriterCatalog | null>(null);
+  const [writersError, setWritersError] = useState<string | null>(null);
+  useEffect(() => {
+    api.writers().then(setWriters, (e: unknown) => setWritersError(errorMessage(e)));
+  }, []);
+  const writer = writers?.models.find((m) => m.id === (brief.writer || writers.default));
 
   // The default narrator may not be installed: fall back to the first voice there is.
   const voices = opts?.voices ?? [];
@@ -181,6 +190,14 @@ export default function NewStory() {
               About {words} words, {Math.max(3, Math.round(words / 32))} scenes.
             </small>
           </label>
+          <WriterPicker
+            catalog={writers}
+            error={writersError}
+            chosen={writer}
+            effort={brief.effort}
+            minutes={brief.minutes}
+            onChange={(writer, effort) => setBrief((b) => ({ ...b, writer, effort }))}
+          />
           <label className="field">
             Narrator
             <select value={voice} onChange={(e) => set("voice", e.target.value)}>
@@ -195,9 +212,13 @@ export default function NewStory() {
           <button className="primary wide" type="submit" disabled={busy || !brief.idea.trim()}>
             {busy ? "Starting…" : "Write my story"}
           </button>
-          <small className="muted">
-            Written by {opts?.writer_model ?? "the local model"} on this machine. Takes a minute or two.
-          </small>
+          {writer && (
+            <small className="muted">
+              {writer.local
+                ? "Written on this machine. Takes a minute or two."
+                : "Written on OpenRouter, which charges your key for the tokens. Takes one to three minutes."}
+            </small>
+          )}
         </div>
       </div>
     </form>

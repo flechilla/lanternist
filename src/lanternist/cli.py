@@ -11,7 +11,7 @@ from typing import Annotated
 import typer
 
 from .config import settings
-from .storyboard import Storyboard, slugify
+from .storyboard import Effort, Mode, Storyboard, Subtitles, slugify
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 keys_app = typer.Typer(no_args_is_help=True, help="API keys for remote models (OpenRouter, fal.ai).")
@@ -92,10 +92,23 @@ def write(
     style: str = "watercolour",
     notes: str = "",
     mode: Annotated[str, typer.Option(help="still | video | hybrid")] = "still",
+    writer: Annotated[
+        str,
+        typer.Option(
+            help="ollama/<model> or openrouter/<model id>; "
+            "default: the one set in Settings, else the local model"
+        ),
+    ] = "",
+    effort: Annotated[
+        Effort | None, typer.Option(help="reasoning effort, for OpenRouter models that support it")
+    ] = None,
 ):
-    """Write a storyboard from a one-line idea with the local LLM."""
+    """Write a storyboard from a one-line idea, with the local LLM or an OpenRouter model."""
+    from .llm import Calls
+    from .text import word_count
     from .writer import Brief, write_storyboard
 
+    cfg, db = _effective()
     brief = Brief(
         idea=idea,
         language=language,
@@ -105,11 +118,25 @@ def write(
         style=style,
         notes=notes,
         mode=mode,
+        writer=writer,
+        effort=effort,
     )
-    sb = asyncio.run(write_storyboard(settings(), brief, emit=lambda m: print(f"  {m}", flush=True)))
+    calls = Calls(db)
+    t0 = time.time()
+    sb = asyncio.run(write_storyboard(cfg, brief, emit=lambda m: print(f"  {m}", flush=True), calls=calls))
     out = out or Path(f"{slugify(sb.title)}.json")
     out.write_text(sb.model_dump_json(indent=2), encoding="utf-8")
-    print(f"{sb.title}: {len(sb.scenes)} scenes, {len(sb.cast)} characters -> {out}")
+    words = sum(word_count(sc.text) for sc in sb.scenes)
+    info = calls.summary()
+    cost = f"${info['cost_usd']:.4f}" if info["cost_usd"] is not None else "free"
+    print(
+        f"{sb.title}: {len(sb.scenes)} scenes, {len(sb.cast)} characters, {words} words "
+        f"(target {brief.target_words}) -> {out}"
+    )
+    print(
+        f"written by {sb.models.writer} in {time.time() - t0:.0f}s: {info['calls']} calls, "
+        f"{info['tokens_in']} tokens in, {info['tokens_out']} out, {cost}"
+    )
 
 
 @app.command()
@@ -129,8 +156,8 @@ def board(story: Path):
 def render(
     story: Path,
     out: Annotated[Path | None, typer.Option("-o", "--out")] = None,
-    mode: Annotated[str | None, typer.Option(help="still | video: override every scene's mode")] = None,
-    subtitles: Annotated[str | None, typer.Option(help="off | sidecar | burned")] = None,
+    mode: Annotated[Mode | None, typer.Option(help="override every scene's mode")] = None,
+    subtitles: Annotated[Subtitles | None, typer.Option()] = None,
 ):
     """Render the whole film: board, motion, clips, mix."""
     from .pipeline import Pipeline
@@ -249,7 +276,7 @@ def models(
                 print(f"  ! {x['model']}: {x['endpoint']} is {x['status']}")
         print()
     if capability == "writer.chat":
-        _writer_models(cfg)
+        _writer_models(cfg, db)
         return
     defaults = {cfg.defaults.tts, cfg.defaults.image, cfg.defaults.video, cfg.defaults.ambience}
     for cap in registry.CAPABILITIES[1:]:
@@ -276,38 +303,31 @@ def models(
             )
         print()
     if not capability:
-        _writer_models(cfg)
+        _writer_models(cfg, db)
 
 
-def _writer_models(cfg) -> None:
-    import httpx
-
-    from .providers.openrouter import OpenRouter
+def _writer_models(cfg, db) -> None:
+    from .llm import catalog
 
     print("writer.chat")
-    current = cfg.defaults.writer or f"ollama/{cfg.ollama.model}"
-    try:
-        tags = httpx.get(f"{cfg.ollama.url}/api/tags", timeout=5).json().get("models", [])
-        for m in tags:
-            mid = f"ollama/{m['name']}"
-            print(f"  {'*' if mid == current else ' '} {mid:<30} free, local")
-    except httpx.HTTPError:
-        print(f"    Ollama isn't reachable at {cfg.ollama.url}")
-    try:
-        listed = asyncio.run(OpenRouter(cfg).models())
-    except Exception as e:  # noqa: BLE001 - the list is informational
-        print(f"    OpenRouter's model list isn't available: {e}")
-        return
-    by_id = {m["id"]: m for m in listed}
-    shown = [by_id[i] for i in cfg.openrouter.recommended if i in by_id]
-    for m in shown:
-        pr = m.get("pricing") or {}
-        mid = f"openrouter/{m['id']}"
-        per_m = [float(pr.get(k) or 0) * 1e6 for k in ("prompt", "completion")]
-        print(
-            f"  {'*' if mid == current else ' '} {mid:<30} ${per_m[0]:.2f} in / ${per_m[1]:.2f} out per 1M tokens"
-        )
+    cat = asyncio.run(catalog(cfg, db))
+    for name, st in cat["providers"].items():
+        if st.get("error"):
+            print(f"    {name}: {st['error']}")
+    listed = [m for m in cat["models"] if m["local"] or m["recommended"] or m["id"] == cat["default"]]
+    for m in listed:
+        if m["local"]:
+            price = "free, local"
+        elif m["price_in"] is None:
+            price = "not listed"
+        else:
+            price = (
+                f"${m['price_in']:.2f} in / ${m['price_out']:.2f} out per 1M tokens, "
+                f"≈ ${m['usd_per_minute'] * 3:.3f} per 3-minute story ({m['basis']})"
+            )
+        print(f"  {'*' if m['id'] == cat['default'] else ' '} {m['id']:<44} {price}")
+    remote = sum(1 for m in cat["models"] if m["provider"] == "openrouter")
     print(
-        f"    {len(listed)} OpenRouter models support structured output"
-        + ("; pin favourites with openrouter.recommended" if not shown else "")
+        f"    {remote} OpenRouter models support structured output"
+        + ("; pin favourites with openrouter.recommended" if not cfg.openrouter.recommended else "")
     )

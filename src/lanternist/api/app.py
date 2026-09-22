@@ -13,9 +13,9 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 
-from .. import keys, prefs
+from .. import keys, llm, prefs
 from ..config import settings
-from ..db import Database, Job, Story, StoryVersion
+from ..db import Database, Job, Story, StoryVersion, to_usd
 from ..jobs import Runner, is_terminal
 from ..pipeline import Pipeline, find_voice, list_voices
 from ..storyboard import Storyboard, slugify
@@ -149,6 +149,15 @@ def put_settings(body: SettingsBody):
     return prefs.describe(cfg, db)
 
 
+@app.get("/api/models")
+async def models(capability: str = "writer.chat"):
+    """The models a stage can use: so far the writer's, live from Ollama and OpenRouter. The media stages'
+    lists come with their pickers in Phase C."""
+    if capability != "writer.chat":
+        raise HTTPException(404, f"no model list for '{capability}' yet")
+    return await llm.catalog(prefs.effective(cfg, db), db)
+
+
 @app.get("/api/options")
 def options():
     return {
@@ -158,7 +167,6 @@ def options():
         "styles": [{"id": k, "name": k.replace("_", " "), "prompt": v} for k, v in STYLES.items()],
         "cameras": ["auto", "push_in", "pull_out", "pan_left", "pan_right", "static"],
         "voices": list_voices(cfg),
-        "writer_model": cfg.ollama.model,
         "fake_engines": cfg.fake_engines,
     }
 
@@ -208,52 +216,55 @@ def create_story(body: NewStory):
     source = body.storyboard or body.brief
     if source is None:
         raise HTTPException(422, "send a brief to write a story, or a storyboard to import one")
-    with db.session() as s:
-        title = body.storyboard.title if body.storyboard else "Writing…"
-        st = Story(slug=slugify(title), title=title, language=source.language, version=0)
-        s.add(st)
-        s.flush()
-        if body.storyboard:
-            db.save_version(s, st, body.storyboard.model_dump(), note="imported")
-        s.commit()
-        story = story_dict(st)
+    if body.brief:
+        try:
+            llm.check_key(prefs.effective(cfg, db), body.brief.writer)
+        except llm.LLMError as e:
+            raise HTTPException(422, str(e)) from None
+    title = body.storyboard.title if body.storyboard else "Writing…"
+    imported = body.storyboard.model_dump() if body.storyboard else None
+    story = story_dict(db.create_story(title, source.language, imported))
     job = _enqueue(story["id"], "write", None, body.brief.model_dump()) if body.brief else None
     return {"story": story, "job": job}
 
 
+def writer_dict(story_id: str, sb: dict | None) -> dict | None:
+    """Who wrote the story, and what writing it has cost: failed attempts too, since OpenRouter bills them."""
+    writer = ((sb or {}).get("models") or {}).get("writer")
+    if not writer:
+        return None  # imported, or written before stories recorded their writer
+    provider, model = llm.parse(writer)
+    return {
+        "id": writer,
+        "model": model,
+        "local": provider == "ollama",
+        "cost_usd": to_usd(db.spend_micros(story_id=story_id, stage="write")),
+    }
+
+
 @app.get("/api/stories/{story_id}")
 def get_story(story_id: str, version: int | None = None):
-    with db.session() as s:
-        st = s.get(Story, story_id)
-        if st is None:
-            raise HTTPException(404, "story not found")
-        jobs = [
-            job_dict(j)
-            for j in s.query(Job).filter_by(story_id=story_id).order_by(Job.created_at.desc()).limit(30)
-        ]
-        versions = [
-            {"version": v.version, "note": v.note, "created_at": v.created_at.isoformat()}
-            for v in s.query(StoryVersion).filter_by(story_id=story_id).order_by(StoryVersion.version.desc())
-        ]
-        row = None
-        if st.version:
-            row = (
-                s.query(StoryVersion)
-                .filter_by(story_id=story_id, version=version or st.version)
-                .one_or_none()
-            )
-        story = story_dict(st)
+    st = db.get_story(story_id)
+    if st is None:
+        raise HTTPException(404, "story not found")
+    row = db.get_version(story_id, version or st.version) if st.version else None
+    jobs = [job_dict(j) for j in db.story_jobs(story_id, limit=30)]
+    versions = [
+        {"version": v.version, "note": v.note, "created_at": v.created_at.isoformat()}
+        for v in db.story_versions(story_id)
+    ]
     sb = row.storyboard if row else None
     board = Pipeline(cfg).peek(Storyboard.model_validate(sb)) if sb else None
     films = [j for j in jobs if j["kind"] == "render" and j["status"] == "done"]
     return {
-        "story": story,
+        "story": story_dict(st),
         "version": row.version if row else 0,
         "storyboard": sb,
         "board": board,
         "jobs": jobs,
         "versions": versions,
         "film": films[0] if films else None,
+        "writer": writer_dict(story_id, sb),
     }
 
 
