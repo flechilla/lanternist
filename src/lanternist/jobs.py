@@ -170,7 +170,10 @@ class Progress:
         seen: dict[str, pace.Seen] = {}
         for stage, st in self.snap["stages"].items():
             elapsed = self._ran.get(stage, 0.0) + (now - self._since[stage] if stage in self._since else 0.0)
-            st["secs"] = round(elapsed, 1)
+            if (
+                stage in self._ran or stage in self._since
+            ):  # it has worked on an item: the writer's never does
+                st["secs"] = round(elapsed, 1)
             steps = [s[stage] for s in self.snap["scenes"].values() if stage in s]
             if stage == "portraits":
                 steps += self.snap["cast"].values()

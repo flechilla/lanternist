@@ -36,6 +36,7 @@ MEASURED = 2  # items made in this job before their pace replaces what was expec
 HISTORY = 50  # recent runs of a model its median is taken over
 # How far below and above its middle a stage's time may land, by what that time is based on.
 SPREAD = {"job": (0.85, 1.2), "history": (0.75, 1.4), "listed": (0.7, 1.6), "guess": (0.5, 2.0)}
+QUEUED = 2  # how much further the top of the range goes while an item waits in a provider's queue
 
 
 @dataclass
@@ -67,9 +68,12 @@ def plan(cfg: Settings, db: Database, estimate: dict | None, kind: str, scenes: 
         rows = PICTURES if line["stage"] == "keyframes" else (line["stage"],)
         at_once = 1 if line["local"] else cfg.fal.max_concurrency
         listed = line["gpu_seconds"] / line["todo"] if line["local"] and line["todo"] else None
+        # The picture line counts the cast sheet and portraits too, but a story has one picture a scene:
+        # those rows are counted once they start, which they do with the scene pictures.
+        todo = min(line["todo"], scenes) if line["stage"] == "keyframes" else line["todo"]
         for row in rows:
             secs, basis = _prior(db, row, line["model"], listed)
-            out[row] = Expect(line["todo"] if row == line["stage"] else 0, secs, at_once, basis)
+            out[row] = Expect(todo if row == line["stage"] else 0, secs, at_once, basis)
     if cfg.defaults.checker:
         secs, basis = _prior(db, "check", cfg.defaults.checker, None)
         drawn = out["keyframes"].items if "keyframes" in out else scenes  # each new picture is checked
@@ -98,16 +102,19 @@ def left(expect: dict[str, Expect], seen: dict[str, Seen]) -> tuple[float, float
     ):
         e, s = expect.get(stage), seen.get(stage)
         at_once = e.at_once if e else 1
-        if s and len(s.secs) >= MEASURED:
-            per, basis = statistics.mean(s.secs), "job"
-        elif e:
-            per, basis = e.secs, e.basis
-        else:
-            per, basis = GUESS.get(stage, 0.0), "guess"
         items = s.left if s else e.items if e else 0
-        t = math.ceil(items / at_once) * per * (1 - (s.at if s else 0.0))
+        if s and s.at > 0 and items:  # one item that says how far through it is: the rest at its pace
+            t, basis = s.elapsed * (1 - s.at) / s.at, "job"
+        else:
+            if s and len(s.secs) >= MEASURED:
+                per, basis = statistics.mean(s.secs), "job"
+            elif e:
+                per, basis = e.secs, e.basis
+            else:
+                per, basis = GUESS.get(stage, 0.0), "guess"
+            t = math.ceil(items / at_once) * per
         low, high = SPREAD[basis]
         lo += t * low
-        hi += t * high * (2 if s and s.waiting else 1)
+        hi += t * high * (QUEUED if s and s.waiting else 1)
         whole[stage] = (s.elapsed if s else 0.0) + t
     return lo, hi, whole

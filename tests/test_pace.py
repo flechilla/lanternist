@@ -1,8 +1,11 @@
 """How long a job has left: what each stage is expected to take, and the pace the job keeps."""
 
+from datetime import datetime, timedelta
+
 import pytest
 
 from lanternist import pace
+from lanternist.check import CHECKS_AT_ONCE
 from lanternist.jobs import Progress
 from lanternist.pace import Expect, Seen
 from lanternist.pipeline import Event, Pipeline
@@ -39,10 +42,11 @@ def test_an_item_waiting_in_a_queue_widens_the_range():
     assert queued[0] == calm[0] and queued[1] == pytest.approx(calm[1] * 2)
 
 
-def test_the_mix_counts_down_from_where_ffmpeg_has_got():
+def test_the_mix_goes_on_at_the_pace_ffmpeg_has_kept():
     seen = {"mix": Seen(left=1, secs=[], elapsed=12.0, at=0.75)}
-    _, _, whole = pace.left({"mix": Expect(1, 40.0)}, seen)
-    assert whole == {"mix": 22.0}
+    lo, hi, whole = pace.left({"mix": Expect(1, 40.0)}, seen)
+    assert whole == {"mix": 16.0}  # three quarters in 12 s: a quarter in 4 more
+    assert (lo, hi) == pytest.approx((4 * 0.85, 4 * 1.2))
 
 
 def test_a_stage_nobody_expected_is_guessed():
@@ -80,7 +84,7 @@ def test_the_plan_prices_time_from_the_estimate_and_the_history(fake_cfg, db):
     }
     plan = pace.plan(fake_cfg, db, estimate, "render", scenes=4)
     assert plan["narration"] == Expect(4, 5.0, 1, "listed")  # 20 s of GPU for 4 scenes
-    assert plan["keyframes"] == Expect(6, 16.0, 1, "history")  # the median of what klein took here
+    assert plan["keyframes"] == Expect(4, 16.0, 1, "history")  # a picture a scene; klein's median here
     assert plan["cast"] == Expect(0, 15.0, 1, "listed")  # counted in the keyframes line, never run here
     assert plan["motion"] == Expect(2, pace.GUESS["motion"], fake_cfg.fal.max_concurrency, "guess")
     assert plan["clips"].items == 4 and plan["mix"].items == 1
@@ -94,7 +98,7 @@ async def test_the_snapshot_says_how_long_is_left_and_where_the_time_goes(fake_c
     await Pipeline(fake_cfg, progress.stage, db=db, job_id=job.id).narrate(make_story(("still", "still")))
     progress.flush()
     snap = progress.snap
-    assert snap["stages"]["narration"]["secs"] >= 0
+    assert "secs" in snap["stages"]["narration"] and "mix" not in snap["stages"]
     lo, hi = snap["eta_s"]
     assert (lo, hi) == (15, 60)  # the mix alone is left: a guess of 30 s
     assert [p["stage"] for p in snap["phases"]] == ["narration", "mix"]
@@ -106,3 +110,37 @@ async def test_the_mix_says_how_far_through_the_film_it_is(fake_cfg, make_story)
     await Pipeline(fake_cfg, events.append).render(make_story(("still",)))
     at = [e.at for e in events if e.stage == "mix" and e.at is not None]
     assert at and at == sorted(at) and at[-1] == pytest.approx(1.0, abs=0.05)
+
+
+def test_the_check_expects_one_picture_a_scene(fake_cfg, db):
+    cfg = fake_cfg.model_copy(
+        update={"defaults": fake_cfg.defaults.model_copy(update={"checker": "openrouter/fake/cheap"})}
+    )
+    # A cast sheet, two portraits and three scenes, all to draw: the line counts six pictures.
+    line = {
+        "stage": "keyframes",
+        "model": "local/flux2-klein-9b",
+        "local": True,
+        "todo": 6,
+        "gpu_seconds": 90.0,
+    }
+    plan = pace.plan(cfg, db, {"lines": [line]}, "board", scenes=3)
+    assert plan["keyframes"].items == 3
+    assert plan["check"] == Expect(3, pace.GUESS["check"], CHECKS_AT_ONCE, "guess")
+
+
+def test_a_models_history_is_its_finished_runs_newest_first(db):
+    t0 = datetime(2026, 9, 22, 12)
+    for i, (secs, status) in enumerate(((5.0, "done"), (3600.0, "failed"), (7.0, "done"))):
+        db.start_run(
+            stage="motion",
+            model_id="fal/x",
+            provider="fal",
+            status=status,
+            wall_seconds=secs,
+            created_at=t0 + timedelta(minutes=i),
+        )
+    db.start_run(stage="keyframes", model_id="local/k", provider="local", status="done", gpu_seconds=16.0)
+    assert db.step_seconds("motion", "fal/x", 1) == [7.0]
+    assert db.step_seconds("motion", "fal/x", 50) == [7.0, 5.0]  # a timed-out request isn't a pace
+    assert db.step_seconds("keyframes", "local/k", 50) == [16.0]  # GPU time, when that's all there is

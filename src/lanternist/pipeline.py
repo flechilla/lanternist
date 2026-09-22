@@ -43,7 +43,7 @@ log = logging.getLogger(__name__)
 
 CLIP = "clip@1"
 MIX = "mix@3"  # 2: loudness normalised; 3: cuts are concats, not zero-length crossfades
-LABELS = {
+LABELS = {  # in the order the stages run: the progress draws them in this order
     "write": "Writing",
     "narration": "Narration",
     "cast": "Cast sheet",

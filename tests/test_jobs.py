@@ -3,6 +3,7 @@
 import asyncio
 import time
 
+from lanternist import jobs
 from lanternist.cli import _printer
 from lanternist.config import Settings
 from lanternist.db import Job, Story
@@ -116,9 +117,12 @@ async def test_a_render_reports_each_scene_through_motion_clips_and_the_mix(fake
     await Pipeline(fake_cfg, events.append).render(make_story(("still", "video")))
 
     def moves(stage: str, scene: int | None = None) -> list[str]:
-        """Where an item went, in order: the mix says it's working again each time ffmpeg moves on."""
-        statuses = [e.status for e in events if e.stage == stage and e.scene == scene and e.status in ITEM]
-        return [st for i, st in enumerate(statuses) if not i or statuses[i - 1] != st]
+        """Where an item went, in order; not the mix's ticks, each time ffmpeg moves on."""
+        return [
+            e.status
+            for e in events
+            if e.stage == stage and e.scene == scene and e.status in ITEM and e.at is None
+        ]
 
     assert moves("motion", 2) == ["queued", "working", "done"]
     assert moves("clips", 1) == ["queued", "working", "done"]
@@ -138,3 +142,38 @@ async def test_paced_fakes_take_that_long_for_each_item(fake_cfg, make_story, mo
     t0 = time.monotonic()
     await Pipeline(cfg).narrate(make_story(("still", "still", "still")))
     assert time.monotonic() - t0 >= 3 * 0.05
+
+
+class Clock:
+    """Stands in for the time module in jobs.py: time moves only when a test moves it."""
+
+    def __init__(self) -> None:
+        self.now = 1_000_000.0
+
+    def time(self) -> float:
+        return self.now
+
+
+async def test_each_row_of_a_batch_counts_its_own_time_and_a_redraw_adds_to_it(db, monkeypatch):
+    clock = Clock()
+    monkeypatch.setattr(jobs, "time", clock)
+    progress = Progress(db, db.add_job(None, "board", None, {}, None).id)
+
+    def made(stage: str, scene: int | None, secs: float, done: int, total: int) -> None:
+        progress.stage(Event(stage, "working", scene=scene))
+        clock.now += secs
+        progress.stage(Event(stage, "done", scene=scene, done=done, total=total, asset=f"{stage}{scene}.png"))
+
+    progress.stage(Event("cast", "start", done=0, total=1))
+    progress.stage(Event("keyframes", "start", done=0, total=2))
+    made("cast", None, 10, 1, 1)
+    made("keyframes", 1, 16, 1, 2)
+    made("keyframes", 2, 16, 2, 2)
+    clock.now += 30  # the check
+    progress.stage(Event("keyframes", "start", done=1, total=2))  # scene 2 drawn again
+    made("keyframes", 2, 16, 2, 2)
+    progress.stage(Event("write", "start"))  # a stage with no items to work on has no time to tell
+    progress.flush()
+    stages = progress.snap["stages"]
+    assert (stages["cast"]["secs"], stages["keyframes"]["secs"]) == (10, 48)
+    assert "secs" not in stages["write"]

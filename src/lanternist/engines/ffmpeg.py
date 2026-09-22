@@ -52,10 +52,10 @@ async def run(
             await proc.wait()
         else:
             _, err = await proc.communicate()
-    except asyncio.CancelledError:
-        proc.kill()
-        await proc.wait()
-        raise
+    finally:
+        if proc.returncode is None:  # cancelled, or `on_time` raised: never leave it encoding
+            proc.kill()
+            await proc.wait()
     log_text = err.decode(errors="replace")
     if proc.returncode != 0:
         raise FfmpegError(f"ffmpeg failed: {log_text[-2000:]}\ncmd: {' '.join(cmd)[:1500]}")
