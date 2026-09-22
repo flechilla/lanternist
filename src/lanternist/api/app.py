@@ -411,6 +411,21 @@ def reroll(story_id: str, n: int):
     return {"version": version, "job": _enqueue(story_id, "board", version)}
 
 
+@app.post("/api/stories/{story_id}/scenes/{n}/retake")
+def retake(story_id: str, n: int):
+    """A new take of one scene's video, then render (every other step comes from the cache)."""
+
+    def change(sb: Storyboard):
+        sc = next((x for x in sb.scenes if x.n == n), None)
+        if sc is None or sc.mode != "video":
+            raise HTTPException(404, f"no video scene {n}")
+        sc.video_seed = _next_seed(sb.video_seed(sc))
+
+    _get(story_id)
+    version = _bump(story_id, change, f"new take of scene {n}")
+    return {"version": version, "job": _enqueue(story_id, "render", version)}
+
+
 @app.post("/api/stories/{story_id}/cast/reroll")
 def reroll_cast(story_id: str):
     def change(sb: Storyboard):

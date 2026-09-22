@@ -24,6 +24,8 @@ export interface Scene {
   camera: Camera;
   mode: Mode;
   seed: number | null;
+  /** A new take of the scene's video; null follows `seed`. */
+  video_seed: number | null;
 }
 
 export interface Storyboard {
@@ -47,6 +49,10 @@ export interface Models {
   writer_effort: Effort | null;
   image: string;
   image_quality: string | null;
+  video: string;
+  video_quality: string | null;
+  /** A registry id, "none" to leave silent video scenes silent, or empty for the default. */
+  ambience: string;
 }
 
 export interface StageState {
@@ -120,6 +126,8 @@ export interface Estimate {
   /** Scene lengths come from recorded narration, not from the words. */
   measured: boolean;
   price_date: string | null;
+  /** What a new take of each video scene would cost. */
+  retakes: { scene: number; cost_usd: number }[];
   budget_usd?: number;
   spent_usd?: number;
   short_usd?: number;
@@ -287,6 +295,8 @@ export interface MediaModel extends MediaPrice {
   licence: string;
   commercial_use: boolean | "below_10m_revenue";
   per: string;
+  /** Video: the model makes its own sound bed, so no ambience model is needed. */
+  sound?: boolean;
   quality: {
     param: string;
     default: string;
@@ -387,6 +397,8 @@ export const api = {
   reroll: (id: string, n: number) =>
     call<{ version: number; job: Job }>("POST", `/api/stories/${id}/scenes/${n}/reroll`),
   rerollCast: (id: string) => call<{ version: number; job: Job }>("POST", `/api/stories/${id}/cast/reroll`),
+  retake: (id: string, n: number) =>
+    call<{ version: number; job: Job }>("POST", `/api/stories/${id}/scenes/${n}/retake`),
   run: (id: string, kind: "cast" | "board" | "render") => call<Job>("POST", `/api/stories/${id}/${kind}`),
   estimate: (id: string, kind: "board" | "render") =>
     call<Estimate>("GET", `/api/stories/${id}/estimate?kind=${kind}`),
@@ -441,7 +453,7 @@ export function fmtUsd(usd: number | null | undefined): string {
 }
 
 /** A button's label with what pressing it costs, when it costs money. */
-export function withPrice(label: string, usd: number | undefined): string {
+export function withPrice(label: string, usd: number | null | undefined): string {
   return usd ? `${label} · ${fmtUsd(usd)}` : label;
 }
 
@@ -452,9 +464,14 @@ export function fmtSeconds(s: number | null | undefined): string {
   return m ? `${m}:${String(r).padStart(2, "0")}` : `${s.toFixed(1)} s`;
 }
 
+/** A price per unit: fractions of a cent matter here ($0.0125 a second), unlike in a total. */
+function fmtRate(usd: number): string {
+  return usd >= 0.1 ? `$${usd.toFixed(2)}` : `$${Number(usd.toPrecision(3))}`;
+}
+
 /** What a model costs for one unit of its output, as people read it. */
 export function priceOf(p: MediaPrice | undefined, per: string): string {
-  if (p?.usd != null) return `${fmtUsd(p.usd)} a ${per}`;
+  if (p?.usd != null) return `${fmtRate(p.usd)} a ${per}`;
   if (p?.gpu_seconds != null) return `free, about ${Math.round(p.gpu_seconds)} s of GPU a ${per}`;
   return "free, on this machine";
 }

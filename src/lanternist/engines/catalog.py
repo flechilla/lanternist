@@ -13,10 +13,13 @@ from ..keys import get_key
 from ..registry import ModelEntry
 from ..voices import find_voice
 from .base import Engine, Item, TtsEngine, VideoEngine, keyframe_size
+from .fal_audio import FalMmaudio
 from .fal_image import FalImage
+from .fal_video import FalVideo
 from .local import LocalKlein, LocalLtx, LocalQwenTts
 
 FAL_IMAGE = {"klein", "nano_banana", "seedream", "flux2"}
+FAL_VIDEO = {"kling", "veo", "wan", "wan3", "ltx", "h3"}
 
 
 def entry(cfg: Settings, db: Database | None, model_id: str, capability: str) -> ModelEntry:
@@ -54,10 +57,22 @@ def tts(cfg: Settings, db: Database | None, model_id: str, voice: str, language:
     raise _no_adapter(e)
 
 
-def video(cfg: Settings, db: Database | None, model_id: str) -> VideoEngine:
-    e = entry(cfg, db, model_id, "video.image_to_video")
+def video(cfg: Settings, db: Database | None, model_id: str, quality: str | None = None) -> VideoEngine:
+    return _video(cfg, db, entry(cfg, db, model_id, "video.image_to_video"), quality)
+
+
+def _video(cfg: Settings, db: Database | None, e: ModelEntry, quality: str | None) -> VideoEngine:
     if e.provider == "local":
         return LocalLtx(cfg, e)
+    if e.family in FAL_VIDEO:
+        return FalVideo(cfg, e, db, quality)
+    raise _no_adapter(e)
+
+
+def ambience(cfg: Settings, db: Database | None, model_id: str) -> Engine:
+    e = entry(cfg, db, model_id, "audio.ambience")
+    if e.family == "mmaudio":
+        return FalMmaudio(cfg, e, db)
     raise _no_adapter(e)
 
 
@@ -91,6 +106,41 @@ def _image_row(cfg: Settings, db: Database | None, e: ModelEntry) -> dict:
     }
 
 
+def _second(seconds: float = 10.0) -> Item:
+    """A scene's clip of `seconds`, planned as its model would bill it."""
+    return Item("s001", None, 1, {"seconds": seconds, "shots": [seconds]})
+
+
+def _video_row(cfg: Settings, db: Database | None, e: ModelEntry) -> dict:
+    def per_second(quality: str | None) -> dict:
+        eng = _video(cfg, db, e, quality)
+        est = eng.estimate([_second()])  # ten seconds, so a price per second reads cleanly
+        return {
+            "usd": to_usd(est.micros // 10) if e.remote else None,
+            "gpu_seconds": est.gpu_seconds / 10 or None,
+        }
+
+    q, d = e.quality, e.durations
+    return {
+        "per": "second of video",
+        "sound": e.audio == "ambience",
+        "lengths": d.lengths() if d else [],
+        **per_second(None),
+        "quality": {
+            "param": q.param,
+            "default": q.default,
+            "options": [{"id": o, "label": q.labels.get(o, o), **per_second(o)} for o in q.options],
+        }
+        if q
+        else None,
+    }
+
+
+def _ambience_row(cfg: Settings, db: Database | None, e: ModelEntry) -> dict:
+    est = ambience(cfg, db, e.id).estimate([_second()])
+    return {"per": "second of sound", "usd": to_usd(est.micros // 10), "gpu_seconds": None, "quality": None}
+
+
 def catalog(cfg: Settings, db: Database | None, capability: str) -> dict:
     """Every model a stage can use, with what it costs and whether it can run here now."""
     defaults = {
@@ -116,6 +166,10 @@ def catalog(cfg: Settings, db: Database | None, capability: str) -> dict:
         }
         if capability == "image.keyframe":
             row |= _image_row(cfg, db, e)
+        elif capability == "video.image_to_video":
+            row |= _video_row(cfg, db, e)
+        elif capability == "audio.ambience":
+            row |= _ambience_row(cfg, db, e)
         rows.append(row)
     rows.sort(key=lambda r: (not r["local"], Decimal(str(r.get("usd") or 0))))
     return {"default": defaults[capability], "models": rows}

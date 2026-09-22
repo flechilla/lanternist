@@ -103,6 +103,7 @@ class Render(BaseModel):
     lead_in: float = 0.5  # silence before the first word
     tail: float = 1.5  # the last shot breathes after the final word
     ambience: float = 0.3  # generated sound, ducked under the voice
+    hold_max: float = 1.0  # a remote clip may end on its last frame held this long, rather than pay for more
     encoder: str = "h264_nvenc"
     bitrate: str = "12M"
 
@@ -114,7 +115,8 @@ class Defaults(BaseModel):
     tts: str = "local/qwen3-tts-1.7b"
     image: str = "local/flux2-klein-9b"
     video: str = "local/ltx-2.5-22b-nvfp4"
-    ambience: str = "none"  # or a registry id such as "fal/mmaudio-v2"
+    # Scores video scenes whose model makes no sound of its own (Kling, Veo); "none" leaves them silent.
+    ambience: str = "fal/mmaudio-v2"
     budget_usd: float = 5.0  # per story, for remote models
 
 

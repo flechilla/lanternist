@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { chosenModel, fmtUsd, priceOf, type MediaCatalog, type MediaModel } from "../api";
+import { chosenModel, priceOf, type MediaCatalog, type MediaModel } from "../api";
 
 function Row({ m, chosen, onPick }: { m: MediaModel; chosen: boolean; onPick: () => void }) {
   const cheapest = m.quality?.options.reduce<number | null>(
@@ -9,7 +9,7 @@ function Row({ m, chosen, onPick }: { m: MediaModel; chosen: boolean; onPick: ()
   );
   const price =
     m.quality && cheapest != null && m.quality.options.length > 1
-      ? `from ${fmtUsd(cheapest)} a ${m.per}`
+      ? `from ${priceOf({ usd: cheapest, gpu_seconds: null }, m.per)}`
       : priceOf(m, m.per);
   return (
     <button type="button" className="pick-row" aria-pressed={chosen} disabled={!m.available} onClick={onPick}>
@@ -31,6 +31,7 @@ export default function ModelPicker({
   quality,
   disabled,
   allowDefault = true,
+  off,
   onChange,
 }: {
   label: string;
@@ -43,10 +44,13 @@ export default function ModelPicker({
   disabled?: boolean;
   /** Offer "the default" as a choice: yes for a story, no in Settings, where the default is chosen. */
   allowDefault?: boolean;
+  /** Offer turning the stage off (the value "none"), described by this text. */
+  off?: string;
   onChange: (model: string, quality: string | null) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const { model, qualityId, price } = chosenModel(catalog, value, quality ?? null);
+  const isOff = value === "none" || (!value && catalog?.default === "none");
+  const { model, qualityId, price } = chosenModel(catalog, isOff ? "" : value, quality ?? null);
   const models = (catalog?.models ?? []).filter((m) => m.status !== "deprecated" || m.id === model?.id);
   const local = models.filter((m) => m.local);
   const remote = models.filter((m) => !m.local);
@@ -54,6 +58,7 @@ export default function ModelPicker({
 
   function pick(id: string) {
     const next = catalog?.models.find((m) => m.id === (id || catalog.default));
+    // A quality carries over to the new model when it offers the same one.
     onChange(id, next?.quality?.options.some((o) => o.id === qualityId) ? qualityId : null);
     setOpen(false);
   }
@@ -64,10 +69,10 @@ export default function ModelPicker({
       <div className="pick">
         <div className="what">
           <b>
-            {model?.label ?? (value || "…")}
-            {allowDefault && !value && model ? " (the default)" : ""}
+            {isOff ? "Off" : (model?.label ?? (value || "…"))}
+            {allowDefault && !value && (model || isOff) ? " (the default)" : ""}
           </b>
-          <small>{model ? priceOf(price, model.per) : (error ?? "Loading the models…")}</small>
+          <small>{isOff ? off : model ? priceOf(price, model.per) : (error ?? "Loading the models…")}</small>
         </div>
         <button
           type="button"
@@ -79,7 +84,7 @@ export default function ModelPicker({
           {open ? "Close" : "Change"}
         </button>
       </div>
-      {model?.quality && quality !== undefined && (
+      {model?.quality && quality !== undefined && !isOff && (
         <div className="segmented" role="group" aria-label={`${label}: quality`}>
           {model.quality.options.map((o) => (
             <button
@@ -95,7 +100,7 @@ export default function ModelPicker({
           ))}
         </div>
       )}
-      {model?.notes && <small>{model.notes}</small>}
+      {model?.notes && !isOff && <small>{model.notes}</small>}
       {open && catalog && (
         <div className="pick-menu">
           <div className="pick-list">
@@ -103,6 +108,17 @@ export default function ModelPicker({
               <button type="button" className="pick-row" aria-pressed={!value} onClick={() => pick("")}>
                 <b>The default: {byDefault.label}</b>
                 <small>Follows what Settings says for every story.</small>
+              </button>
+            )}
+            {off && (
+              <button
+                type="button"
+                className="pick-row"
+                aria-pressed={value === "none"}
+                onClick={() => pick("none")}
+              >
+                <b>Off</b>
+                <small>{off}</small>
               </button>
             )}
             {local.length > 0 && <p className="group">On this machine</p>}

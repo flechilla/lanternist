@@ -1,6 +1,7 @@
 """Shared fixtures. Every test runs away from the real keychain, the real key file and any keys in the
 environment, and gets its own library folder."""
 
+import asyncio
 import importlib
 import time
 
@@ -124,3 +125,17 @@ def wait(client):
         raise TimeoutError(job_id)
 
     return wait_for
+
+
+@pytest.fixture
+def until():
+    """Waits, in an async test, until `cond()` holds; fails after `timeout` seconds."""
+
+    async def wait(cond, timeout: float = 5.0) -> None:
+        deadline = asyncio.get_running_loop().time() + timeout
+        while not cond():
+            if asyncio.get_running_loop().time() > deadline:
+                raise TimeoutError
+            await asyncio.sleep(0.01)
+
+    return wait

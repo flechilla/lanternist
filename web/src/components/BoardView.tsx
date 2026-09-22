@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import {
   asset,
   chosenModel,
-  fmtUsd,
   type BoardPeek,
   type Budget,
   type Estimate,
@@ -16,6 +15,13 @@ import EstimateBox from "./EstimateBox";
 import ModelPicker from "./ModelPicker";
 import Slide from "./Slide";
 
+/** The models each media stage can use. */
+export interface Catalogs {
+  image: MediaCatalog;
+  video: MediaCatalog;
+  ambience: MediaCatalog;
+}
+
 interface Props {
   draft: Storyboard;
   board: BoardPeek;
@@ -24,7 +30,7 @@ interface Props {
   jobActive: boolean;
   busy: boolean;
   dirty: boolean;
-  pictures: MediaCatalog | null;
+  catalogs: Catalogs | null;
   catalogError: string | null;
   estimates: { board: Estimate; render: Estimate } | null;
   estimateError: string | null;
@@ -33,6 +39,7 @@ interface Props {
   onMode: (n: number, mode: Mode) => void;
   onModels: (change: Partial<Models>, note: string) => void;
   onReroll: (n: number) => void;
+  onRetake: (n: number) => void;
   onBoard: () => void;
   onRender: () => void;
 }
@@ -75,8 +82,13 @@ export default function BoardView(p: Props) {
   const videos = scenes.filter((x) => x.s.mode === "video").length;
   const ready = missing === 0 && unvoiced === 0;
   const models = p.draft.models;
-  const picture = chosenModel(p.pictures, models.image, models.image_quality);
-  const redrawUsd = picture.price?.usd;
+  const cat = p.catalogs;
+  const redrawUsd = chosenModel(cat?.image ?? null, models.image, models.image_quality).price?.usd;
+  const videoModel = chosenModel(cat?.video ?? null, models.video, models.video_quality).model;
+  const retakes = Object.fromEntries((p.estimates?.render.retakes ?? []).map((r) => [r.scene, r.cost_usd]));
+  const labelOf = (c: MediaCatalog | undefined, id: string) =>
+    c?.models.find((m) => m.id === (id || c.default))?.label ?? "the default";
+  const locked = p.busy || p.jobActive;
 
   let summary: string;
   if (p.dirty) summary = "You have unsaved script changes. They're saved before anything is drawn.";
@@ -114,18 +126,50 @@ export default function BoardView(p: Props) {
       <section className="panel models" aria-label="Models">
         <ModelPicker
           label="Pictures"
-          catalog={p.pictures}
+          catalog={cat?.image ?? null}
           error={p.catalogError}
           value={models.image}
           quality={models.image_quality}
-          disabled={p.busy || p.jobActive}
+          disabled={locked}
           onChange={(image, image_quality) =>
-            p.onModels(
-              { image, image_quality },
-              `pictures by ${p.pictures?.models.find((m) => m.id === (image || p.pictures?.default))?.label ?? "the default"}`,
-            )
+            p.onModels({ image, image_quality }, `pictures by ${labelOf(cat?.image, image)}`)
           }
         />
+        {videos > 0 && (
+          <ModelPicker
+            label="Video"
+            catalog={cat?.video ?? null}
+            error={p.catalogError}
+            value={models.video}
+            quality={models.video_quality}
+            disabled={locked}
+            onChange={(video, video_quality) =>
+              p.onModels({ video, video_quality }, `video by ${labelOf(cat?.video, video)}`)
+            }
+          />
+        )}
+        {videos > 0 &&
+          (videoModel?.sound ? (
+            <div className="field">
+              <span>Ambience</span>
+              <small>{videoModel.label} makes its own sound bed, so its scenes need no other.</small>
+            </div>
+          ) : (
+            <ModelPicker
+              label="Ambience"
+              catalog={cat?.ambience ?? null}
+              error={p.catalogError}
+              value={models.ambience}
+              disabled={locked}
+              off="Video scenes stay silent under the narration."
+              onChange={(ambience) =>
+                p.onModels(
+                  { ambience },
+                  ambience === "none" ? "no ambience" : `ambience by ${labelOf(cat?.ambience, ambience)}`,
+                )
+              }
+            />
+          ))}
       </section>
       <EstimateBox
         estimate={p.estimates?.render ?? null}
@@ -167,6 +211,11 @@ export default function BoardView(p: Props) {
                 ))}
               </div>
               <span className="spacer" />
+              {peek?.motion && (
+                <a className="btn quiet small" href={asset(peek.motion)} target="_blank" rel="noreferrer">
+                  Watch
+                </a>
+              )}
               {peek?.audio && (
                 <button
                   className="quiet small"
@@ -182,8 +231,18 @@ export default function BoardView(p: Props) {
                 disabled={p.busy || p.jobActive}
                 title="Draw this scene again with a new seed"
               >
-                {redrawUsd ? `Redraw · ${fmtUsd(redrawUsd)}` : "Redraw"}
+                {withPrice("Redraw", redrawUsd)}
               </button>
+              {s.mode === "video" && peek?.motion && (
+                <button
+                  className="quiet small"
+                  onClick={() => p.onRetake(s.n)}
+                  disabled={locked}
+                  title="Animate this scene again with a new seed, then render the film"
+                >
+                  {withPrice("New take", retakes[s.n])}
+                </button>
+              )}
             </div>
           </article>
         ))}

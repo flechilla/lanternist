@@ -70,6 +70,7 @@ export default function ScriptEditor(p: Props) {
         camera: "auto",
         mode: "still",
         seed: null,
+        video_seed: null,
       };
       sb.scenes.splice(i + 1, 0, blank);
       sb.scenes.forEach((s, k) => {

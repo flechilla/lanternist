@@ -1,7 +1,8 @@
 """A film is a sequence of cached stages, each run as one batch on the engine its story picked.
 
     board:   narration -> cast sheet + keyframes
-    render:  board -> motion for video scenes -> one normalised clip per scene -> mix
+    render:  board -> motion for video scenes -> ambience for the silent ones -> one normalised
+             clip per scene -> mix
 
 Every step's output is stored under a key hashing everything that decides it, so a second run
 is all cache hits and an edit re-runs only the steps it reaches. A stage asks its engine
@@ -45,6 +46,7 @@ LABELS = {
     "cast": "Cast sheet",
     "keyframes": "Pictures",
     "motion": "Animation",
+    "ambience": "Ambience",
     "clips": "Scene clips",
     "mix": "Final mix",
 }
@@ -157,8 +159,16 @@ class Pipeline:
         m = sb.models
         return catalog.image(self.cfg, self.db, m.image or self.cfg.defaults.image, m.image_quality)
 
-    def video(self) -> VideoEngine:
-        return catalog.video(self.cfg, self.db, self.cfg.defaults.video)
+    def video(self, sb: Storyboard) -> VideoEngine:
+        m = sb.models
+        return catalog.video(self.cfg, self.db, m.video or self.cfg.defaults.video, m.video_quality)
+
+    def ambience_engine(self, sb: Storyboard, video: VideoEngine) -> Engine | None:
+        """What scores the video scenes: nothing when the video model makes its own sound or it's off."""
+        model = sb.models.ambience or self.cfg.defaults.ambience
+        if video.entry.audio == "ambience" or model == "none":
+            return None
+        return catalog.ambience(self.cfg, self.db, model)
 
     # ---------------------------------------------------------------- one stage
     async def _stage(
@@ -354,21 +364,58 @@ class Pipeline:
         for i, sc in enumerate(sb.scenes):
             if sc.mode != "video":
                 continue
-            prompt, seed = prompts.video(sb, sc), sb.scene_seed(sc)
-            shots = eng.shots(tl.clip_length(i))
+            prompt, seed = prompts.video(sb, sc), sb.video_seed(sc)
+            seconds = round(tl.clip_length(i), 3)
+            shots = eng.shots(seconds)
             inputs = {"prompt": prompt, "seed": seed, "keyframe": keyframes[i]}
             key = eng.key("motion", shots=shots, **inputs) if keyframes[i] else None
-            items.append(Item(_sid(sc), key, sc.n, {"shots": shots, **inputs}))
+            items.append(Item(_sid(sc), key, sc.n, {"shots": shots, "seconds": seconds, **inputs}))
         return items
 
     async def motion(self, sb: Storyboard, board: Board) -> dict[int, str]:
         """Animate every video-mode scene; a slot longer than one generation is chained shots."""
         if not any(sc.mode == "video" for sc in sb.scenes):
             return {}
-        eng = self.video()
+        eng = self.video(sb)
         items = self.motion_items(sb, board.timeline, list(board.keyframes), eng)
         records = await self._stage("motion", eng, items, "video")
         return {it.scene: records[it.id]["assets"]["video"] for it in items if it.scene is not None}
+
+    # ---------------------------------------------------------------- ambience
+    def ambience_items(
+        self, sb: Storyboard, motion: list[Item], motions: dict[int, str | None], eng: Engine
+    ) -> list[Item]:
+        """One item per video scene with a sound line. Without its clip (the estimate) it has no key."""
+        by_scene = {sc.n: sc for sc in sb.scenes}
+        items = []
+        for m in motion:
+            sc = by_scene[m.scene] if m.scene is not None else None
+            if sc is None or not sc.sound.strip():
+                continue
+            video = motions.get(sc.n)
+            inputs = {
+                "prompt": sc.sound.strip(),
+                "seed": sb.video_seed(sc),
+                "seconds": round(sum(m.params["shots"]), 3),
+            }
+            key = eng.key("ambience", video=video, **inputs) if video else None
+            items.append(Item(_sid(sc), key, sc.n, {"video": video, **inputs}))
+        return items
+
+    async def ambience(self, sb: Storyboard, board: Board, motions: dict[int, str]) -> dict[int, str]:
+        """A sound bed under each video scene whose model made none; the scored clip replaces its motion."""
+        if not motions:
+            return motions
+        video = self.video(sb)
+        eng = self.ambience_engine(sb, video)
+        if eng is None:
+            return motions
+        motion = self.motion_items(sb, board.timeline, list(board.keyframes), video)
+        items = self.ambience_items(sb, motion, dict(motions), eng)
+        if not items:
+            return motions
+        records = await self._stage("ambience", eng, items, "video")
+        return motions | {it.scene: records[it.id]["assets"]["video"] for it in items if it.scene is not None}
 
     # ---------------------------------------------------------------- clips
     def _clip_items(self, sb: Storyboard, board: Board, motions: dict[int, str]) -> list[Item]:
@@ -462,7 +509,7 @@ class Pipeline:
             out["total"] = round(tl.total, 2)
             if any(sc.mode == "video" for sc in sb.scenes):
                 by_scene = {row["n"]: row for row in scenes}
-                for it in self.motion_items(sb, tl, [r["keyframe"] for r in scenes], self.video()):
+                for it in self.motion_items(sb, tl, [r["keyframe"] for r in scenes], self.video(sb)):
                     rec = self.cached(it)
                     by_scene[it.scene]["motion"] = rec["assets"]["video"] if rec else None
         return out
@@ -470,7 +517,7 @@ class Pipeline:
     # ---------------------------------------------------------------- all of it
     async def render(self, sb: Storyboard) -> Film:
         board = await self.board(sb)
-        motions = await self.motion(sb, board)
+        motions = await self.ambience(sb, board, await self.motion(sb, board))
         clips = await self.clips(sb, board, motions)
         film = await self.mix(sb, board, clips)
         film.poster = board.keyframes[0] if board.keyframes else None

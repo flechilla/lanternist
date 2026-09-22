@@ -6,6 +6,7 @@ belongs to the shot before); the last slot adds a tail. Crossfades are centred o
 boundaries, so each clip carries half a crossfade of handle on each side it meets another clip.
 """
 
+import itertools
 import math
 from dataclasses import dataclass
 
@@ -58,6 +59,54 @@ def shot_lengths(seconds: float, max_seconds: float) -> list[float]:
     """Split a clip longer than one generation into equal shots, each within the model's limit."""
     n = max(1, math.ceil(seconds / (max_seconds - 0.5)))
     return [seconds / n] * n
+
+
+@dataclass
+class ShotPlan:
+    shots: list[float]  # the billed length of each shot, in the order they're chained
+    paid: float  # seconds billed
+    waste: float  # seconds billed past the clip, trimmed away
+    hold: float  # seconds at the end held on the last frame
+
+
+def plan_shots(seconds: float, lengths: list[float], hold_max: float) -> ShotPlan:
+    """The cheapest billable lengths that cover a clip, for a model that bills only some lengths.
+
+    Up to `hold_max` at the end may be the last frame held still (`video_clip` pads it), since most of
+    that sits under the crossfade. Cheapest means fewest seconds billed; ties go to fewer shots, since
+    every chain is a visible seam, then to the most even split. A model billing any length in a range
+    (Kling's 3 to 15 s) is solved directly; a short list of lengths (Veo's 4, 6, 8) by trying them.
+    """
+    need = max(seconds - hold_max, 0.0)
+    lengths = sorted(float(x) for x in lengths)
+    steps = {round(b - a, 3) for a, b in itertools.pairwise(lengths)}
+    step = steps.pop() if len(steps) == 1 else 0.0
+    # On a grid of whole steps, every total is reachable and the fewest shots bill the least.
+    if step and round(lengths[0] / step, 6).is_integer():
+        shots = _even(need, lengths[0], lengths[-1], step)
+    else:
+        shots = _cheapest(need, lengths)
+    paid = round(sum(shots), 3)
+    return ShotPlan(shots, paid, round(max(paid - seconds, 0.0), 3), round(max(seconds - paid, 0.0), 3))
+
+
+def _even(need: float, lo: float, hi: float, step: float) -> list[float]:
+    n = max(1, math.ceil(need / hi - 1e-9))
+    more = max(0, math.ceil((need - n * lo) / step - 1e-9))  # steps above the shortest length, in all
+    base, extra = divmod(more, n)
+    return [round(lo + (base + (i < extra)) * step, 3) for i in range(n)]
+
+
+def _cheapest(need: float, lengths: list[float]) -> list[float]:
+    most = max(1, math.ceil(need / lengths[-1] - 1e-9))
+    best = ((round(most * lengths[-1], 3), most, 0.0), (lengths[-1],) * most)  # always covers it
+    for n in range(1, most + 3):
+        for combo in itertools.combinations_with_replacement(lengths, n):
+            total = round(sum(combo), 3)
+            rank = (total, n, max(combo) - min(combo))
+            if total + 1e-9 >= need and rank < best[0]:
+                best = (rank, combo)
+    return sorted(best[1], reverse=True)
 
 
 @dataclass

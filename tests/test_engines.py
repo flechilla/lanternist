@@ -76,7 +76,7 @@ def test_local_step_keys_are_unchanged(tmp_path):
         tl,
     )
     sb.scenes[1].mode = "video"
-    assert [it.key for it in p.motion_items(sb, board.timeline, list(board.keyframes), p.video())] == [
+    assert [it.key for it in p.motion_items(sb, board.timeline, list(board.keyframes), p.video(sb))] == [
         "1219dfec2dc822a08708f82898540b2e8b23198b36bb6a28d27508962f575d5a",
         "6e1cc8dd8a3011f1f7483191002cbfb8fd898d157ecf4a7921d1673aee25535b",
     ]

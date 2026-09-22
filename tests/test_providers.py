@@ -45,14 +45,6 @@ def spec(**kw) -> RunSpec:
     )
 
 
-async def wait_for(cond, timeout=5.0):
-    deadline = asyncio.get_running_loop().time() + timeout
-    while not cond():
-        if asyncio.get_running_loop().time() > deadline:
-            raise TimeoutError
-        await asyncio.sleep(0.01)
-
-
 # ------------------------------------------------------------------------------------ fal queue
 async def test_a_request_is_logged_priced_and_downloaded(fal, db, world, tmp_path):
     seen = []
@@ -104,11 +96,11 @@ async def test_every_request_asks_fal_to_expire_its_media(cfg, db, world):
     assert submit.headers["authorization"] == "Key test-key"
 
 
-async def test_a_restart_resumes_instead_of_paying_again(fal, db, world):
+async def test_a_restart_resumes_instead_of_paying_again(fal, db, world, until):
     world.fal.polls_before_done = 10_000
     task = asyncio.create_task(fal.run(KLING, {"duration": "5"}, spec()))
-    await wait_for(lambda: world.fal.submits)
-    await wait_for(lambda: runs(db) and runs(db)[0].status == "running")
+    await until(lambda: world.fal.submits)
+    await until(lambda: runs(db) and runs(db)[0].status == "running")
     task.cancel()  # a server shutdown: not the user's cancel
     with pytest.raises(asyncio.CancelledError):
         await task
@@ -120,10 +112,10 @@ async def test_a_restart_resumes_instead_of_paying_again(fal, db, world):
     assert [r.status for r in runs(db)] == ["done"]
 
 
-async def test_a_request_too_old_to_resume_is_submitted_again(fal, db, world):
+async def test_a_request_too_old_to_resume_is_submitted_again(fal, db, world, until):
     world.fal.polls_before_done = 10_000
     task = asyncio.create_task(fal.run(KLING, {"duration": "5"}, spec()))
-    await wait_for(lambda: runs(db))
+    await until(lambda: runs(db))
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
@@ -135,10 +127,10 @@ async def test_a_request_too_old_to_resume_is_submitted_again(fal, db, world):
     assert old.status == "failed" and "expired" in old.error and new.status == "done"
 
 
-async def test_the_users_cancel_cancels_at_fal(fal, db, world):
+async def test_the_users_cancel_cancels_at_fal(fal, db, world, until):
     world.fal.polls_before_done = 10_000
     task = asyncio.create_task(fal.run(KLING, {"duration": "5"}, spec(user_cancelled=lambda: True)))
-    await wait_for(lambda: runs(db))
+    await until(lambda: runs(db))
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task

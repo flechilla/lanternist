@@ -1,6 +1,6 @@
 # Lanternist M2: OpenRouter and fal.ai
 
-> **Status, 21 Sep 2026: Phases A and B are built and checked against the live APIs.** 91 tests pass offline, and your library is migrated to `0002` (backup in `~/Lanternist/backups/`). Both keys work. A first real video was made end to end: GPT Luna wrote the story and MiniMax H3 Max rendered the shot on fal, for $0.80 as estimated. Stories can now be written by any OpenRouter model with structured output, picked on New story; Claude Opus 5 wrote a Spanish story in the app for $0.21, as estimated. **22 Sep: Phases C and D are built offline**: the engine interface, pictures on fal with five models (Nano Banana Pro, Seedream 5.0 Pro and FLUX.2 [max] among them), and an estimate and a budget before anything is spent. Their live checks are pending. Phases E and F are next.
+> **Status, 21 Sep 2026: Phases A and B are built and checked against the live APIs.** 91 tests pass offline, and your library is migrated to `0002` (backup in `~/Lanternist/backups/`). Both keys work. A first real video was made end to end: GPT Luna wrote the story and MiniMax H3 Max rendered the shot on fal, for $0.80 as estimated. Stories can now be written by any OpenRouter model with structured output, picked on New story; Claude Opus 5 wrote a Spanish story in the app for $0.21, as estimated. **22 Sep: Phases C, D and E are built offline**: the engine interface, pictures on fal with five models (Nano Banana Pro, Seedream 5.0 Pro and FLUX.2 [max] among them), an estimate and a budget before anything is spent, and video on fal with nine models, MiniMax H3 Max and its cheap Turbo among them. Their live checks are pending. Phase F is next.
 >
 > This is the blueprint's M2 ("fal, registry, estimator, your own key") with one change: the writer calls OpenRouter directly instead of going through fal's `openrouter/router`. Going direct gives the real cost of every request, the full list of models, and one hop fewer.
 > API facts below were read from the OpenRouter and fal docs, the per-model `llms.txt` pages and the fal-client 1.0.3 source on 21 Sep 2026. Anything marked **verify** was not confirmed and gets checked in Phase A.
@@ -248,21 +248,30 @@ Every fal picture model draws the cast sheet from text (`endpoints.text_to_image
 - It returns the shots, the seconds paid for and the seconds wasted. The estimator shows the waste.
 - Local LTX keeps its exact `8k+1` frames.
 
-| Model | Billable lengths | Price (list, 21 Sep) | Notes |
+| Model | Billable lengths | Price (list, 22 Sep) | Notes |
 |---|---|---|---|
+| **MiniMax H3 Max Turbo** (`minimax/h3-max-turbo/image-to-video`) | 5–15 s, any whole second | $0.0125/s at 480P, $0.02 at 768P, $0.04 at 1080P until 30 Sep; then double | **The cheapest good video: a whole film for cents at 480P, for trying the flow.** A seed. `prompt_expansion_mode` defaults to "balanced": send "disabled". No audio switch, but its quiet sound bed serves as ambience. |
+| **MiniMax H3 Max** (`minimax/h3-max/image-to-video`) | 5–15 s | $0.025/s at 480P, $0.04 at 768P, $0.08 at 1080P until 30 Sep; then double | fal's post-trained H3: strong prompt following. Same inputs as Turbo. |
 | Kling v3 Standard | "3"–"15" s, any whole second | $0.084/s with audio off | `start_image_url`. No seed or size input: it follows the image. **`generate_audio` defaults to true: send false.** |
-| LTX-2.5 fast (`lightricks/ltx-2.5/image-to-video/fast`) | 6, 8 … 20 s | $0.09/s at 720p, $0.13/s at 1080p, **audio included** | Same model as local, with its own ambience, so no MMAudio needed. |
+| **Kling v3 Pro** | "3"–"15" s | $0.112/s with audio off | Kling's best motion; same inputs as Standard. |
+| **Veo 3.1** | "4s", "6s", "8s" | $0.20/s without audio at 720p or 1080p, $0.40 at 4k | Google's best. Long slots need 2 shots. |
 | Veo 3.1 fast | "4s", "6s", "8s" | $0.10/s without audio | Premium look. Long slots need 2 shots. |
-| Wan 2.6 flash (`wan/v2.6/image-to-video/flash`, no `fal-ai/` prefix) | "5", "10", "15" | $0.05/s at 720p | Cheapest. **`enable_prompt_expansion` defaults to true: send false**, or the character lock gets rewritten. |
+| **Wan 3.0** (`alibaba/wan-3.0/image-to-video`) | 2–30 s | $0.05/s at 480p, $0.10 at 720p, $0.20 at 1080p, sound included | `start_image_url`, no seed. Any length to 30 s, so almost nothing is trimmed. `enable_prompt_expansion` defaults to true: send false. |
+| LTX-2.5 fast (`lightricks/ltx-2.5/image-to-video/fast`) | 6, 8 … 20 s | $0.09/s at 720p, $0.13/s at 1080p, **audio included** | Same model as local, with its own ambience, so no MMAudio needed. 1440p and 4K aren't offered: they stop at 10 s. |
+| Wan 2.6 flash (`wan/v2.6/image-to-video/flash`, no `fal-ai/` prefix) | "5", "10", "15" | $0.025/s at 720p with audio off | Cheap. **`enable_prompt_expansion` defaults to true: send false**, or the character lock gets rewritten. |
+
+- **Launch prices end on a date.** A registry price can carry `until` and `then`: H3's list the launch price until 30 Sep and the regular one after, so estimates and budgets stay right on 1 Oct with no change. `models --sync` flags any other drift.
+- **Not offered:** Seedance 2.5 is billed per token and costs about $0.47/s at 720p, and Gemini Omni Flash has no audio switch listed. Both can come later as their own families.
 
 Other details:
 - **Prompt:** `prompts.video()` works as it is, and `VIDEO_NEGATIVE` goes where the model takes a negative prompt.
-- **Resolution:** ask for 1080p where it costs the same, otherwise 720p. The clip step upscales to the render size.
+- **Resolution:** a story picks it (the model's `quality`), with each option priced on the picker. The defaults: 1080p where it costs the same (Veo), else 720p or 768P. The clip step upscales to the render size.
 - **Audio off by default.** Narration is separate, and audio costs 50–100% more.
 - **Ambience comes from the `audio.ambience` step:**
   - `fal-ai/mmaudio-v2` gets the scene's raw clip plus `scene.sound` and returns the same video with sound muxed in, at $0.001/s.
   - Its output replaces the motion asset, so `video_clip` and the mix are untouched.
-  - It's skipped for models whose registry entry says `audio = "ambience"` (local LTX, LTX fast).
+  - It's skipped for models whose registry entry says `audio = "ambience"` (local LTX, LTX fast, H3, Wan 3.0).
+  - **Changed from the first plan:** MMAudio is the default (`defaults.ambience`), since it only ever runs for a video model with no sound of its own, which is already a fal model. Only its sound is kept: it's muxed under our own copy of the clip, so a clip longer than MMAudio's 30 s isn't cut.
 - **Concurrency:** all video scenes go out at once, up to `max_concurrency`. A hybrid film's video stage takes about as long as its slowest clip, instead of the sum of all of them.
 
 ### 1.9 Narration on fal
@@ -525,22 +534,26 @@ This phase comes before video on purpose: video is where the money goes.
 - [x] The estimate for a cached story is $0.
 - [x] A render over budget stops before spending and continues from the cache once the budget is raised (tested offline, and checked by hand in the app in fake mode).
 
-### Phase E: video on fal (≈3 days)
+### Phase E: video on fal (≈3 days) · built 22 Sep 2026
 
-- [ ] `timing.plan_shots` with golden tests. `motion` uses it for every engine, and local LTX gives the same frames as today.
-- [ ] Add MiniMax H3 Max (`minimax/h3-max/image-to-video`, plus the cheaper `h3-max-turbo`) to the registry:
-  - Durations are 5–15 s.
-  - It has no audio switch, yet it returns an audible track (−27 dB mean in our test), so treat it as ambience or strip it.
-  - Its launch price ($0.08/s at 1080p) doubles after 30 Sep.
-- [ ] `fal_video.py` with the Kling, LTX-fast, Veo and Wan builders: audio off, prompt expansion off, 720p or 1080p. Shots chain on last frames.
-- [ ] The `audio.ambience` stage with `fal_audio.py` (MMAudio v2), skipped for models that make their own sound.
-- [ ] Cancel versus shutdown on in-flight requests, and resume after a restart.
-- [ ] A video-model picker. Per-scene video re-roll with its price.
+- [x] `timing.plan_shots` with golden tests. `motion` uses it for every fal engine; local LTX keeps its equal shots and exact frames (the golden keys).
+  - A range of whole seconds (Kling 3–15, Wan 3.0 2–30) is solved directly; a short list (Veo's 4, 6, 8) by trying the combinations. Three 8 s shots beat two 15 s ones for a 24.5 s slot on a model billing only those.
+- [x] Add MiniMax H3 Max (`minimax/h3-max/image-to-video`, plus the cheaper `h3-max-turbo`) to the registry:
+  - Durations are 5–15 s, with a seed and a resolution (480P, 768P, 1080P) the story picks.
+  - It has no audio switch, yet it returns an audible track (−27 dB mean in our test): it's treated as the scene's ambience.
+  - Its launch price doubles after 30 Sep, which the registry now says with `until` and `then`.
+  - Also added: Kling v3 Pro, Veo 3.1 and Wan 3.0 (§1.8).
+- [x] `fal_video.py` with the Kling, LTX-fast, Veo and Wan builders (and H3 and Wan 3.0): audio off, prompt expansion off, the story's resolution. Shots chain on last frames.
+  - Each shot is a step of its own, so a scene that fails halfway doesn't pay again for the shots it made. Clips are stored with their index at the front, so the browser plays them at once.
+  - When one scene fails, the others still finish and are stored before the stage reports it.
+- [x] The `audio.ambience` stage with `fal_audio.py` (MMAudio v2), skipped for models that make their own sound, and for scenes with no sound line.
+- [x] Cancel versus shutdown on in-flight requests, and resume after a restart (tested at the pipeline level: a stopped render's requests are polled again, not paid again; a user's cancel cancels them at fal).
+- [x] A video-model picker and an ambience picker on the Board, and the video and ambience defaults in Settings. Per-scene video re-roll with its price ("New take · $0.07", `Scene.video_seed`, so the picture stays), and "Watch" for each animated scene.
 
 **Exit:**
-- A hybrid Spanish film with 3 Kling scenes and MMAudio ambience.
-- A 23 s slot renders as two chained shots, with the waste reported.
-- Killing the server mid-stage and restarting resumes without paying again. Cancel cancels at fal.
+- [ ] A hybrid Spanish film with 3 Kling scenes and MMAudio ambience. Offline it passes (`test_a_hybrid_film_on_kling_with_ambience`); the live run is pending.
+- [x] A 23 s slot renders as two chained shots, with the waste reported.
+- [x] Killing the server mid-stage and restarting resumes without paying again. Cancel cancels at fal (offline; to check live).
 
 ### Phase F: narration on fal (≈2 days)
 

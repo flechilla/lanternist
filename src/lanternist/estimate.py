@@ -73,10 +73,22 @@ def estimate(p: Pipeline, sb: Storyboard, kind: Kind) -> dict:
     pictures = ([cast_item] if cast_item else []) + keyframe_items
     lines.append((_line(p, "keyframes", img, pictures), img))
 
+    retakes = []
     if kind == "render" and any(sc.mode == "video" for sc in sb.scenes):
-        vid = p.video()
+        vid = p.video(sb)
         motion = p.motion_items(sb, p.timeline(durations), keyframes, vid)
         lines.append((_line(p, "motion", vid, motion), vid))
+        # A new take of one scene: what re-animating it alone would cost, made or not.
+        retakes = [{"scene": it.scene, "cost_micros": vid.estimate([it]).micros} for it in motion]
+        if amb := p.ambience_engine(sb, vid):
+            motions = {
+                it.scene: rec["assets"]["video"] if (rec := p.cached(it)) else None
+                for it in motion
+                if it.scene is not None
+            }
+            scored = p.ambience_items(sb, motion, motions, amb)
+            if scored:
+                lines.append((_line(p, "ambience", amb, scored), amb))
 
     total = sum(line.cost_micros for line, _ in lines)
     # The oldest list price behind a remote line that still has work to do.
@@ -89,6 +101,7 @@ def estimate(p: Pipeline, sb: Storyboard, kind: Kind) -> dict:
         "waste_seconds": round(sum(line.waste_seconds for line, _ in lines), 3),
         "measured": all(records),  # scene lengths are the recorded narration's, not guessed from words
         "price_date": min(dates).isoformat() if dates else None,
+        "retakes": retakes,
     }
     if p.db is not None and p.story_id is not None:
         budget = p.db.budget_micros(p.story_id, p.cfg.defaults.budget_usd)

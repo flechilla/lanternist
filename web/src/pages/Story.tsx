@@ -10,13 +10,12 @@ import {
   LANGUAGE_NAMES,
   type Estimate,
   type Job,
-  type MediaCatalog,
   type Mode,
   type Models,
   type StoryDetail,
   type Storyboard,
 } from "../api";
-import BoardView from "../components/BoardView";
+import BoardView, { type Catalogs } from "../components/BoardView";
 import FilmView from "../components/FilmView";
 import { Dock, Log, Stages } from "../components/JobProgress";
 import ScriptEditor from "../components/ScriptEditor";
@@ -74,10 +73,18 @@ export default function Story() {
     );
   }, [id, detail]);
 
-  const [pictures, setPictures] = useState<MediaCatalog | null>(null);
+  // The models each stage can use, for the Board's pickers.
+  const [catalogs, setCatalogs] = useState<Catalogs | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   useEffect(() => {
-    api.models("image.keyframe").then(setPictures, (e: unknown) => setCatalogError(errorMessage(e)));
+    Promise.all([
+      api.models("image.keyframe"),
+      api.models("video.image_to_video"),
+      api.models("audio.ambience"),
+    ]).then(
+      ([image, video, ambience]) => setCatalogs({ image, video, ambience }),
+      (e: unknown) => setCatalogError(errorMessage(e)),
+    );
   }, []);
 
   const allJobs = useMemo(() => [...started, ...(detail?.jobs ?? [])], [started, detail]);
@@ -206,6 +213,7 @@ export default function Story() {
     cast: () => startJob(() => api.run(id, "cast")),
     rerollCast: () => withVersion(() => api.rerollCast(id)),
     reroll: (n: number) => withVersion(() => api.reroll(id, n)),
+    retake: (n: number) => withVersion(() => api.retake(id, n)),
     rewrite: (n: number, instruction: string) => startJob(() => api.rewrite(id, n, instruction)),
     setMode,
   };
@@ -349,7 +357,7 @@ export default function Story() {
               jobActive={!!current}
               busy={busy}
               dirty={dirty}
-              pictures={pictures}
+              catalogs={catalogs}
               catalogError={catalogError}
               estimates={estimates}
               estimateError={estimateError}
@@ -358,6 +366,7 @@ export default function Story() {
               onMode={actions.setMode}
               onModels={setModels}
               onReroll={actions.reroll}
+              onRetake={actions.retake}
               onBoard={actions.board}
               onRender={actions.render}
             />

@@ -232,12 +232,14 @@ class FalEngine(Engine):
         suffix = Path(urlparse(url).path).suffix.lower()
         return await self.fal.download(url, dest.with_suffix(suffix) if suffix else dest)
 
-    async def upload(self, ctx: StepContext, asset: str, ttl_hours: float | None = None) -> str:
-        """Put a stored file on fal. Items running together share one upload of the same file:
-        every keyframe waits on the one cast sheet upload rather than starting its own."""
+    async def upload(
+        self, ctx: StepContext, asset: str, ttl_hours: float | None = None, path: Path | None = None
+    ) -> str:
+        """Put a stored file (or `path`, named `asset`) on fal. Items running together share one upload
+        of the same file: every keyframe waits on the one cast sheet upload rather than starting its own."""
         if asset not in self._uploads:
             self._uploads[asset] = asyncio.ensure_future(
-                self.fal.upload(ctx.store.path(asset), asset=asset, ttl_hours=ttl_hours)
+                self.fal.upload(path or ctx.store.path(asset), asset=asset, ttl_hours=ttl_hours)
             )
         try:
             return await asyncio.shield(self._uploads[asset])

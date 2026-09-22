@@ -185,13 +185,41 @@ async def last_frame(src: Path, out: Path) -> None:
     await run(["-sseof", "-0.25", "-i", str(src), "-update", "1", "-q:v", "2", str(out)])
 
 
-async def concat(clips: list[Path], out: Path) -> None:
-    if len(clips) == 1:
+async def concat(clips: list[Path], out: Path, faststart: bool = False) -> None:
+    """Join shots end to end without re-encoding. `faststart` puts the index at the front, so the
+    browser plays the file before it has all of it: fal's clips keep it at the end."""
+    if len(clips) == 1 and not faststart:
         out.write_bytes(clips[0].read_bytes())
         return
     listing = out.with_suffix(".txt")
-    listing.write_text("".join(f"file '{c}'\n" for c in clips))
-    await run(["-f", "concat", "-safe", "0", "-i", str(listing), "-c", "copy", str(out)])
+    listing.write_text("".join(f"file '{c}'\n" for c in clips), encoding="utf-8")
+    index = ["-movflags", "+faststart"] if faststart else []
+    await run(["-f", "concat", "-safe", "0", "-i", str(listing), "-c", "copy", *index, str(out)])
+
+
+async def mux_audio(video: Path, sound: Path, out: Path) -> None:
+    """A clip's own picture with another file's sound: the ambience made for it."""
+    await run(
+        [
+            "-i",
+            str(video),
+            "-i",
+            str(sound),
+            "-map",
+            "0:v",
+            "-map",
+            "1:a",
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-movflags",
+            "+faststart",
+            str(out),
+        ]
+    )
 
 
 def mix_graph(tl: Timeline, r: Render, subtitles: Path | None) -> str:
