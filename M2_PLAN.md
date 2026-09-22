@@ -647,8 +647,11 @@ the same pictures: it followed the camera direction, and morphed nothing where L
 together and merged a jug into a mug. It made 4¼ minutes of video in 90 s.
 
 **Still open:**
-- A character drawn twice in about one picture in ten, even told the count. A vision model catches
-  it (next item).
+- A character drawn twice in about one picture in ten, even told the count. **The picture check**
+  (`feat/picture-check`) shows a vision model each picture with who should be in it and has a
+  failing one drawn again with a new seed, at most twice. GPT-5.6 Luna caught all 8 such pictures
+  among 40, with no false alarm, for $0.0006 a picture; Gemini 3.8 Flash matched it at five times the
+  price; Claude Haiku 4.5 raised 6 false alarms. It's off until `defaults.checker` is set.
 - A small character drawn alone (a fox cub) loses its scale, and scenes then draw it adult-sized.
 - The demo voice narrates at about 185 words a minute against the 150 the writer plans for, so films
   run 10% short. Measuring each narrator's pace would fix the length.
