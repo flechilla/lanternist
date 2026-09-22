@@ -58,7 +58,7 @@ def clip(shots=(6,), seconds=6.0) -> Item:
                 "duration": 6,
                 "seed": 10,
                 "resolution": "768P",
-                "prompt_expansion_mode": "disabled",
+                "prompt_expansion_mode": "balanced",
                 "enable_safety_checker": True,
             },
         ),

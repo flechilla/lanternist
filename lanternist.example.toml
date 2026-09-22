@@ -70,6 +70,7 @@ chunk_gap = 0.25  # pause between synthesis chunks inside a scene
 lead_in = 0.5
 tail = 1.5
 ambience = 0.3    # the video model's own sound, under the voice
+loudness = -16.0  # the film's integrated loudness in LUFS, normalised in two passes
 hold_max = 1.0    # a remote clip may end on its last frame held this long, rather than pay for more
 encoder = "h264_nvenc"   # libx264 without an NVIDIA GPU
 bitrate = "12M"

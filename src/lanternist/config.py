@@ -103,6 +103,7 @@ class Render(BaseModel):
     lead_in: float = 0.5  # silence before the first word
     tail: float = 1.5  # the last shot breathes after the final word
     ambience: float = 0.3  # generated sound, ducked under the voice
+    loudness: float = -16.0  # the film's integrated loudness, LUFS: where spoken web video and podcasts sit
     hold_max: float = 1.0  # a remote clip may end on its last frame held this long, rather than pay for more
     encoder: str = "h264_nvenc"
     bitrate: str = "12M"

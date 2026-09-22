@@ -8,8 +8,18 @@ from lanternist.engines import ffmpeg
 from lanternist.engines.worker import MARK, WORKERS
 from lanternist.importers.prototype import import_story
 from lanternist.store import step_key
-from lanternist.storyboard import CastMember, Line, Scene, Storyboard
-from lanternist.writer import Brief, WriterBoard, _parse_story, ambience_only, assemble, inline_schema
+from lanternist.storyboard import CastMember, Line, Place, Scene, Storyboard
+from lanternist.writer import (
+    Brief,
+    WriterBoard,
+    WriterScene,
+    WriterShot,
+    _parse_story,
+    ambience_only,
+    assemble,
+    inline_schema,
+    split_shots,
+)
 
 PROTO = Path.home() / "ai" / "bedtime-stories" / "stories"
 
@@ -93,6 +103,21 @@ def test_prompts_restate_cast_and_style():
     assert "2 characters" in sheet and "First, small grey cat" in sheet and sheet.endswith("no text")
 
 
+def test_objects_and_places_are_locked_like_characters():
+    sb = board()
+    sb.cast.append(CastMember(id="kite", name="Poppy", look="red diamond kite, yellow bows.", kind="object"))
+    sb.places = [Place(id="faro", name="el faro", look="white stone lighthouse, red lamp room.")]
+    sc = sb.scenes[0].model_copy(update={"cast": ["luna", "kite"], "place": "faro"})
+    assert prompts.scene_picture(sb, sc) == (
+        "Wide shot of a lighthouse. Characters: Luna, small grey cat, white patch on nose. "
+        "Objects: Poppy, red diamond kite, yellow bows. Setting: white stone lighthouse, red lamp room"
+    )
+    assert "Luna (image 1), small grey cat" in prompts.keyframe(sb, sc, numbered=True)
+    # The cast sheet holds the characters; an object is locked by its look alone.
+    assert "2 characters" in prompts.cast_sheet(sb) and "kite" not in prompts.cast_sheet(sb)
+    assert "show only the second from the left: big old white gull" in prompts.portrait(sb, sb.cast[1])
+
+
 def test_step_key_changes_with_inputs():
     assert step_key("a", x=1) == step_key("a", x=1)
     assert step_key("a", x=1) != step_key("a", x=2)
@@ -104,6 +129,46 @@ def test_camera_expressions():
     assert ffmpeg.resolve_camera("auto", 1) == "pull_out"
     z, x, _ = ffmpeg.camera_expr("pan_left", 100)
     assert z == "1.1" and "on/99" in x
+
+
+def test_a_paragraph_cuts_between_its_shots():
+    # Scene 2 is another shot of scene 1's paragraph: the short pause, and a cut on its first word.
+    tl = timing.timeline(
+        [10.0, 5.0, 8.0],
+        gap=0.5,
+        lead_in=0.5,
+        tail=1.5,
+        xfade=0.8,
+        continues=[False, True, False],
+        shot_gap=0.25,
+    )
+    assert tl.speech_starts == [0.5, 10.75, 16.25] and tl.cuts == [1]
+    assert tl.clip_length(0) == pytest.approx(10.75)  # no handle into a cut
+    assert tl.clip_start(1) == pytest.approx(10.75) and tl.clip_length(1) == pytest.approx(5.9)
+    assert tl.clip_start(2) + tl.clip_length(2) == pytest.approx(tl.total)
+    g = ffmpeg.mix_graph(tl, Render(), None)
+    assert "xfade=transition=fade:duration=0.0:offset=10.750[x1]" in g
+    assert "xfade=transition=fade:duration=0.8:offset=15.850[x2]" in g
+    # Without continuing shots, nothing moves.
+    assert timing.timeline([10.0, 5.0], 0.5, 0.5, 1.5, 0.8, [False, False], 0.25) == timing.timeline(
+        [10.0, 5.0], gap=0.5, lead_in=0.5, tail=1.5, xfade=0.8
+    )
+
+
+def test_every_scene_sound_sits_the_same_distance_under_the_voice():
+    # Clips at -17, -30 and -48 LUFS against narration at -25: lowered, raised, and raised at most MAX_LIFT.
+    assert ffmpeg.ambience_gains([-17.0, -30.0, -48.0, ffmpeg.SILENT], [-25.0, -25.0]) == [
+        -8.0,
+        5.0,
+        12.0,
+        0.0,
+    ]
+    assert ffmpeg.ambience_gains([-20.0], [ffmpeg.SILENT]) == [0.0]
+    g = ffmpeg.mix_graph(timing.timeline([4.0], 0.5, 0.5, 1.5, 0.8), Render(), None, gains=[-8.0])
+    assert "[0:a]volume=-8.0dB,adelay=delays=0:all=1[a0]" in g
+    assert (
+        "loudnorm=I=-16.0:TP=-1.5:LRA=11:print_format=json" in g
+    )  # measuring, until it's told what it measured
 
 
 def test_mix_graph_offsets():
@@ -133,19 +198,19 @@ def test_writer_parse_and_assemble():
     assert _parse_story("Luna y el faro\n\nPrimer párrafo con palabras.")[0] == "Luna y el faro"
     untitled = _parse_story("Bip stood in the corner of the shop. He was shy.\n\nThen a box fell down.")
     assert untitled[0] is None and len(untitled[1]) == 2
+    shot = {"sentences": 1, "visual": "v", "motion": "m", "sound": "s", "place": "", "camera": "static"}
     wb = WriterBoard.model_validate(
         {
             "title": "Luna",
-            "cast": [{"id": "Luna", "name": "Luna", "look": "grey cat"}],
+            "cast": [
+                {"id": "Luna", "name": "Luna", "look": "grey cat", "kind": "character"},
+                {"id": "lamp", "name": "the lamp", "look": "brass lamp", "kind": "object"},
+            ],
+            "places": [{"id": "Faro", "name": "el faro", "look": "white tower"}],
             "scenes": [
                 {
                     "n": i,
-                    "visual": "v",
-                    "motion": "m",
-                    "sound": "s",
-                    "cast": ["luna", "nobody"],
-                    "camera": "static",
-                    "key_moment": i == 2,
+                    "shots": [shot | {"cast": ["luna", "nobody"], "place": "faro", "key_moment": i == 2}],
                 }
                 for i in (1, 2)
             ],
@@ -154,29 +219,55 @@ def test_writer_parse_and_assemble():
     sb = assemble(Brief(idea="x", language="es", mode="hybrid"), title, paras, wb)
     assert [s.mode for s in sb.scenes] == ["still", "video"]
     assert sb.scenes[0].cast == ["luna"] and sb.cast[0].id == "luna"
+    assert [c.kind for c in sb.cast] == ["character", "object"] and [c.id for c in sb.characters] == ["luna"]
+    assert sb.places[0].id == "faro" and sb.scenes[0].place == "faro" and sb.portraits
     schema = inline_schema(WriterBoard)
     assert "$ref" not in str(schema) and "title" in schema["properties"] and "title" in schema["required"]
-    # Hybrid caps video at ~30% of scenes, spread over the marked key moments.
+    # Hybrid caps video at ~30% of shots, spread over the marked key moments.
     many = WriterBoard.model_validate(
         {
             "title": "t",
             "cast": [],
-            "scenes": [
-                {
-                    "n": i,
-                    "visual": "v",
-                    "motion": "m",
-                    "sound": "s",
-                    "cast": [],
-                    "camera": "auto",
-                    "key_moment": True,
-                }
-                for i in range(1, 11)
-            ],
+            "places": [],
+            "scenes": [{"n": i, "shots": [shot | {"cast": [], "key_moment": True}]} for i in range(1, 11)],
         }
     )
     sb = assemble(Brief(idea="x", mode="hybrid"), "t", [f"p {i} words here" for i in range(10)], many)
     assert sum(s.mode == "video" for s in sb.scenes) == 3
+
+
+def test_paragraphs_split_into_shots_on_sentence_boundaries():
+    paragraph = (
+        "The wind came to the seaside town on Saturday, tugging at hats and washing lines. "
+        "Mira held her brand new red kite tightly. Her little brother Sam carried the ball of string."
+    )
+    first = {"visual": "wide", "motion": "m", "sound": "s", "cast": [], "place": "", "camera": "auto"}
+    shots = [
+        WriterShot.model_validate(first | {"sentences": 1, "key_moment": False}),
+        WriterShot.model_validate(first | {"sentences": 2, "visual": "close", "key_moment": True}),
+    ]
+    board = WriterBoard(title="t", cast=[], places=[], scenes=[WriterScene(n=1, shots=shots)])
+    sb = assemble(Brief(idea="x", mode="hybrid"), "t", [paragraph], board)
+    assert [s.text for s in sb.scenes] == [
+        "The wind came to the seaside town on Saturday, tugging at hats and washing lines.",
+        "Mira held her brand new red kite tightly. Her little brother Sam carried the ball of string.",
+    ]
+    assert [(s.n, s.continues, s.visual, s.mode) for s in sb.scenes] == [
+        (1, False, "wide", "still"),
+        (2, True, "close", "video"),
+    ]
+    # Counts that don't add up are mended: the last shot takes what's left, and a shot too short
+    # to hold a picture joins the one before.
+    assert [w for w, _ in split_shots(paragraph, [shots[0], shots[0], shots[0], shots[0]])] == [
+        "The wind came to the seaside town on Saturday, tugging at hats and washing lines.",
+        "Mira held her brand new red kite tightly.",
+        "Her little brother Sam carried the ball of string.",
+    ]
+    three = shots[1].model_copy(update={"sentences": 3})
+    assert [w for w, _ in split_shots(paragraph, [three, three])] == [paragraph]
+    assert [w for w, _ in split_shots("Oh no! The kite flew off over the harbour wall.", shots)] == [
+        "Oh no! The kite flew off over the harbour wall."
+    ]
 
 
 def test_ambience_only_drops_voices_and_music():

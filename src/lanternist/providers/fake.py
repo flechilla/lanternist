@@ -54,7 +54,7 @@ def answer(messages: list[dict], schema: dict | None) -> str:
     if schema is None:
         return FAKE_STORY
     prompt = (messages[-1].get("content") or "") if messages else ""
-    paragraphs = len(re.findall(r"^\[\d+\] ", prompt, flags=re.MULTILINE))
+    paragraphs = len(re.findall(r"^\[\d+\]\s", prompt, flags=re.MULTILINE))
     return json.dumps(sample(schema, {"scenes": paragraphs} if paragraphs else None))
 
 

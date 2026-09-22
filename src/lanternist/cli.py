@@ -130,7 +130,7 @@ def write(
     info = calls.summary()
     cost = f"${info['cost_usd']:.4f}" if info["cost_usd"] is not None else "free"
     print(
-        f"{sb.title}: {len(sb.scenes)} scenes, {len(sb.cast)} characters, {words} words "
+        f"{sb.title}: {len(sb.scenes)} scenes, {len(sb.characters)} characters, {words} words "
         f"(target {brief.target_words}) -> {out}"
     )
     print(

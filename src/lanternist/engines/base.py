@@ -35,6 +35,8 @@ from ..store import Store
 log = logging.getLogger(__name__)
 
 CAST_SIZE = (1024, 1024)
+PORTRAIT_SIZE = (768, 1024)  # one character, full length
+MAX_REFS = 3  # portraits a picture is drawn from; a crowd gets the whole cast sheet instead
 
 
 def keyframe_size(cfg: Settings) -> tuple[int, int]:

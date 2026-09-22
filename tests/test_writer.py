@@ -98,7 +98,7 @@ def _objects(node):
 def test_strict_schema_closes_every_object():
     schema = strict_schema(inline_schema(WriterBoard))
     objects = list(_objects(schema))
-    assert len(objects) == 3  # the board, a cast member, a scene
+    assert len(objects) == 5  # the board, a cast member, a place, a scene, a shot
     for o in objects:
         assert o["additionalProperties"] is False and set(o["required"]) == set(o["properties"])
     assert "default" not in json.dumps(strict_schema(inline_schema(RewrittenScene)))

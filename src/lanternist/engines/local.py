@@ -136,7 +136,7 @@ class LocalKlein(Engine):
             p = it.params
             # A cast sheet drawn in this batch is read from the work dir, where the worker puts it.
             refs = (
-                [str(ctx.work / f"{it.after}.png")]
+                [str(ctx.work / f"{r}.png") for r in p["refs"]]
                 if it.after
                 else [str(ctx.store.path(a)) for a in p["refs"]]
             )

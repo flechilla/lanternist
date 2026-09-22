@@ -55,7 +55,7 @@ class FalImage(FalEngine):
     def cost(self, item: Item) -> tuple[Decimal, int]:
         """One picture's billable units and list price, in micro-dollars."""
         p = item.params
-        refs = len(p["refs"]) or (1 if item.after else 0)
+        refs = len(p["refs"])
         out_mp = Decimal(p["width"] * p["height"]) / 1_000_000
         in_mp = Decimal(str(REFERENCE_MP)) * refs
         family = self.entry.family

@@ -2,7 +2,7 @@
 
 import pytest
 
-from lanternist.engines.ffmpeg import probe
+from lanternist.engines.ffmpeg import integrated, probe
 from lanternist.pipeline import Pipeline
 
 
@@ -14,6 +14,7 @@ async def test_render_then_cache_then_edit(fake_cfg, make_story):
     assert info["has_audio"] and info["width"] == 1920 and info["height"] == 1080
     assert info["duration"] == pytest.approx(film.duration, abs=0.1)
     assert film.srt and film.vtt
+    assert await integrated(p.store.path(film.film)) == pytest.approx(fake_cfg.render.loudness, abs=1.0)
 
     # A second run is all cache hits.
     events.clear()

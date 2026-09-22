@@ -65,19 +65,14 @@ def estimate(p: Pipeline, sb: Storyboard, kind: Kind) -> dict:
     lines: list[tuple[Line, Engine]] = [(_line(p, "narration", tts, narration), tts)]
 
     img = p.image(sb)
-    cast_item = p.cast_item(img, sb)
-    cast_rec = p.cached(cast_item) if cast_item else None
-    cast = cast_rec["assets"]["image"] if cast_rec else None
-    redraw = cast_item is not None and cast is None
-    keyframe_items = [p.keyframe_item(img, sb, sc, cast, after=redraw) for sc in sb.scenes]
+    sheet, portraits, keyframe_items = p.picture_items(img, sb)
     keyframes = [rec["assets"]["image"] if (rec := p.cached(it)) else None for it in keyframe_items]
-    pictures = ([cast_item] if cast_item else []) + keyframe_items
-    lines.append((_line(p, "keyframes", img, pictures), img))
+    lines.append((_line(p, "keyframes", img, sheet + portraits + keyframe_items), img))
 
     retakes = []
     if kind == "render" and any(sc.mode == "video" for sc in sb.scenes):
         vid = p.video(sb)
-        motion = p.motion_items(sb, p.timeline(durations), keyframes, vid)
+        motion = p.motion_items(sb, p.timeline(sb, durations), keyframes, vid)
         lines.append((_line(p, "motion", vid, motion), vid))
         # A new take of one scene: what re-animating it alone would cost, made or not.
         retakes = [{"scene": it.scene, "cost_micros": vid.estimate([it]).micros} for it in motion]
