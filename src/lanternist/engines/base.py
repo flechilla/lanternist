@@ -211,7 +211,7 @@ class FalEngine(Engine):
                 ctx.note(f"{where}: generating at fal", item.scene)
 
         spec = RunSpec(
-            stage=ctx.stage,
+            stage=item.stage or ctx.stage,
             model_id=self.entry.id,
             story_id=ctx.story_id,
             job_id=ctx.job_id,

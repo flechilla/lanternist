@@ -4,6 +4,9 @@ They need your keys (`lanternist keys set openrouter|fal`) and spend about a cen
 structured chat on the cheapest model, and one small klein picture. What they print settles the
 details the docs left open: fal's unit names, which response carries the billable units, and
 whether OpenRouter accepts `data_collection`.
+
+With LANTERNIST_LIVE_VIDEO=1 they also make video: a 5 s Wan clip (about $0.13), and a one-scene
+film made entirely on fal, the cheapest way through every remote stage (about $0.11).
 """
 
 import os
@@ -12,6 +15,8 @@ from decimal import Decimal
 import pytest
 
 from lanternist import keys, registry
+from lanternist.db import StepRun
+from lanternist.engines.ffmpeg import probe
 from lanternist.providers.fal import Fal, RunSpec
 from lanternist.providers.openrouter import OpenRouter
 
@@ -129,3 +134,64 @@ async def test_fal_video_billing_units(cfg, db, tmp_path):
     )
     video = await fal.download(res.data["video"]["url"], tmp_path / "wan.mp4")
     assert video.stat().st_size > 10_000 and res.billable_units is not None
+
+
+@pytest.mark.skipif(
+    os.environ.get("LANTERNIST_LIVE_VIDEO") != "1", reason="spends about $0.11: set LANTERNIST_LIVE_VIDEO=1"
+)
+async def test_a_one_scene_film_all_on_fal(cfg, db, tmp_path):
+    """The whole flow on fal at its cheapest: klein pictures, Chatterbox narrating the demo voice, and
+    a MiniMax H3 Max Turbo clip at 480P. Prints each stage's estimate beside what fal billed."""
+    need("fal")
+    from lanternist.config import Paths
+    from lanternist.estimate import estimate
+    from lanternist.pipeline import Pipeline
+    from lanternist.storyboard import CastMember, Line, Models, Scene, Storyboard
+    from lanternist.voices import find_voice
+
+    voices = [d for d in cfg.paths.voices if d.is_dir()]
+    live = cfg.model_copy(update={"paths": Paths(library=tmp_path / "lib", voices=voices)})
+    find_voice(live, "demo")  # the recording Chatterbox clones
+    sb = Storyboard(
+        title="Live",
+        language="es",
+        style="soft watercolour storybook illustration, no text",
+        cast=[CastMember(id="mira", name="Mira", look="small grey cat with amber eyes and a yellow ribbon")],
+        models=Models(
+            image="fal/flux-2-klein-9b",
+            tts="fal/chatterbox-multilingual",
+            video="fal/h3-max-turbo",
+            video_quality="480P",
+        ),
+        scenes=[
+            Scene(
+                n=1,
+                narration=[Line(text="Mira miraba el mar desde el faro, y el viento le movía los bigotes.")],
+                visual="A small cat on a lighthouse balcony at dusk, the calm sea behind her",
+                motion="her whiskers stir in the breeze; the camera drifts slowly closer",
+                sound="gentle waves and soft wind",
+                cast=["mira"],
+                mode="video",
+            )
+        ],
+    )
+    p = Pipeline(live, db=db)
+    quote = estimate(p, sb, "render")
+    film = await p.render(sb)
+    with db.session() as s:
+        runs = s.query(StepRun).filter(StepRun.provider == "fal").all()
+    billed: dict[str, int] = {}
+    for r in runs:
+        billed[r.stage] = billed.get(r.stage, 0) + (r.cost_micros or 0)
+    billed["keyframes"] = billed.get("keyframes", 0) + billed.pop("cast", 0)  # estimated with the pictures
+    print()
+    for line in quote["lines"]:
+        print(
+            f"  {line['label']:<10} {line['model']:<28} "
+            f"estimated ${line['cost_micros'] / 1e6:.4f}, billed ${billed.get(line['stage'], 0) / 1e6:.4f}"
+        )
+    total = sum(billed.values())
+    print(
+        f"  all of it: estimated ${quote['total_micros'] / 1e6:.4f}, billed ${total / 1e6:.4f} -> {p.store.path(film.film)}"
+    )
+    assert probe(p.store.path(film.film))["has_audio"] and all(r.status == "done" for r in runs)
