@@ -41,7 +41,7 @@ from .writer import narration_seconds
 log = logging.getLogger(__name__)
 
 CLIP = "clip@1"
-MIX = "mix@2"  # 2: loudness normalised
+MIX = "mix@3"  # 2: loudness normalised; 3: cuts are concats, not zero-length crossfades
 LABELS = {
     "write": "Writing",
     "narration": "Narration",
