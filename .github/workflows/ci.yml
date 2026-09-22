@@ -23,7 +23,7 @@ jobs:
           persist-credentials: false
       - name: ffmpeg (the fake engines render real test media)
         run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
-      - uses: astral-sh/setup-uv@v10   # reads required-version from pyproject.toml
+      - uses: astral-sh/setup-uv@v10.2.0   # no major-version tags since v7; reads required-version from pyproject.toml
         with:
           enable-cache: true
       - run: uv sync --locked
