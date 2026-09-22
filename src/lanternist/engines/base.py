@@ -51,7 +51,7 @@ class Item:
     key: str | None  # the step key; None until the item it waits on is stored
     scene: int | None = None
     params: dict = field(default_factory=dict)  # prompt, seed, size, refs, chunks, shots, …
-    after: tuple[str, ...] = ()  # the items in the same batch whose outputs this one needs
+    after: tuple[str, ...] = ()  # the items earlier in the same batch whose outputs this one needs
     stage: str | None = None  # the progress row it reports under, when not its stage's own
 
 

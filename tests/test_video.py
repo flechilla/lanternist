@@ -64,6 +64,17 @@ def clip(shots=(6,), seconds=6.0) -> Item:
             },
         ),
         (
+            "fal/h3-max",  # sends our prompt as is: only Turbo was compared with MiniMax's rewrite
+            {
+                "image_url": "U",
+                "duration": 6,
+                "seed": 10,
+                "resolution": "768P",
+                "prompt_expansion_mode": "disabled",
+                "enable_safety_checker": True,
+            },
+        ),
+        (
             "fal/kling-v3-pro",
             {
                 "start_image_url": "U",

@@ -73,16 +73,18 @@ def test_local_step_keys_are_unchanged(tmp_path):
     assert p._keyframe_key(img, prompts.keyframe(sb, sb.scenes[0]), 8, []) == (
         "4f6e92a861c3f8be5f135ec9fb2a453024064af47748bc3210d6889f26fddf56"
     )
-    # Pinned since portraits came (22 Sep): a character alone, and a picture drawn from two of them.
+    # Pinned since portraits came (22 Sep): a character alone, and pictures drawn from two and from one.
     ps = portrait_story()
-    assert p._portrait_key(img, prompts.portrait(ps, ps.characters[1]), ps.seed, cast) == (
+    assert p.portrait_items(img, ps, cast)[1].key == (
         "4d1f2c8f1e8aec4d8586aa973357f9cca080603eae4bc8e9b71af5194336c290"
     )
     two = ["a" * 64 + ".png", "b" * 64 + ".png"]
-    both = ps.scenes[0]
-    assert p._keyframe_key(img, prompts.keyframe(ps, both, numbered=True), ps.scene_seed(both), two) == (
-        "dd2e77bef1f9d2e793a3d79df60c95a945894ca264d916f7dc941f41d34f2d27"
-    )
+    assert [
+        p.keyframe_item(img, ps, sc, refs).key for sc, refs in zip(ps.scenes[:2], (two, two[1:]), strict=True)
+    ] == [
+        "dd2e77bef1f9d2e793a3d79df60c95a945894ca264d916f7dc941f41d34f2d27",
+        "b3b869714e6aec43a1172f37c7ebdc39f793a3e0718331e4cfe5dc298bb4b226",
+    ]
     tl = timing.timeline([12.0, 30.0], 0.45, 0.5, 1.5, 0.8)
     board = Board(
         [Narration("a.wav", 12.0, [], []), Narration("b.wav", 30.0, [], [])],
@@ -412,4 +414,22 @@ async def test_portraits_are_drawn_locally_in_one_batch_on_a_row_of_their_own(fa
     assert done[:3] == [("cast", 1, 1), ("portraits", 1, 2), ("portraits", 2, 2)]
     # The cast sheet's row shows the sheet, never a portrait.
     assert [e.asset for e in events if e.stage == "cast" and e.asset] == [cast]
+
+
+async def test_a_picture_is_drawn_from_a_stored_portrait_and_one_drawn_beside_it(fake_cfg, db):
+    """A board that stopped after Luna's portrait: the next one draws Sol's and the pictures Sol is in,
+    and the one with both reads Luna's from the library and Sol's from the batch."""
+    sb = portrait_story()
+    cast, keyframes = await Pipeline(fake_cfg, db=db).draw(sb)
+    events = []
+    p = Pipeline(fake_cfg, events.append, db=db)
+    sol = p.portrait_items(p.image(sb), sb, cast)[1]
+    assert sol.key
+    p.store._step_path(sol.key).unlink()
+    assert await p.draw(sb) == (cast, keyframes)  # keyed as when drawn in one go
+    assert [(e.stage, e.scene) for e in events if e.status == "done"] == [
+        ("portraits", None),
+        ("keyframes", 1),
+        ("keyframes", 2),
+    ]
     assert Pipeline(fake_cfg, db=db).peek(sb)["cast"] == cast
