@@ -1,22 +1,24 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { api, errorMessage, type Voice } from "../api";
-import { useAction } from "../hooks";
+import { useEffect, useState, type FormEvent } from "react";
+import { api, errorMessage, type MediaCatalog } from "../api";
+import LanguageSelect from "../components/LanguageSelect";
+import ModelPicker from "../components/ModelPicker";
+import VoicePicker from "../components/VoicePicker";
+import { useAction, useVoiceCatalog } from "../hooks";
 
 export default function Voices() {
-  const [voices, setVoices] = useState<Voice[] | null>(null);
+  const [model, setModel] = useState("");
+  const [language, setLanguage] = useState("en");
+  const [narrators, setNarrators] = useState<MediaCatalog | null>(null);
   const [name, setName] = useState("");
   const [transcript, setTranscript] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [added, setAdded] = useState<string | null>(null);
   const { busy, error, setError, run } = useAction();
+  const voices = useVoiceCatalog(model, language);
 
-  const load = useCallback(
-    () => api.voices().then(setVoices, (e: unknown) => setError(errorMessage(e))),
-    [setError],
-  );
   useEffect(() => {
-    void load();
-  }, [load]);
+    api.models("tts.speak").then(setNarrators, (e: unknown) => setError(errorMessage(e)));
+  }, [setError]);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -32,7 +34,7 @@ export default function Voices() {
       setTranscript("");
       setFile(null);
       (e.target as HTMLFormElement).reset();
-      await load();
+      await voices.reload();
     }
   }
 
@@ -42,32 +44,32 @@ export default function Voices() {
         <div>
           <h1>Voices</h1>
           <p>
-            The narrator clones one of these reference recordings. A clean 20 to 30 seconds in a quiet room
-            works best.
+            Hear every narrator before you choose one. Models on fal speak in voices of their own, and some
+            clone your recordings; the narrator on this machine clones a recording. A clean 20 to 30 seconds
+            in a quiet room works best.
           </p>
         </div>
       </div>
       <div className="voices">
-        <section className="checklist" aria-label="Your voices">
-          {voices === null && <p className="voice-row muted">Loading…</p>}
-          {voices?.length === 0 && (
-            <p className="voice-row">No voices yet. Add a recording to narrate your stories.</p>
-          )}
-          {voices?.map((v) => (
-            <div key={v.name} className="voice-row">
-              <b>
-                {v.name}
-                {added === v.name ? " (just added)" : ""}
-              </b>
-              <span>
-                {v.has_transcript
-                  ? "With transcript: closest match to the voice"
-                  : "No transcript: cloned from the sound alone"}
-              </span>
-              <audio controls preload="none" src={`/api/voices/${encodeURIComponent(v.name)}/audio`} />
-              <span>{v.path}</span>
-            </div>
-          ))}
+        <section className="panel stack" aria-label="Narrators and their voices">
+          <ModelPicker
+            label="Narration model"
+            catalog={narrators}
+            error={error}
+            value={model}
+            onChange={(m) => setModel(m)}
+          />
+          <label className="field">
+            Language of the sample
+            <LanguageSelect value={language} onChange={setLanguage} />
+          </label>
+          {added && <p className="muted">Added {added}. It's among the recordings below.</p>}
+          <VoicePicker
+            catalog={voices.catalog}
+            error={voices.error}
+            language={language}
+            onReload={() => void voices.reload()}
+          />
         </section>
         <form className="panel stack" onSubmit={submit}>
           <h2>Add a voice</h2>

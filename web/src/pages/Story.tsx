@@ -8,12 +8,14 @@ import {
   fmtUsd,
   isActive,
   LANGUAGE_NAMES,
+  type Estimate,
   type Job,
   type Mode,
+  type Models,
   type StoryDetail,
   type Storyboard,
 } from "../api";
-import BoardView from "../components/BoardView";
+import BoardView, { type Catalogs } from "../components/BoardView";
 import FilmView from "../components/FilmView";
 import { Dock, Log, Stages } from "../components/JobProgress";
 import ScriptEditor from "../components/ScriptEditor";
@@ -56,6 +58,35 @@ export default function Story() {
       setError(e instanceof ApiError && e.status === 404 ? "This story no longer exists." : errorMessage(e)),
     );
   }, [load, setError]);
+
+  // What preparing the board and rendering would cost now; fetched again whenever the story reloads.
+  const [estimates, setEstimates] = useState<{ board: Estimate; render: Estimate } | null>(null);
+  const [estimateError, setEstimateError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!detail?.version) return;
+    Promise.all([api.estimate(id, "board"), api.estimate(id, "render")]).then(
+      ([board, render]) => {
+        setEstimates({ board, render });
+        setEstimateError(null);
+      },
+      (e: unknown) => setEstimateError(errorMessage(e)),
+    );
+  }, [id, detail]);
+
+  // The models each stage can use, for the Board's pickers.
+  const [catalogs, setCatalogs] = useState<Catalogs | null>(null);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  useEffect(() => {
+    Promise.all([
+      api.models("image.keyframe"),
+      api.models("video.image_to_video"),
+      api.models("audio.ambience"),
+      api.models("tts.speak"),
+    ]).then(
+      ([image, video, ambience, tts]) => setCatalogs({ image, video, ambience, tts }),
+      (e: unknown) => setCatalogError(errorMessage(e)),
+    );
+  }, []);
 
   const allJobs = useMemo(() => [...started, ...(detail?.jobs ?? [])], [started, detail]);
   const live = useJobStreams(allJobs, () => {
@@ -147,6 +178,33 @@ export default function Story() {
       await saveBoard(sb, `scene ${n} set to ${mode}`);
     });
 
+  const setModels = (change: Partial<Models>, note: string) =>
+    run(async () => {
+      const sb = structuredClone(draft!);
+      sb.models = { ...sb.models, ...change };
+      setDraft(sb);
+      await saveBoard(sb, note);
+    });
+
+  const setBudget = (usd: number | null) =>
+    run(async () => {
+      await api.setBudget(id, usd);
+      await load();
+    });
+
+  // The last board or render, if it stopped before a stage that would have gone over the budget.
+  const lastRun = jobs.find((j) => (j.kind === "board" || j.kind === "render") && !isActive(j));
+  const stopped = lastRun?.status === "failed" ? lastRun.result?.budget : undefined;
+  // Enough for everything the job still has to make, not just the stage that stopped it.
+  const raiseTo = stopped && estimates?.[lastRun?.kind === "board" ? "board" : "render"].raise_to_usd;
+  const carryOn = () =>
+    run(async () => {
+      await api.setBudget(id, raiseTo!);
+      const job = await api.run(id, lastRun!.kind as "board" | "render");
+      setStarted((s) => [job, ...s]);
+      await load();
+    });
+
   const actions = {
     board: () => startJob(() => api.run(id, "board")),
     render: () =>
@@ -157,6 +215,7 @@ export default function Story() {
     cast: () => startJob(() => api.run(id, "cast")),
     rerollCast: () => withVersion(() => api.rerollCast(id)),
     reroll: (n: number) => withVersion(() => api.reroll(id, n)),
+    retake: (n: number) => withVersion(() => api.retake(id, n)),
     rewrite: (n: number, instruction: string) => startJob(() => api.rewrite(id, n, instruction)),
     setMode,
   };
@@ -188,6 +247,7 @@ export default function Story() {
           {detail.board?.total && <span>{fmtSeconds(detail.board.total)} with narration</span>}
           {!writing && <span>version {detail.version}</span>}
           {writtenBy && <span>{writtenBy}</span>}
+          {detail.budget.spent_usd > 0 && <span>{fmtUsd(detail.budget.spent_usd)} spent</span>}
           <span className="spacer" />
           {confirmDelete ? (
             <span className="row">
@@ -224,6 +284,16 @@ export default function Story() {
         </p>
       )}
       {error && !stale && <p className="error">{error}</p>}
+      {stopped && lastRun && (
+        <div className="error row" role="status">
+          <span className="spacer">{lastRun.error}</span>
+          {raiseTo && (
+            <button className="small primary" onClick={carryOn} disabled={busy || !!current}>
+              Raise the budget to {fmtUsd(raiseTo)} and carry on
+            </button>
+          )}
+        </div>
+      )}
 
       {writing ? (
         <section className="panel stack" style={{ maxWidth: 720 }}>
@@ -264,6 +334,7 @@ export default function Story() {
           {step === "script" && draft && (
             <ScriptEditor
               draft={draft}
+              narrators={catalogs?.tts ?? null}
               edit={edit}
               opts={opts}
               dirty={dirty}
@@ -291,14 +362,29 @@ export default function Story() {
               jobActive={!!current}
               busy={busy}
               dirty={dirty}
+              catalogs={catalogs}
+              catalogError={catalogError}
+              estimates={estimates}
+              estimateError={estimateError}
+              budget={detail.budget}
+              onBudget={setBudget}
               onMode={actions.setMode}
+              onModels={setModels}
               onReroll={actions.reroll}
+              onRetake={actions.retake}
               onBoard={actions.board}
               onRender={actions.render}
             />
           )}
           {step === "film" && (
-            <FilmView detail={detail} jobs={jobs} busy={busy} onRender={actions.render} onCancel={cancel} />
+            <FilmView
+              detail={detail}
+              jobs={jobs}
+              busy={busy}
+              renderUsd={estimates?.render.total_usd}
+              onRender={actions.render}
+              onCancel={cancel}
+            />
           )}
         </>
       )}

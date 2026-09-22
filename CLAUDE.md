@@ -32,15 +32,17 @@ user's models and takes the GPU for minutes). Neither runs by default.
 | `storyboard.py` | The Storyboard: the one document the writer makes, the editor edits and the renderer reads |
 | `writer.py` | Idea to storyboard in two passes (prose, then structured prompts) |
 | `prompts.py` | Every picture and video prompt, with the character lock |
-| `pipeline.py` | The stages (`narrate`, `draw`, `motion`, `clips`, `mix`), each cached and batched |
+| `pipeline.py` | The stages (`narrate`, `draw`, `motion`, `clips`, `mix`), each cached and batched through `_stage` |
 | `store.py` | Content-addressed assets and the step cache (plain files) |
 | `timing.py`, `text.py` | Timeline, shot split, subtitle cues; sentence splitting and TTS chunks |
-| `engines/` | ffmpeg, ComfyUI/LTX, the worker runner, the fake engines |
+| `engines/` | The engine interface (`base.py`), local and fal engines, which engine runs a model (`catalog.py`), ffmpeg, ComfyUI/LTX, the worker runner, the fake engines |
+| `voices.py` | The narrator's reference recordings (a model's presets are in the registry) |
 | `workers/` | Scripts that run *inside other venvs* (Qwen3-TTS, klein) |
 | `gpu.py` | The GPU lease: evict other models, wait for free VRAM |
 | `providers/` | OpenRouter and fal clients, and in-process fakes of both |
 | `registry/` | Every model the app offers, with limits and prices (TOML) |
 | `db.py`, `migrations/` | SQLite through SQLAlchemy; Alembic migrations |
+| `estimate.py` | What a board or render would cost, before it runs; the budget check uses the same prices |
 | `jobs.py` | The in-process job queue and progress snapshots |
 | `api/app.py` | FastAPI: REST, SSE progress, the built web app |
 | `keys.py`, `prefs.py`, `config.py` | API keys; settings saved in the app; `lanternist.toml` |
@@ -79,7 +81,7 @@ sends it; the frontend doesn't hard-code it.
 | Languages | `text.LANGUAGES` | `/api/options` |
 | Styles, audiences, kinds | `writer.py` | `/api/options` |
 | Story length: words per minute and per scene | `writer.WPM`, `Brief.target_words`, `Brief.scenes` | the writer |
-| Stage names and labels | `jobs.LABELS` | progress snapshots |
+| Stage names and labels | `pipeline.LABELS` | progress snapshots, the estimate, budget messages |
 | Models, limits, prices | `registry/*.toml` | pickers, estimator, doctor, adapters |
 | Config defaults | `config.py` | documented in `lanternist.example.toml` (keep it in step) |
 | Settings the app may change | `prefs.EDITABLE` | Settings page |
@@ -90,12 +92,10 @@ sends it; the frontend doesn't hard-code it.
 Known duplication, to remove, not to copy (delete a line when it's fixed):
 - `web/src/pages/NewStory.tsx` hard-codes words per minute and words per scene (`writer.WPM`,
   `WORDS_PER_SCENE`), so its estimate is wrong outside English.
-- `web/src/components/JobProgress.tsx` `STAGES`, `web/src/api.ts` `LANGUAGE_NAMES` and `STYLE_NAMES`,
-  and `NewStory.tsx` `AUDIENCE_NAMES` repeat backend lists. `jobs.STAGES` is unused.
+- `web/src/api.ts` `LANGUAGE_NAMES` and `STYLE_NAMES`, and `NewStory.tsx` `AUDIENCE_NAMES` repeat
+  backend lists.
 - `app.options()` lists the cameras again instead of reading `storyboard.Camera`.
-- `api/app.py` and `jobs.py` build queries inline instead of calling `db.py`.
-- `pipeline.py` repeats cache-check, batch and emit in every stage. M2 Phase C's engine interface
-  replaces it; don't add a sixth copy, build on that interface.
+- `api/app.py` builds queries inline instead of calling `db.py`.
 
 ## How code here is written
 

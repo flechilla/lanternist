@@ -1,6 +1,6 @@
 # Lanternist M2: OpenRouter and fal.ai
 
-> **Status, 21 Sep 2026: Phases A and B are built and checked against the live APIs.** 91 tests pass offline, and your library is migrated to `0002` (backup in `~/Lanternist/backups/`). Both keys work. A first real video was made end to end: GPT Luna wrote the story and MiniMax H3 Max rendered the shot on fal, for $0.80 as estimated. Stories can now be written by any OpenRouter model with structured output, picked on New story; Claude Opus 5 wrote a Spanish story in the app for $0.21, as estimated. Phases C–F are next.
+> **Status, 21 Sep 2026: Phases A and B are built and checked against the live APIs.** 91 tests pass offline, and your library is migrated to `0002` (backup in `~/Lanternist/backups/`). Both keys work. A first real video was made end to end: GPT Luna wrote the story and MiniMax H3 Max rendered the shot on fal, for $0.80 as estimated. Stories can now be written by any OpenRouter model with structured output, picked on New story; Claude Opus 5 wrote a Spanish story in the app for $0.21, as estimated. **22 Sep: Phases C–F are built and pass offline** (162 tests): the engine interface; pictures on fal with five models (Nano Banana Pro, Seedream 5.0 Pro and FLUX.2 [max] among them); an estimate and a budget before anything is spent; video on fal with nine models, MiniMax H3 Max and its cheap Turbo among them, with MMAudio ambience; and narration on fal with voices you can hear before choosing. **A first live run through the app** (22 Sep, a throwaway library, $0.43 in all): GPT-5.6 Luna wrote a 1-minute Spanish story, two ElevenLabs voices were heard before Aria was chosen, ElevenLabs narrated it, klein drew the cast sheet and pictures, and MiniMax H3 Max Turbo animated one 15 s scene at 480P in 3 s of inference. Every fal charge matched its estimate within 3% (narration and video exactly), and the cast held between the pictures and the clip. What's left is the rest of the definition of done, live: Kling with MMAudio, a restart and a cancel mid-video, and a clone on fal Qwen3-TTS.
 >
 > This is the blueprint's M2 ("fal, registry, estimator, your own key") with one change: the writer calls OpenRouter directly instead of going through fal's `openrouter/router`. Going direct gives the real cost of every request, the full list of models, and one hop fewer.
 > API facts below were read from the OpenRouter and fal docs, the per-model `llms.txt` pages and the fal-client 1.0.3 source on 21 Sep 2026. Anything marked **verify** was not confirmed and gets checked in Phase A.
@@ -224,18 +224,20 @@ Around those calls:
 
 ### 1.7 Pictures on fal
 
-- **Cast sheet:**
-  - Uses `fal-ai/flux-2/klein/9b` at 1024×1024, about $0.006.
-  - Nano Banana 2 has no pure text-to-image path in our list, so its cast sheet uses its edit endpoint with no references.
-- **Keyframes:**
-  - Use `fal-ai/flux-2/klein/9b/edit` with `image_urls: [cast sheet]`, `image_size: {width: 1920, height: 1088}`, `seed` and `num_inference_steps: 4`.
-  - Cost is about $0.034 each: $0.011 per megapixel, counting input and output.
-  - It's the same model as the local worker, so the character lock behaves the same.
-- **Premium option:** `fal-ai/nano-banana-2/edit`.
-  - It takes `aspect_ratio` and `resolution` in place of a size: 16:9 at 2K, about $0.12 per frame.
-  - It follows long prompts and references better.
-  - The clip step already crops whatever size comes back.
+Every fal picture model draws the cast sheet from text (`endpoints.text_to_image`, 1024×1024), then every keyframe at once on its edit endpoint with the cast sheet as the reference. The cast sheet is uploaded once per story: keyframes running together share one upload.
+
+| Model | Size | Seed | List price (22 Sep) | A keyframe | Notes |
+|---|---|---|---|---|---|
+| FLUX.2 [klein] 9B (`fal-ai/flux-2/klein/9b[/edit]`) | `image_size` | yes | $0.011/MP in and out; cast sheet $0.006/MP | $0.034 | Same model as local, so the lock behaves the same. The cheapest good choice. |
+| Nano Banana 2 (`fal-ai/nano-banana-2[/edit]`) | `aspect_ratio` + `resolution` | yes | $0.08 at 1K; 0.5K ×0.75, 2K ×1.5, 4K ×2 | $0.12 at 2K | Follows long prompts and references well. |
+| **Nano Banana Pro** (`fal-ai/nano-banana-pro[/edit]`) | `aspect_ratio` + `resolution` | yes | $0.15 at 1K or 2K, $0.30 at 4K | $0.15 | Google's best: the closest match to the cast sheet. |
+| **Seedream 5.0 Pro** (`bytedance/seedream/v5/pro/...`) | `image_size` | **no** | $0.0675 up to 1536², $0.135 above; $0.0045 per reference after the first | $0.0675 | ByteDance's best; rich detail. |
+| **FLUX.2 [max]** (`fal-ai/flux-2-max[/edit]`) | `image_size` | yes | $0.07 for the first MP, $0.03 per MP after, references included, rounded up (**verify** the rounding) | $0.16 | Black Forest Labs' best, klein's big sibling. |
+
+- **Quality.** A model with a `quality` entry (Nano Banana's `resolution`) lets the story pick it; each option's price is a `price.tiers` entry. `Storyboard.models.image_quality` holds the choice, and an option the model doesn't offer falls back to its default.
+- **Safety.** klein returns a black picture when its checker trips, with `has_nsfw_concepts: [true]`. The adapter turns that into an error that names the scene, instead of storing a black frame.
 - **Seeds and re-rolls:** models that take a seed get the scene seed. For models without one, a re-roll still changes the step key, so it still draws a new picture.
+- **Not offered:** GPT Image 2 and 2.5 are billed per token with a quality setting, so an estimate before the run would be a guess. They can come later as their own family.
 
 ### 1.8 Video on fal
 
@@ -246,21 +248,30 @@ Around those calls:
 - It returns the shots, the seconds paid for and the seconds wasted. The estimator shows the waste.
 - Local LTX keeps its exact `8k+1` frames.
 
-| Model | Billable lengths | Price (list, 21 Sep) | Notes |
+| Model | Billable lengths | Price (list, 22 Sep) | Notes |
 |---|---|---|---|
+| **MiniMax H3 Max Turbo** (`minimax/h3-max-turbo/image-to-video`) | 5–15 s, any whole second | $0.0125/s at 480P, $0.02 at 768P, $0.04 at 1080P until 30 Sep; then double | **The cheapest good video: a whole film for cents at 480P, for trying the flow.** A seed. `prompt_expansion_mode` defaults to "balanced": send "disabled". No audio switch, but its quiet sound bed serves as ambience. |
+| **MiniMax H3 Max** (`minimax/h3-max/image-to-video`) | 5–15 s | $0.025/s at 480P, $0.04 at 768P, $0.08 at 1080P until 30 Sep; then double | fal's post-trained H3: strong prompt following. Same inputs as Turbo. |
 | Kling v3 Standard | "3"–"15" s, any whole second | $0.084/s with audio off | `start_image_url`. No seed or size input: it follows the image. **`generate_audio` defaults to true: send false.** |
-| LTX-2.5 fast (`lightricks/ltx-2.5/image-to-video/fast`) | 6, 8 … 20 s | $0.09/s at 720p, $0.13/s at 1080p, **audio included** | Same model as local, with its own ambience, so no MMAudio needed. |
+| **Kling v3 Pro** | "3"–"15" s | $0.112/s with audio off | Kling's best motion; same inputs as Standard. |
+| **Veo 3.1** | "4s", "6s", "8s" | $0.20/s without audio at 720p or 1080p, $0.40 at 4k | Google's best. Long slots need 2 shots. |
 | Veo 3.1 fast | "4s", "6s", "8s" | $0.10/s without audio | Premium look. Long slots need 2 shots. |
-| Wan 2.6 flash (`wan/v2.6/image-to-video/flash`, no `fal-ai/` prefix) | "5", "10", "15" | $0.05/s at 720p | Cheapest. **`enable_prompt_expansion` defaults to true: send false**, or the character lock gets rewritten. |
+| **Wan 3.0** (`alibaba/wan-3.0/image-to-video`) | 2–30 s | $0.05/s at 480p, $0.10 at 720p, $0.20 at 1080p, sound included | `start_image_url`, no seed. Any length to 30 s, so almost nothing is trimmed. `enable_prompt_expansion` defaults to true: send false. |
+| LTX-2.5 fast (`lightricks/ltx-2.5/image-to-video/fast`) | 6, 8 … 20 s | $0.09/s at 720p, $0.13/s at 1080p, **audio included** | Same model as local, with its own ambience, so no MMAudio needed. 1440p and 4K aren't offered: they stop at 10 s. |
+| Wan 2.6 flash (`wan/v2.6/image-to-video/flash`, no `fal-ai/` prefix) | "5", "10", "15" | $0.025/s at 720p with audio off | Cheap. **`enable_prompt_expansion` defaults to true: send false**, or the character lock gets rewritten. |
+
+- **Launch prices end on a date.** A registry price can carry `until` and `then`: H3's list the launch price until 30 Sep and the regular one after, so estimates and budgets stay right on 1 Oct with no change. `models --sync` flags any other drift.
+- **Not offered:** Seedance 2.5 is billed per token and costs about $0.47/s at 720p, and Gemini Omni Flash has no audio switch listed. Both can come later as their own families.
 
 Other details:
 - **Prompt:** `prompts.video()` works as it is, and `VIDEO_NEGATIVE` goes where the model takes a negative prompt.
-- **Resolution:** ask for 1080p where it costs the same, otherwise 720p. The clip step upscales to the render size.
+- **Resolution:** a story picks it (the model's `quality`), with each option priced on the picker. The defaults: 1080p where it costs the same (Veo), else 720p or 768P. The clip step upscales to the render size.
 - **Audio off by default.** Narration is separate, and audio costs 50–100% more.
 - **Ambience comes from the `audio.ambience` step:**
   - `fal-ai/mmaudio-v2` gets the scene's raw clip plus `scene.sound` and returns the same video with sound muxed in, at $0.001/s.
   - Its output replaces the motion asset, so `video_clip` and the mix are untouched.
-  - It's skipped for models whose registry entry says `audio = "ambience"` (local LTX, LTX fast).
+  - It's skipped for models whose registry entry says `audio = "ambience"` (local LTX, LTX fast, H3, Wan 3.0).
+  - **Changed from the first plan:** MMAudio is the default (`defaults.ambience`), since it only ever runs for a video model with no sound of its own, which is already a fal model. Only its sound is kept: it's muxed under our own copy of the clip, so a clip longer than MMAudio's 30 s isn't cut.
 - **Concurrency:** all video scenes go out at once, up to `max_concurrency`. A hybrid film's video stage takes about as long as its slowest clip, instead of the sum of all of them.
 
 ### 1.9 Narration on fal
@@ -272,12 +283,17 @@ Subtitle timing stays exact because nothing downstream changes:
 
 | Engine | Voice | Price | Notes |
 |---|---|---|---|
-| fal Qwen3-TTS 1.7B | Clone of `voices/<name>.wav` | $0.09 per 1k chars | Two calls. `qwen-3-tts/clone-voice/1.7b` turns the clip and its transcript into a speaker embedding. That's a cached step keyed by the voice's sha, with the `.safetensors` kept in the store. Each chunk then passes `speaker_voice_embedding_file_url`. **`max_new_tokens` defaults to 200: raise it**, or long chunks may be cut off. |
-| ElevenLabs v3 | Preset (`voice`, default "Rachel") | $0.10 per 1k chars | `language_code` (ISO 639-1). No cloning from a clip. |
-| MiniMax Speech 2.8 HD | Preset (`voice_setting.voice_id`) | $0.10 per 1k chars | Send `output_format: "url"` (the default is hex). Its $1.50 clone is left for M4. |
+| fal Qwen3-TTS 1.7B | Clone of `voices/<name>.wav`, or one of 9 presets | $0.09 per 1k chars | Two calls. `qwen-3-tts/clone-voice/1.7b` turns the clip and its transcript into a speaker embedding. That's a cached step keyed by the voice's sha, with the `.safetensors` kept in the store. Each chunk then passes `speaker_voice_embedding_file_url`. **`max_new_tokens` defaults to 200: raise it**, or long chunks may be cut off. |
+| ElevenLabs v3 | One of 21 presets (`voice`; the names in fal's schema, plus "Rachel") | $0.10 per 1k chars | `language_code` (ISO 639-1). No cloning from a clip. |
+| MiniMax Speech 2.8 HD | One of 17 presets (`voice_setting.voice_id`, from fal's schema) | $0.10 per 1k chars | Send `output_format: "url"` (the default is hex), and `language_boost`. Its $1.50 clone is left for M4. |
 | Chatterbox Multilingual | Clone: the reference clip's URL as `voice` | $0.025 per 1k chars | 300 characters per request, 23 languages. |
 
 The language check in `narrate()` (today "not supported by Qwen3-TTS") becomes each engine's `languages` list in the registry, and the pickers filter on it.
+
+**Hearing a voice before choosing it** (added to the plan, for value): every voice picker (New story, the Script step, the Voices page) has a Listen button on each voice.
+- A preset's sample is the language's sample line (`text.SAMPLES`), narrated like any scene and cached under the same kind of key, so each voice is made once per language, about a cent each; the button shows that price until it's made.
+- A recording plays itself, and for a model on fal that clones, "Listen" plays it as that model says it.
+- A sample is a job with no story (migration `0003` lets `jobs.story_id` be empty) in a fast lane of its own beside the queue: a few seconds on fal, never the GPU, so it never waits behind a render. Local narrators aren't sampled: they'd take the GPU, and their voice is the recording.
 
 ### 1.10 Estimate, budget and cost
 
@@ -458,7 +474,7 @@ Each phase ends with something that runs end to end. Sizes assume one developer 
     1. token counts measured on your finished write jobs
     2. the trial counts below
     3. the trial median
-  - Only the writer's list is served so far; the media stages' lists come with their pickers in Phase C.
+  - Only the writer's list is served so far; the media stages' lists come with their pickers in Phase C (the picture list did).
 - [x] The writer picker on New story: search, groups (on this machine, then OpenRouter), a price for the chosen length, and a reasoning select when the model has efforts. OpenRouter models are disabled until a key is set.
   - The story header shows "written by … for $X". `GET /api/stories/{id}` sends the writer and its cost, summed from `step_runs`, so failed attempts count.
   - `lanternist write --writer openrouter/<id> --effort <e>` prints the calls, tokens and cost.
@@ -488,58 +504,77 @@ Each phase ends with something that runs end to end. Sizes assume one developer 
 - [x] The Ollama path is unchanged. It is tested against the fake, and a real 1-minute story took 20 s.
 - Not checked live: a scene rewrite on an OpenRouter model. It is covered offline, and it uses the same strict-schema path as the storyboard.
 
-### Phase C: the engine interface and pictures on fal (≈3 days)
+### Phase C: the engine interface and pictures on fal (≈3 days) · built 22 Sep 2026
 
-- [ ] `engines/base.py` and `engines/local.py`. Move klein, Qwen3-TTS and LTX behind the interface. The golden-key test proves the cache is unchanged.
-- [ ] `fal_image.py`, with klein 9B (text-to-image and edit) and Nano Banana 2 edit. `draw` runs as two waves: the cast sheet, then all keyframes in parallel.
-- [ ] `Storyboard.models` (it holds the writer since Phase B) gains the picture model. A "Models" panel on the story (pictures for now) with a per-scene re-roll price. `GET /api/models?capability=image.keyframe` lists what it offers.
-- [ ] Progress lines show fal queue position and in-progress state.
+- [x] `engines/base.py` and `engines/local.py`. Move klein, Qwen3-TTS and LTX behind the interface. The golden-key test proves the cache is unchanged.
+  - Every stage, ffmpeg's clips and mix too, now runs through one `Pipeline._stage`: serve the cache hits, run the misses as one batch, store each output as it lands. The five copies of that loop are gone.
+  - An item can wait on another in its batch (`Item.after`): keyframes on a cast sheet drawn in the same job. A local engine keeps one model load for both; a remote one runs them as two waves.
+  - `test_local_step_keys_are_unchanged` pins the keys computed on `main` before the change.
+  - Every step a local model makes is a `step_runs` row with its GPU seconds, for calibrating the estimates.
+- [x] `fal_image.py`, with klein 9B (text-to-image and edit) and Nano Banana 2, plus three top-tier models not in the first plan: **Nano Banana Pro, Seedream 5.0 Pro and FLUX.2 [max]** (§1.7). `draw` runs as two waves: the cast sheet, then all keyframes in parallel.
+  - When one keyframe fails (moderation, say), the others still finish and are stored, since they're paid for; then the stage fails naming the scene.
+  - What fal bills is refreshed at most once a day, before the first remote stage of a job (`registry.ensure_synced`), and read at request time, so a computed cost uses today's billing price.
+- [x] `Storyboard.models` (it holds the writer since Phase B) gains the picture model and its quality. A "Models" panel on the Board step (pictures for now) with the price of each redraw on its button. `GET /api/models?capability=image.keyframe` lists every model with its price per picture at each quality, priced by the engines' own estimates.
+- [x] Progress lines show fal queue position and in-progress state.
+  - Progress rows now carry their label from `pipeline.LABELS` (moved from `jobs.py`), and the web app shows them in the order they ran: its own stage list is gone.
 
 **Exit:**
-- Maya's board with fal klein pictures and local narration: the cast is as consistent as the local board (checked by eye).
-- A second board is all cache hits. Re-rolling one scene costs one image.
-- The existing local stories re-render entirely from cache.
+- [ ] Maya's board with fal klein pictures and local narration: the cast is as consistent as the local board (checked by eye). A live board of another story held its cast well (22 Sep); Maya's is still to do.
+- [x] A second board is all cache hits. Re-rolling one scene costs one image (`test_a_board_on_fal_draws_the_cast_first_and_uploads_it_once`, offline).
+- [x] The existing local stories re-render entirely from cache (the golden keys).
 
-### Phase D: estimate and budget (≈1.5 days)
+### Phase D: estimate and budget (≈1.5 days) · built 22 Sep 2026
 
 This phase comes before video on purpose: video is where the money goes.
-- [ ] `estimate.py` and `GET …/estimate`, with an `EstimateBox` before "Prepare board" and before "Render": lines per stage, the total, waste, price date, and GPU time for local steps.
-- [ ] Budget checks before remote stages. The "Raise budget and continue" flow. A default budget in Settings.
-- [ ] Cost so far on the story and in the Library.
+- [x] `estimate.py` and `GET …/estimate`, with an `EstimateBox` before "Prepare board" and before "Render": lines per stage, the total, waste, price date, and GPU time for local steps.
+  - It walks the same items the stages build (`Pipeline.narration_items`, `cast_item`, `keyframe_item`, `motion_items`), so it prices exactly the steps that would run.
+  - "Prepare board" and "Approve and render" carry their price on the button; so does each scene's redraw.
+  - Every board and render job keeps the estimate shown before it (`jobs.estimate`, in micro-dollars); the API shows every `*_micros` field as `*_usd`.
+- [x] Budget checks before remote stages. The "Raise budget and continue" flow. A default budget in Settings.
+  - The check runs in `Pipeline._stage` before a remote engine's batch: the story's spend so far plus that batch's estimate must fit. Otherwise the job fails with "needs $X more" and a structured `result.budget`, and the story page offers "Raise the budget to $Y and carry on" (the next half dollar that fits).
+  - Settings gained "Defaults for every story": the default picture model and the default budget. A story's own budget is set, or handed back to Settings, in the estimate box.
+- [x] Cost so far on the story and in the Library.
 
 **Exit:**
-- The estimate for a cached story is $0.
-- A render over budget stops before spending and continues from the cache once the budget is raised.
+- [x] The estimate for a cached story is $0.
+- [x] A render over budget stops before spending and continues from the cache once the budget is raised (tested offline, and checked by hand in the app in fake mode).
 
-### Phase E: video on fal (≈3 days)
+### Phase E: video on fal (≈3 days) · built 22 Sep 2026
 
-- [ ] `timing.plan_shots` with golden tests. `motion` uses it for every engine, and local LTX gives the same frames as today.
-- [ ] Add MiniMax H3 Max (`minimax/h3-max/image-to-video`, plus the cheaper `h3-max-turbo`) to the registry:
-  - Durations are 5–15 s.
-  - It has no audio switch, yet it returns an audible track (−27 dB mean in our test), so treat it as ambience or strip it.
-  - Its launch price ($0.08/s at 1080p) doubles after 30 Sep.
-- [ ] `fal_video.py` with the Kling, LTX-fast, Veo and Wan builders: audio off, prompt expansion off, 720p or 1080p. Shots chain on last frames.
-- [ ] The `audio.ambience` stage with `fal_audio.py` (MMAudio v2), skipped for models that make their own sound.
-- [ ] Cancel versus shutdown on in-flight requests, and resume after a restart.
-- [ ] A video-model picker. Per-scene video re-roll with its price.
+- [x] `timing.plan_shots` with golden tests. `motion` uses it for every fal engine; local LTX keeps its equal shots and exact frames (the golden keys).
+  - A range of whole seconds (Kling 3–15, Wan 3.0 2–30) is solved directly; a short list (Veo's 4, 6, 8) by trying the combinations. Three 8 s shots beat two 15 s ones for a 24.5 s slot on a model billing only those.
+- [x] Add MiniMax H3 Max (`minimax/h3-max/image-to-video`, plus the cheaper `h3-max-turbo`) to the registry:
+  - Durations are 5–15 s, with a seed and a resolution (480P, 768P, 1080P) the story picks.
+  - It has no audio switch, yet it returns an audible track (−27 dB mean in our test): it's treated as the scene's ambience.
+  - Its launch price doubles after 30 Sep, which the registry now says with `until` and `then`.
+  - Also added: Kling v3 Pro, Veo 3.1 and Wan 3.0 (§1.8).
+- [x] `fal_video.py` with the Kling, LTX-fast, Veo and Wan builders (and H3 and Wan 3.0): audio off, prompt expansion off, the story's resolution. Shots chain on last frames.
+  - Each shot is a step of its own, so a scene that fails halfway doesn't pay again for the shots it made. Clips are stored with their index at the front, so the browser plays them at once.
+  - When one scene fails, the others still finish and are stored before the stage reports it.
+- [x] The `audio.ambience` stage with `fal_audio.py` (MMAudio v2), skipped for models that make their own sound, and for scenes with no sound line.
+- [x] Cancel versus shutdown on in-flight requests, and resume after a restart (tested at the pipeline level: a stopped render's requests are polled again, not paid again; a user's cancel cancels them at fal).
+- [x] A video-model picker and an ambience picker on the Board, and the video and ambience defaults in Settings. Per-scene video re-roll with its price ("New take · $0.07", `Scene.video_seed`, so the picture stays), and "Watch" for each animated scene.
 
 **Exit:**
-- A hybrid Spanish film with 3 Kling scenes and MMAudio ambience.
-- A 23 s slot renders as two chained shots, with the waste reported.
-- Killing the server mid-stage and restarting resumes without paying again. Cancel cancels at fal.
+- [ ] A hybrid Spanish film with 3 Kling scenes and MMAudio ambience. Offline it passes (`test_a_hybrid_film_on_kling_with_ambience`); the live run is pending.
+- [x] A 23 s slot renders as two chained shots, with the waste reported.
+- [x] Killing the server mid-stage and restarting resumes without paying again. Cancel cancels at fal (offline; to check live).
 
-### Phase F: narration on fal (≈2 days)
+### Phase F: narration on fal (≈2 days) · built 22 Sep 2026
 
-- [ ] `fal_tts.py`:
+- [x] `fal_tts.py`:
   - Qwen3-TTS: the clone-embedding step, per-chunk requests, and `max_new_tokens` raised.
   - ElevenLabs v3, MiniMax Speech 2.8 HD, and Chatterbox with its 300-character chunks.
-- [ ] Voices follow the TTS engine (clips or presets). The Voices page lists presets per engine with a sample line. The languages come from the registry.
-- [ ] Run the definition of done at the top of this file.
+  - Each chunk is a cached step of its own, and a reference recording stays on fal for an hour (`fal.voice_ttl_hours`).
+- [x] Voices follow the TTS engine (clips or presets). The Voices page lists presets per engine with a sample line. The languages come from the registry.
+  - `Storyboard.models.tts` picks a story's narrator on the Script step; switching keeps the voice when the new model has it, else starts on its first. The default narrator is in Settings.
+  - Every voice can be heard before it's chosen (§1.9).
+- [ ] Run the definition of done at the top of this file. Needs live runs on your keys.
 
 **Exit:**
-- The same Spanish story narrated by fal Qwen3-TTS with the `demo` clone and by an ElevenLabs preset.
-- Subtitle cues line up.
-- Steps 1–7 of the definition of done pass.
+- [ ] The same Spanish story narrated by fal Qwen3-TTS with the `demo` clone and by an ElevenLabs preset (offline, both paths pass; live pending).
+- [x] Subtitle cues line up (`test_a_board_narrated_by_an_elevenlabs_preset`).
+- [ ] Steps 1–7 of the definition of done pass (live).
 
 **Total: about 13 working days.**
 

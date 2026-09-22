@@ -16,7 +16,7 @@ writer = ""                                       # empty: the Ollama model abov
 tts = "local/qwen3-tts-1.7b"
 image = "local/flux2-klein-9b"
 video = "local/ltx-2.5-22b-nvfp4"
-ambience = "none"                                 # or a registry id such as "fal/mmaudio-v2"
+ambience = "fal/mmaudio-v2"                       # for video models with no sound of their own; or "none"
 budget_usd = 5.0                                  # per story, for remote models
 
 [openrouter]
@@ -70,5 +70,6 @@ chunk_gap = 0.25  # pause between synthesis chunks inside a scene
 lead_in = 0.5
 tail = 1.5
 ambience = 0.3    # the video model's own sound, under the voice
+hold_max = 1.0    # a remote clip may end on its last frame held this long, rather than pay for more
 encoder = "h264_nvenc"   # libx264 without an NVIDIA GPU
 bitrate = "12M"

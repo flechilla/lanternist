@@ -24,6 +24,8 @@ export interface Scene {
   camera: Camera;
   mode: Mode;
   seed: number | null;
+  /** A new take of the scene's video; null follows `seed`. */
+  video_seed: number | null;
 }
 
 export interface Storyboard {
@@ -37,11 +39,26 @@ export interface Storyboard {
   subtitles: "off" | "sidecar" | "burned";
   cast: CastMember[];
   cast_sheet_prompt: string | null;
-  models?: { writer: string; writer_effort: Effort | null };
+  models: Models;
   scenes: Scene[];
 }
 
+/** Which model makes each stage of a story; an empty id means the default from Settings. */
+export interface Models {
+  writer: string;
+  writer_effort: Effort | null;
+  tts: string;
+  image: string;
+  image_quality: string | null;
+  video: string;
+  video_quality: string | null;
+  /** A registry id, "none" to leave silent video scenes silent, or empty for the default. */
+  ambience: string;
+}
+
 export interface StageState {
+  /** What the progress row is called; the backend names every stage. */
+  label?: string;
   status: "running" | "done";
   done: number;
   total: number;
@@ -67,7 +84,7 @@ export interface WriterResult {
 }
 
 export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled";
-export type JobKind = "write" | "rewrite" | "cast" | "board" | "render";
+export type JobKind = "write" | "rewrite" | "cast" | "board" | "render" | "sample";
 
 export interface FilmResult {
   film: string;
@@ -77,18 +94,78 @@ export interface FilmResult {
   path: string;
 }
 
+/** Why a job stopped before a remote stage: it would have gone past the story's budget. */
+export interface BudgetStop {
+  stage: string;
+  need_usd: number;
+  spent_usd: number;
+  budget_usd: number;
+  short_usd: number;
+}
+
+export interface EstimateLine {
+  stage: string;
+  label: string;
+  model: string;
+  model_label: string;
+  local: boolean;
+  steps: number;
+  todo: number;
+  cost_usd: number;
+  gpu_seconds: number;
+  paid_seconds: number;
+  waste_seconds: number;
+}
+
+/** What a board or render would cost now: cached steps are free, local ones cost GPU time. */
+export interface Estimate {
+  kind: "board" | "render";
+  lines: EstimateLine[];
+  total_usd: number;
+  gpu_seconds: number;
+  waste_seconds: number;
+  /** Scene lengths come from recorded narration, not from the words. */
+  measured: boolean;
+  price_date: string | null;
+  /** What a new take of each video scene would cost. */
+  retakes: { scene: number; cost_usd: number }[];
+  budget_usd?: number;
+  spent_usd?: number;
+  short_usd?: number;
+  /** The budget that fits all of it: what "raise the budget and carry on" asks for. */
+  raise_to_usd?: number;
+}
+
+export interface Budget {
+  usd: number;
+  /** The story has no budget of its own and follows Settings. */
+  default: boolean;
+  spent_usd: number;
+}
+
 export interface Job {
   id: string;
-  story_id: string;
+  /** None for a job that belongs to no story: a voice sample. */
+  story_id: string | null;
   version: number | null;
   kind: JobKind;
   status: JobStatus;
   params: Record<string, unknown>;
   progress: Progress;
   result:
-    | (Partial<FilmResult> & WriterResult & { version?: number; cast?: string | null; keyframes?: string[] })
+    | (Partial<FilmResult> &
+        WriterResult & {
+          version?: number;
+          cast?: string | null;
+          keyframes?: string[];
+          budget?: BudgetStop;
+          /** A voice sample job's line. */
+          audio?: string;
+        })
     | null;
   error: string | null;
+  /** The estimate shown before the job ran. */
+  estimate: Estimate | null;
   created_at: string | null;
   started_at: string | null;
   finished_at: string | null;
@@ -110,6 +187,7 @@ export interface StoryListItem extends StoryMeta {
   film: FilmResult | null;
   film_version: number | null;
   poster: string | null;
+  spent_usd: number;
 }
 
 export interface BoardScene {
@@ -136,6 +214,7 @@ export interface StoryDetail {
   versions: { version: number; note: string; created_at: string }[];
   film: Job | null;
   writer: StoryWriter | null;
+  budget: Budget;
 }
 
 /** Who wrote a story, and what writing and rewriting it has cost, failed attempts included. */
@@ -152,13 +231,33 @@ export interface Voice {
   has_transcript: boolean;
 }
 
+/** A voice a narration model offers, with its sample line once one was made. */
+export interface PresetVoice {
+  id: string;
+  label: string;
+  sample: string | null;
+}
+
+/** The voices of one narration model: its presets, and the recordings it clones. */
+export interface VoiceCatalog {
+  model: string;
+  label: string;
+  local: boolean;
+  clone: boolean;
+  /** It speaks the language asked about. */
+  speaks: boolean;
+  presets: PresetVoice[];
+  recordings: (Voice & { sample: string | null })[];
+  /** What making one sample costs; null for a model on this machine. */
+  sample_usd: number | null;
+}
+
 export interface Options {
   languages: { id: string; name: string }[];
   audiences: { id: string; name: string }[];
   kinds: { id: string; name: string }[];
   styles: { id: string; name: string; prompt: string }[];
   cameras: Camera[];
-  voices: Voice[];
   fake_engines: boolean;
 }
 
@@ -205,6 +304,42 @@ export interface WriterCatalog {
   };
 }
 
+export type Capability = "tts.speak" | "image.keyframe" | "video.image_to_video" | "audio.ambience";
+
+export interface MediaPrice {
+  /** List price per `per` (a picture, a second of video); null for models on this machine. */
+  usd: number | null;
+  /** GPU time per `per`, for models on this machine. */
+  gpu_seconds: number | null;
+}
+
+/** A model a media stage can use, from the registry, with its price at each quality it offers. */
+export interface MediaModel extends MediaPrice {
+  id: string;
+  label: string;
+  provider: "local" | "fal";
+  local: boolean;
+  /** Runs here now: a local model, or a remote one whose provider has a key. */
+  available: boolean;
+  status: string;
+  notes: string;
+  licence: string;
+  commercial_use: boolean | "below_10m_revenue";
+  per: string;
+  /** Video: the model makes its own sound bed, so no ambience model is needed. */
+  sound?: boolean;
+  quality: {
+    param: string;
+    default: string;
+    options: (MediaPrice & { id: string; label: string })[];
+  } | null;
+}
+
+export interface MediaCatalog {
+  default: string;
+  models: MediaModel[];
+}
+
 export interface Check {
   name: string;
   status: "ok" | "warn" | "fail";
@@ -230,6 +365,10 @@ export interface SettingRow {
   label: string;
   value: unknown;
   source: "app" | "file" | "default";
+  /** For a default-model setting: the stage it picks for. */
+  capability: Capability | null;
+  /** For a model setting that may be "none": what that means. */
+  off: string | null;
 }
 
 /** The message to show for anything a promise rejected with. */
@@ -293,7 +432,12 @@ export const api = {
   reroll: (id: string, n: number) =>
     call<{ version: number; job: Job }>("POST", `/api/stories/${id}/scenes/${n}/reroll`),
   rerollCast: (id: string) => call<{ version: number; job: Job }>("POST", `/api/stories/${id}/cast/reroll`),
+  retake: (id: string, n: number) =>
+    call<{ version: number; job: Job }>("POST", `/api/stories/${id}/scenes/${n}/retake`),
   run: (id: string, kind: "cast" | "board" | "render") => call<Job>("POST", `/api/stories/${id}/${kind}`),
+  estimate: (id: string, kind: "board" | "render") =>
+    call<Estimate>("GET", `/api/stories/${id}/estimate?kind=${kind}`),
+  setBudget: (id: string, usd: number | null) => call<Budget>("PUT", `/api/stories/${id}/budget`, { usd }),
   job: (id: string) => call<Job>("GET", `/api/jobs/${id}`),
   cancel: (id: string) => call<{ cancelled: boolean }>("POST", `/api/jobs/${id}/cancel`),
   providers: () => call<Provider[]>("GET", "/api/providers"),
@@ -303,9 +447,19 @@ export const api = {
   settings: () => call<SettingRow[]>("GET", "/api/settings"),
   saveSettings: (changes: Record<string, unknown>) => call<SettingRow[]>("PUT", "/api/settings", { changes }),
   writers: () => call<WriterCatalog>("GET", "/api/models?capability=writer.chat"),
-  voices: () => call<Voice[]>("GET", "/api/voices"),
+  models: (capability: Capability) => call<MediaCatalog>("GET", `/api/models?capability=${capability}`),
+  voiceCatalog: (tts: string, language: string) =>
+    call<VoiceCatalog>(
+      "GET",
+      `/api/voices/catalog?tts=${encodeURIComponent(tts)}&language=${encodeURIComponent(language)}`,
+    ),
+  sample: (tts: string, voice: string, language: string) =>
+    call<{ audio: string | null; job: Job | null }>("POST", "/api/voices/sample", { tts, voice, language }),
   addVoice: (form: FormData) => call<Voice>("POST", "/api/voices", form),
 };
+
+/** Where a recording in the voices folder plays from. */
+export const recording = (name: string) => `/api/voices/${encodeURIComponent(name)}/audio`;
 
 export const asset = (id: string | null | undefined, download?: string) =>
   id ? `/api/assets/${id}${download ? `?download=${encodeURIComponent(download)}` : ""}` : undefined;
@@ -342,9 +496,35 @@ export function fmtUsd(usd: number | null | undefined): string {
   return `$${usd.toFixed(2)}`;
 }
 
+/** A button's label with what pressing it costs, when it costs money. */
+export function withPrice(label: string, usd: number | null | undefined): string {
+  return usd ? `${label} · ${fmtUsd(usd)}` : label;
+}
+
 export function fmtSeconds(s: number | null | undefined): string {
   if (s == null) return "";
   const m = Math.floor(s / 60);
   const r = Math.round(s - m * 60);
   return m ? `${m}:${String(r).padStart(2, "0")}` : `${s.toFixed(1)} s`;
+}
+
+/** A price per unit: fractions of a cent matter here ($0.0125 a second), unlike in a total. */
+function fmtRate(usd: number): string {
+  return usd >= 0.1 ? `$${usd.toFixed(2)}` : `$${Number(usd.toPrecision(3))}`;
+}
+
+/** What a model costs for one unit of its output, as people read it. */
+export function priceOf(p: MediaPrice | undefined, per: string): string {
+  if (p?.usd != null) return `${fmtRate(p.usd)} a ${per}`;
+  if (p?.gpu_seconds != null) return `free, about ${Math.round(p.gpu_seconds)} s of GPU a ${per}`;
+  return "free, on this machine";
+}
+
+/** The chosen model of a catalog, and the price at the chosen quality. */
+export function chosenModel(catalog: MediaCatalog | null, value: string, quality: string | null) {
+  const model = catalog?.models.find((m) => m.id === (value || catalog.default));
+  const q = model?.quality;
+  const qualityId = q ? (q.options.some((o) => o.id === quality) ? quality : q.default) : null;
+  const price: MediaPrice | undefined = q ? q.options.find((o) => o.id === qualityId) : model;
+  return { model, qualityId, price };
 }

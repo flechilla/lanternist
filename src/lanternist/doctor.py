@@ -9,10 +9,11 @@ from pathlib import Path
 
 import httpx
 
+from . import registry
 from .config import Settings
 from .gpu import vram
 from .keys import LABELS, get_key
-from .pipeline import find_voice
+from .voices import find_voice
 
 LTX_NODES = [
     "LTXVImgToVideoInplace",
@@ -59,7 +60,9 @@ async def _py(python, code: str, timeout: float = 120) -> tuple[bool, str]:
 def needs(cfg: Settings) -> dict[str, bool]:
     """Which engines and providers the default models use; the checks for the rest are advisory."""
     d = cfg.defaults
-    media = (d.tts, d.image, d.video, d.ambience)
+    # Ambience only runs for a video model that makes no sound of its own.
+    silent = registry.get(d.video, cfg.library).audio == "none"
+    media = (d.tts, d.image, d.video, d.ambience if silent else "none")
     local = {
         "qwen3tts": d.tts.startswith("local/"),
         "klein": d.image.startswith("local/"),
@@ -69,6 +72,7 @@ def needs(cfg: Settings) -> dict[str, bool]:
     return local | {
         "gpu": any(local.values()),
         "ram": local["klein"],
+        "voice": registry.get(d.tts, cfg.library).clone,  # a narrator with presets needs no recording
         "openrouter": d.writer.startswith("openrouter/"),
         "fal": any(m.startswith("fal/") for m in media),
     }

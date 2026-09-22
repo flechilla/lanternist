@@ -76,6 +76,19 @@ WPM = {
 }
 WORDS_PER_SCENE = 32  # ~13 s of narration: one picture, and within one LTX generation
 
+
+CHARS_PER_WORD = 6  # five letters and a space, about, in the alphabetic languages
+
+
+def wpm(language: str) -> int:
+    return WPM.get(language, 140)
+
+
+def narration_seconds(words: str, language: str) -> float:
+    """How long narrating `words` takes, before it's recorded: for estimates."""
+    return round(word_count(words) * 60 / wpm(language), 1)
+
+
 ALWAYS = (
     "Never include sexual content, real identifiable people, public figures, or real brands. "
     "No violence beyond what the audience allows."
@@ -99,7 +112,7 @@ class Brief(BaseModel):
 
     @property
     def target_words(self) -> int:
-        return int(self.minutes * WPM.get(self.language, 140))
+        return int(self.minutes * wpm(self.language))
 
     @property
     def scenes(self) -> int:

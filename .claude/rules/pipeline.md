@@ -19,21 +19,27 @@ Background: MVP_PLAN.md §2 ("Decisions"), M2_PLAN.md §1.1.
   version, the final prompt text, seed, size, every parameter, and the asset ids of upstream steps.
   Leave out anything that doesn't change the output. A missing input serves stale output. An extra
   one re-renders every story in the user's library for nothing.
-- The engine ids (`TTS`, `KLEIN`, `LTX`, `CLIP`, `MIX` in `pipeline.py`) carry a version. When a
-  change alters output on purpose (a new ffmpeg filter, a new graph), bump `@N`. Otherwise keep the
-  existing key fields exactly, because users' caches depend on them. Say which keys change in the PR.
+- The engine ids carry a version: `TTS`, `KLEIN`, `LTX` in `engines/local.py`, `CLIP` and `MIX` in
+  `pipeline.py`, and `FalEngine.version` for every fal adapter (`<registry id>@N`). When a change
+  alters output on purpose (a new ffmpeg filter, a new graph, a new request field), bump `@N`.
+  Otherwise keep the existing key fields exactly, because users' caches depend on them.
+  `test_local_step_keys_are_unchanged` pins the local ones. Say which keys change in the PR.
+- An engine builds its own keys (`engine.key(kind, **inputs)`): the stage passes what it decides
+  (prompt, seed, size, upstream assets), the engine adds what's model-specific.
 - Hash the prompt that is actually sent, built by `prompts.py`, never the scene fields it was built from.
 - A key's inputs must be JSON-stable: lists, not tuples or sets; no floats computed differently on
   another run (round with `round(x, 3)`, as `clips` and `mix` do).
 
 ## Stages
 
-Each stage in `Pipeline` does the same things in the same order:
+Each stage builds one `Item` per output and hands them to `Pipeline._stage`, which does the same
+things in the same order for every stage (don't write the loop again):
 
-1. Work out every item's key and serve the hits from `store.get_step`.
+1. Serve the items whose key `store.get_step` holds.
 2. `emit(stage, "start", done=hits, total=all)`.
-3. Run all misses as **one batch**: one model load, under `lease()` for local engines.
-4. For each item as it lands: `store.put` the file, `store.put_step` its record, then
+3. Run all misses as **one batch** on the stage's engine (`engines/base.py`): one model load, under
+   `lease()`, for a local engine; concurrent requests, no lease, for a remote one.
+4. For each output as it lands: `store.put` the file, `store.put_step` its record, then
    `emit(stage, "done", scene=n, …, asset=…)`.
 5. `emit(stage, "finish")`, and remove the `store.tmp()` work dir.
 

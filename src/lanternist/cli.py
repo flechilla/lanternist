@@ -145,7 +145,8 @@ def board(story: Path):
     from .pipeline import Pipeline
 
     sb = _load(story)
-    p = Pipeline(settings(), _printer())
+    cfg, db = _effective()
+    p = Pipeline(cfg, _printer(), db=db)
     b = asyncio.run(p.board(sb))
     print(f"board ready: {len(b.keyframes)} keyframes, {b.timeline.total:.1f}s of film")
     for sc, kf, nar in zip(sb.scenes, b.keyframes, b.narration, strict=True):
@@ -168,8 +169,8 @@ def render(
             sc.mode = mode
     if subtitles:
         sb.subtitles = subtitles
-    cfg = settings()
-    p = Pipeline(cfg, _printer())
+    cfg, db = _effective()
+    p = Pipeline(cfg, _printer(), db=db)
     film = asyncio.run(p.render(sb))
     out = out or cfg.library / "films" / f"{slugify(sb.title)}.mp4"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -182,7 +183,7 @@ def render(
 @app.command()
 def voices():
     """List the reference voices narration can clone."""
-    from .pipeline import list_voices
+    from .voices import list_voices
 
     for v in list_voices(settings()):
         print(f"  {v['name']:<16} {v['path']}{'' if v['has_transcript'] else '  (no transcript)'}")

@@ -1,15 +1,18 @@
 """Shared fixtures. Every test runs away from the real keychain, the real key file and any keys in the
 environment, and gets its own library folder."""
 
+import asyncio
 import importlib
 import time
 
 import pytest
 from fastapi.testclient import TestClient
 
-from lanternist import config
+from lanternist import config, providers
 from lanternist.config import Paths, Settings
-from lanternist.db import Database
+from lanternist.db import Database, Story
+from lanternist.providers.fake import FakeWorld
+from lanternist.storyboard import CastMember, Line, Scene, Storyboard
 
 
 @pytest.fixture(autouse=True)
@@ -43,6 +46,54 @@ def voices(tmp_path):
 @pytest.fixture
 def cfg(tmp_path) -> Settings:
     return Settings(paths=Paths(library=tmp_path / "lib"))
+
+
+@pytest.fixture
+def fake_cfg(tmp_path, voices) -> Settings:
+    """Fake engines on the test's own library, so boards and renders run end to end in seconds."""
+    return Settings(paths=Paths(library=tmp_path / "lib", voices=[voices]), fake_engines=True)
+
+
+@pytest.fixture
+def fakes(fake_cfg) -> FakeWorld:
+    """The fake fal, OpenRouter and Ollama that fake mode talks to, to steer and inspect."""
+    providers.transport(fake_cfg)
+    world = providers.fake_world()
+    assert world is not None
+    return world
+
+
+@pytest.fixture
+def make_story():
+    """A small storyboard: one scene per mode given, each showing one character and saying a few words."""
+
+    def make(modes=("still", "video", "still"), **kw) -> Storyboard:
+        return Storyboard(
+            title="Test",
+            cast=[CastMember(id="a", name="Ann", look="girl in a red coat")],
+            scenes=[
+                Scene(
+                    n=i,
+                    narration=[Line(text=f"Scene {i} has a few words to say out loud here.")],
+                    visual=f"picture {i}",
+                    cast=["a"],
+                    mode=m,
+                )
+                for i, m in enumerate(modes, 1)
+            ],
+            **kw,
+        )
+
+    return make
+
+
+@pytest.fixture
+def story_row(db) -> str:
+    """A story in the database, for pipelines that record spend and check its budget."""
+    with db.session() as s:
+        s.add(Story(id="s1", slug="test", title="Test", version=1))
+        s.commit()
+    return "s1"
 
 
 @pytest.fixture
@@ -83,3 +134,17 @@ def wait(client):
         raise TimeoutError(job_id)
 
     return wait_for
+
+
+@pytest.fixture
+def until():
+    """Waits, in an async test, until `cond()` holds; fails after `timeout` seconds."""
+
+    async def wait(cond, timeout: float = 5.0) -> None:
+        deadline = asyncio.get_running_loop().time() + timeout
+        while not cond():
+            if asyncio.get_running_loop().time() > deadline:
+                raise TimeoutError
+            await asyncio.sleep(0.01)
+
+    return wait

@@ -34,10 +34,13 @@ def test_settings_round_trip(client):
     rows = {r["key"]: r for r in client.get("/api/settings").json()}
     assert rows["defaults.video"] == {
         "key": "defaults.video",
-        "label": "Video model",
+        "label": "Video",
         "value": "local/ltx-2.5-22b-nvfp4",
         "source": "default",
+        "capability": "video.image_to_video",
+        "off": None,
     }
+    assert rows["defaults.ambience"]["off"] and rows["defaults.budget_usd"]["capability"] is None
     r = client.put(
         "/api/settings",
         json={"changes": {"defaults.video": "fal/kling-v3-standard", "defaults.budget_usd": 2.5}},
@@ -77,7 +80,8 @@ def test_writing_on_openrouter_through_the_api(client, wait):
     assert res["writer"] == "openrouter/fake/frontier" and res["calls"] == 2 and res["cost_usd"] > 0
     assert any("$" in line for line in job["progress"]["log"])  # the log shows what each pass cost
     story = client.get(f"/api/stories/{created['story']['id']}").json()
-    assert story["storyboard"]["models"] == {"writer": "openrouter/fake/frontier", "writer_effort": "low"}
+    models = story["storyboard"]["models"]
+    assert (models["writer"], models["writer_effort"]) == ("openrouter/fake/frontier", "low")
     assert story["writer"] == {
         "id": "openrouter/fake/frontier",
         "model": "fake/frontier",
@@ -101,7 +105,10 @@ def test_the_default_writer_from_settings(client, wait):
 def test_models_endpoint(client):
     cat = client.get("/api/models").json()
     assert cat["models"][0]["id"] == "ollama/qwen3.8:latest" and cat["providers"]["openrouter"]["configured"]
-    assert client.get("/api/models", params={"capability": "image.keyframe"}).status_code == 404
+    pictures = client.get("/api/models", params={"capability": "image.keyframe"}).json()
+    assert pictures["default"] == "local/flux2-klein-9b"
+    assert all(m["available"] for m in pictures["models"])  # fake mode has a fal key
+    assert client.get("/api/models", params={"capability": "music"}).status_code == 404
 
 
 def test_an_openrouter_writer_needs_a_key(client, monkeypatch):

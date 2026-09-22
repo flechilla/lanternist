@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { api, errorMessage, fmtSeconds, LANGUAGE_NAMES, type StoryListItem } from "../api";
+import { api, errorMessage, fmtSeconds, fmtUsd, LANGUAGE_NAMES, type StoryListItem } from "../api";
 import Slide from "../components/Slide";
 import { useAction } from "../hooks";
 
@@ -85,6 +85,7 @@ export default function Library() {
                 <span>{LANGUAGE_NAMES[s.language] ?? s.language}</span>
                 <span>{s.scenes} scenes</span>
                 {s.film && <span>{fmtSeconds(s.film.duration)} film</span>}
+                {s.spent_usd > 0 && <span>{fmtUsd(s.spent_usd)} spent</span>}
                 <span>edited {new Date(s.updated_at + "Z").toLocaleDateString()}</span>
               </div>
             </div>

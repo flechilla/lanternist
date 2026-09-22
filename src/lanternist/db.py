@@ -11,6 +11,7 @@ are decimal strings, columns use SQLAlchemy's own types, and every query goes th
 """
 
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -83,9 +84,10 @@ class StoryVersion(Base):
 class Job(Base):
     __tablename__ = "jobs"
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
-    story_id: Mapped[str] = mapped_column(ForeignKey("stories.id", ondelete="CASCADE"), index=True)
+    # None for a job that belongs to no story: a voice sample.
+    story_id: Mapped[str | None] = mapped_column(ForeignKey("stories.id", ondelete="CASCADE"), index=True)
     version: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    kind: Mapped[str] = mapped_column(String(16))  # write | rewrite | cast | board | render
+    kind: Mapped[str] = mapped_column(String(16))  # write | rewrite | cast | board | render | sample
     status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
     params: Mapped[dict] = mapped_column(JSON, default=dict)
     progress: Mapped[dict] = mapped_column(JSON, default=dict)
@@ -174,6 +176,17 @@ class Upload(Base):
     created_at: Mapped[datetime] = mapped_column(default=now)
 
 
+@dataclass
+class LibraryRow:
+    """A story as the library lists it."""
+
+    story: Story
+    storyboard: dict  # the current version's
+    film: Job | None  # the latest finished render
+    drawn: Job | None  # the latest finished board or render, for the poster
+    active: int  # jobs queued or running
+
+
 class Database:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -226,6 +239,29 @@ class Database:
             s.commit()
             return story
 
+    def library(self) -> list["LibraryRow"]:
+        """Every story, newest edit first, with what the library shows of it."""
+        with self.session() as s:
+            out = []
+            for st in s.scalars(select(Story).order_by(Story.updated_at.desc())):
+                done = (
+                    select(Job)
+                    .where(Job.story_id == st.id, Job.status == "done")
+                    .order_by(Job.finished_at.desc())
+                )
+                film = s.scalars(done.where(Job.kind == "render")).first()
+                drawn = s.scalars(done.where(Job.kind.in_(("board", "render")))).first()
+                active = s.scalar(
+                    select(func.count()).where(Job.story_id == st.id, Job.status.in_(("queued", "running")))
+                )
+                row = s.scalars(
+                    select(StoryVersion).where(
+                        StoryVersion.story_id == st.id, StoryVersion.version == st.version
+                    )
+                ).first()
+                out.append(LibraryRow(st, row.storyboard if row else {}, film, drawn, active or 0))
+            return out
+
     def get_story(self, story_id: str) -> Story | None:
         with self.session() as s:
             return s.get(Story, story_id)
@@ -270,6 +306,40 @@ class Database:
             return row.version
 
     # jobs -------------------------------------------------------------------------------------
+    def add_job(
+        self, story_id: str | None, kind: str, version: int | None, params: dict, estimate: dict | None
+    ) -> Job:
+        with self.session() as s:
+            job = Job(
+                story_id=story_id, kind=kind, version=version, params=params, progress={}, estimate=estimate
+            )
+            s.add(job)
+            s.commit()
+            return job
+
+    def requeue_running(self) -> None:
+        """Put every job a stopped server left running back in the queue."""
+        with self.session() as s:
+            for job in s.scalars(select(Job).where(Job.status == "running")):
+                job.status = "queued"
+            s.commit()
+
+    def cancel_queued(self, job_id: str) -> bool:
+        """Cancel a job that hasn't started; False if it has, or is gone."""
+        with self.session() as s:
+            job = s.get(Job, job_id)
+            if job is None or job.status != "queued":
+                return False
+            job.status, job.finished_at = "cancelled", now()
+            s.commit()
+            return True
+
+    def next_job(self, fast_kinds: tuple[str, ...], fast: bool) -> Job | None:
+        """The oldest queued job of one lane: the fast kinds, or everything else."""
+        lane = Job.kind.in_(fast_kinds) if fast else Job.kind.not_in(fast_kinds)
+        with self.session() as s:
+            return s.scalars(select(Job).where(Job.status == "queued", lane).order_by(Job.created_at)).first()
+
     def update_job(self, job_id: str, **fields) -> Job | None:
         """Set fields on a job; None if it's gone, deleted with its story."""
         with self.session() as s:
@@ -328,6 +398,32 @@ class Database:
             q = q.where(StepRun.created_at >= since)
         with self.session() as s:
             return int(s.scalar(q))
+
+    def spend_by_story(self) -> dict[str, int]:
+        """What each story has cost so far, in one query, for the library."""
+        q = (
+            select(StepRun.story_id, func.coalesce(func.sum(StepRun.cost_micros), 0))
+            .where(StepRun.story_id.is_not(None))
+            .group_by(StepRun.story_id)
+        )
+        with self.session() as s:
+            return {sid: int(total) for sid, total in s.execute(q) if sid}
+
+    def budget_micros(self, story_id: str, default_usd: float) -> int:
+        """The story's own budget, or the default from Settings when it has none."""
+        story = self.get_story(story_id)
+        if story is not None and story.budget_micros is not None:
+            return story.budget_micros
+        return to_micros(str(default_usd))
+
+    def set_budget(self, story_id: str, micros: int | None) -> Story | None:
+        """Set a story's budget; None goes back to the default. None if there's no such story."""
+        with self.session() as s:
+            story = s.get(Story, story_id)
+            if story is not None:
+                story.budget_micros = micros
+                s.commit()
+            return story
 
     def writer_tokens_per_minute(self) -> dict[str, dict]:
         """For each writer model: average tokens in and out per minute of story, over finished write jobs."""

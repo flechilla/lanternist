@@ -91,7 +91,6 @@ ignore_missing_imports = true   # NVIDIA ships it without type hints or stubs
 # Never add a module to it.
 [[tool.mypy.overrides]]
 module = [
-    "lanternist.pipeline",
     "lanternist.providers.fal",
 ]
 ignore_errors = true

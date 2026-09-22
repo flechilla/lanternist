@@ -29,6 +29,25 @@ def _writer_id(v: str) -> str:
 WriterId = Annotated[str, AfterValidator(_writer_id)]
 
 
+def _model_id(v: str) -> str:
+    v = v.strip()
+    if v and not re.fullmatch(r"(local|fal)/\S+", v):
+        raise ValueError("a media model is a registry id: local/<name> or fal/<name>")
+    return v
+
+
+# A media model from the registry (`lanternist models` lists them). Empty means the default.
+ModelId = Annotated[str, AfterValidator(_model_id)]
+
+
+def _ambience_id(v: str) -> str:
+    return v.strip() if v.strip() == "none" else _model_id(v)
+
+
+# The ambience model, or "none" for silent video scenes. Empty means the default.
+AmbienceId = Annotated[str, AfterValidator(_ambience_id)]
+
+
 class CastMember(BaseModel):
     id: str = Field(description="short lowercase slug, e.g. 'luna'")
     name: str
@@ -50,6 +69,7 @@ class Scene(BaseModel):
     camera: Camera = "auto"
     mode: Mode = "still"
     seed: int | None = None
+    video_seed: int | None = Field(None, description="a new take of the scene's video; None follows `seed`")
 
     @property
     def text(self) -> str:
@@ -63,6 +83,14 @@ class Models(BaseModel):
     writer_effort: Effort | None = Field(
         None, description="the writer's reasoning effort; None is the model's default"
     )
+    tts: ModelId = Field("", description="narrates; `Storyboard.voice` is one of its voices")
+    image: ModelId = Field("", description="draws the cast sheet and the pictures")
+    image_quality: str | None = Field(None, description="the picture model's quality option, e.g. 2K")
+    video: ModelId = Field("", description="animates the video scenes")
+    video_quality: str | None = Field(None, description="the video model's quality option, e.g. 768P")
+    ambience: AmbienceId = Field(
+        "", description="scores video scenes whose model makes no sound of its own; 'none' leaves them silent"
+    )
 
 
 class Storyboard(BaseModel):
@@ -71,7 +99,9 @@ class Storyboard(BaseModel):
     audience: Audience = "kids_5_8"
     kind: str = "bedtime"
     style: str = Field("", description="English style suffix appended to every picture prompt")
-    voice: str = "demo"
+    voice: str = Field(
+        "demo", description="a preset of the narration model, or a recording in voices/ it clones"
+    )
     seed: int = 7
     subtitles: Subtitles = "sidecar"
     cast: list[CastMember] = Field(default_factory=list)
@@ -82,6 +112,10 @@ class Storyboard(BaseModel):
 
     def scene_seed(self, scene: Scene) -> int:
         return scene.seed if scene.seed is not None else self.seed + scene.n
+
+    def video_seed(self, scene: Scene) -> int:
+        """The seed of the scene's video: its own after a new take, else the picture's."""
+        return scene.video_seed if scene.video_seed is not None else self.scene_seed(scene)
 
     def has_cast_sheet(self) -> bool:
         return bool(self.cast_sheet_prompt or self.cast)

@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { api, errorMessage, type Provider, type ProviderName } from "../api";
+import {
+  api,
+  errorMessage,
+  type Capability,
+  type MediaCatalog,
+  type Provider,
+  type ProviderName,
+  type SettingRow,
+} from "../api";
+import ModelPicker from "../components/ModelPicker";
 import { useAction } from "../hooks";
 
 const ABOUT: Record<ProviderName, { what: string; keys: string; tip: string }> = {
@@ -108,6 +117,101 @@ function ProviderCard({ p, onChange }: { p: Provider; onChange: (p?: Provider) =
   );
 }
 
+/** A saved setting as text: model ids are strings and the budget a number. */
+function text(rows: SettingRow[] | null, key: string): string {
+  const v = rows?.find((r) => r.key === key)?.value;
+  return typeof v === "string" || typeof v === "number" ? String(v) : "";
+}
+
+/** The settings that pick a model, each naming its stage, in the order the backend lists them. */
+function modelSettings(rows: SettingRow[]) {
+  return rows.filter((r): r is SettingRow & { capability: Capability } => !!r.capability);
+}
+
+function Defaults() {
+  const [rows, setRows] = useState<SettingRow[] | null>(null);
+  const [catalogs, setCatalogs] = useState<Partial<Record<Capability, MediaCatalog>>>({});
+  const stages = modelSettings(rows ?? []);
+  const [budget, setBudget] = useState("");
+  const { busy, error, setError, run } = useAction();
+
+  // Each catalog names its stage's default, so they're fetched again after a save.
+  const loadCatalogs = useCallback(
+    (settings: SettingRow[]) => {
+      const caps = modelSettings(settings).map((r) => r.capability);
+      return Promise.all(caps.map((c) => api.models(c))).then(
+        (all) => setCatalogs(Object.fromEntries(caps.map((c, i) => [c, all[i]]))),
+        (e: unknown) => setError(errorMessage(e)),
+      );
+    },
+    [setError],
+  );
+  useEffect(() => {
+    api.settings().then(
+      (r) => {
+        setRows(r);
+        setBudget(text(r, "defaults.budget_usd"));
+        void loadCatalogs(r);
+      },
+      (e: unknown) => setError(errorMessage(e)),
+    );
+  }, [loadCatalogs, setError]);
+
+  const save = (changes: Record<string, unknown>) =>
+    run(async () => {
+      const saved = await api.saveSettings(changes);
+      setRows(saved);
+      await loadCatalogs(saved);
+    });
+
+  return (
+    <section className="panel stack" aria-labelledby="defaults-title">
+      <h2 id="defaults-title">Defaults for every story</h2>
+      <p className="muted">A story uses these unless it picks its own on the Board step.</p>
+      {stages.map((st) => (
+        <ModelPicker
+          key={st.key}
+          label={st.label}
+          catalog={catalogs[st.capability] ?? null}
+          error={error}
+          value={text(rows, st.key)}
+          allowDefault={false}
+          off={st.off ?? undefined}
+          disabled={busy}
+          onChange={(model) => void save({ [st.key]: model })}
+        />
+      ))}
+      <form
+        className="key-form"
+        onSubmit={(e: FormEvent) => {
+          e.preventDefault();
+          void save({ "defaults.budget_usd": Number(budget) });
+        }}
+      >
+        <label className="field" htmlFor="default-budget">
+          Budget per story, in dollars
+          <small>
+            A remote stage that would take a story past it stops before it spends anything. A story can have
+            its own.
+          </small>
+        </label>
+        <input
+          id="default-budget"
+          type="number"
+          min={0}
+          step={0.5}
+          value={budget}
+          onChange={(e) => setBudget(e.target.value)}
+        />
+        <button type="submit" disabled={busy || budget === "" || Number(budget) < 0}>
+          Save budget
+        </button>
+      </form>
+      {error && <p className="error">{error}</p>}
+    </section>
+  );
+}
+
 export default function Settings() {
   const [providers, setProviders] = useState<Provider[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -128,8 +232,8 @@ export default function Settings() {
         <div>
           <h1>Settings</h1>
           <p>
-            Keys for remote models. Each key is kept on this machine and sent only to its own provider. Every
-            model on this machine keeps working without them, free.
+            Keys for remote models, and the defaults every story starts from. Each key is kept on this machine
+            and sent only to its own provider. Every model on this machine keeps working without them, free.
           </p>
         </div>
       </div>
@@ -140,6 +244,7 @@ export default function Settings() {
           {providers.map((p) => (
             <ProviderCard key={p.name} p={p} onChange={changed} />
           ))}
+          <Defaults />
         </div>
       )}
     </>

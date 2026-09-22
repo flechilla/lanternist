@@ -11,8 +11,8 @@ lives in it, and `Database.migrate()` upgrades it at every start. A bad migratio
 their data the next time they open the app. Background: M2_PLAN.md §1.13.
 
 - **Every query lives in `db.py`**, as a `Database` method or on a model. Other modules call those;
-  they don't build queries of their own. `api/app.py` and `jobs.py` still query inline: move a
-  query into `db.py` when you touch the code around it.
+  they don't build queries of their own. `api/app.py` still queries inline: move a query into
+  `db.py` when you touch the code around it.
 - **Portable types only**: `String(n)`, `Integer`, `BigInteger`, `Float`, `Text`, `JSON`, `DateTime`.
   No SQLite-only SQL, no `sqlite_*` options. Timestamps are naive UTC from `db.now()`.
 - **Money** columns end in `_micros` and are `BigInteger`. **Prices** are `String` decimals.

@@ -8,9 +8,10 @@ from pathlib import Path
 import pytest
 from alembic import command
 
-from lanternist import keys, pipeline, prefs, registry
+from lanternist import keys, prefs, registry
 from lanternist.config import Defaults, Paths, Settings
 from lanternist.db import Database, Job, StepRun, Story, now, to_micros, to_usd
+from lanternist.engines import local as local_engines
 
 REAL_DB = Path.home() / "Lanternist" / "lanternist.db"
 
@@ -50,6 +51,28 @@ def test_migration_keeps_mvp_rows(tmp_path):
     assert counts(tmp_path / "old.db") == before
     command.upgrade(d.alembic_config(), "head")
     assert counts(tmp_path / "old.db") == before
+
+
+def test_migration_0003_keeps_jobs_and_allows_ones_without_a_story(tmp_path):
+    d = Database(tmp_path / "old.db")
+    command.upgrade(d.alembic_config(), "0002")
+    with sqlite3.connect(tmp_path / "old.db") as c:
+        c.execute(
+            "insert into stories (id, slug, title, language, version, created_at, updated_at) values ('s1','luna','Luna','es',1,'2026-09-01','2026-09-01')"
+        )
+        c.execute(
+            "insert into jobs (id, story_id, version, kind, status, params, progress, created_at) "
+            "values ('j1','s1',1,'render','done','{}','{}','2026-09-01')"
+        )
+    before = counts(tmp_path / "old.db")
+    d.migrate()
+    assert counts(tmp_path / "old.db") == before
+    with d.session() as s:
+        assert s.get(Job, "j1").story_id == "s1"
+        s.add(Job(id="j2", story_id=None, kind="sample", params={}, progress={}))
+        s.commit()
+    command.downgrade(d.alembic_config(), "0002")
+    assert counts(tmp_path / "old.db") == before  # the sample went; the story's job stayed
 
 
 def test_models_match_the_migrations(db):
@@ -200,7 +223,7 @@ def test_registry_entries_are_consistent():
     entries = registry.load()
     local = {e.engine_id for e in entries.values() if e.provider == "local"}
     # The local entries carry today's step-key engine ids, so the existing cache stays valid.
-    assert {pipeline.TTS, pipeline.KLEIN, pipeline.LTX} == local
+    assert {local_engines.TTS, local_engines.KLEIN, local_engines.LTX} == local
     for e in entries.values():
         assert e.capability in registry.CAPABILITIES
         if e.provider == "fal":
@@ -244,6 +267,18 @@ def test_registry_user_file_and_synced_prices(tmp_path, db):
         and str(klein.price.tiers["text_to_image"]) == "0.006"
     )
     assert entries["fal/nano-banana-2"].status == "deprecated"
+
+
+def test_a_fal_model_without_a_list_price_is_refused(tmp_path):
+    lib = tmp_path / "lib"
+    lib.mkdir()
+    registry.user_file(lib).write_text(
+        '[[model]]\nid = "fal/new"\nlabel = "New"\ncapability = "tts.speak"\nprovider = "fal"\n'
+        'family = "elevenlabs"\nendpoint = "x"\nprice = { unit = "1k_chars" }\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="fal/new has no list price"):
+        registry.load(lib)
 
 
 def test_unit_names_from_fal():

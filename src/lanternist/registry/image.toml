@@ -1,5 +1,8 @@
-# Cast sheet and keyframes. Prices are list prices read from each fal endpoint page on 21 Sep 2026;
-# `lanternist models --sync` refreshes the base price from fal's pricing API.
+# Cast sheet and keyframes. Prices are list prices read from each fal endpoint page on 21 and 22 Sep
+# 2026; `lanternist models --sync` records what fal bills for each endpoint.
+#
+# Every fal picture model draws the cast sheet from text (`endpoints.text_to_image`), then each
+# keyframe on its edit endpoint with the cast sheet as the reference: that is the character lock.
 
 [[model]]
 id = "local/flux2-klein-9b"
@@ -8,6 +11,7 @@ capability = "image.keyframe"
 provider = "local"
 engine_id = "flux2-klein-9b@1"          # part of every step key: changing it redraws the library
 references = 4
+seed = true
 commercial_use = false
 licence = "FLUX Non-Commercial v2.1 (personal use)"
 price = { unit = "image", gpu_seconds = 15 }
@@ -21,10 +25,11 @@ family = "klein"
 endpoint = "fal-ai/flux-2/klein/9b/edit"                   # keyframes, with the cast sheet as reference
 endpoints = { text_to_image = "fal-ai/flux-2/klein/9b" }   # the cast sheet itself
 references = 4
+seed = true
 commercial_use = true
 licence = "fal commercial terms; confirm on the endpoint page"
 defaults = { num_inference_steps = 4, output_format = "png", enable_safety_checker = true }
-notes = "Same model as the local worker. Input and output megapixels both count; inputs are resized to 1 MP."
+notes = "Same model as the local worker, so the cast holds the same way. The cheapest good choice."
 price = { unit = "megapixel", usd = "0.011", tiers = { text_to_image = "0.006" }, synced = "2026-09-21" }
 
 [[model]]
@@ -33,10 +38,61 @@ label = "Nano Banana 2 · fal"
 capability = "image.keyframe"
 provider = "fal"
 family = "nano_banana"
-endpoint = "fal-ai/nano-banana-2/edit"   # also draws the cast sheet, with no reference
+endpoint = "fal-ai/nano-banana-2/edit"
+endpoints = { text_to_image = "fal-ai/nano-banana-2" }
 references = 4
+seed = true
+quality = { param = "resolution", options = ["0.5K", "1K", "2K", "4K"], default = "2K" }
 commercial_use = true
 licence = "fal commercial terms; confirm on the endpoint page"
-defaults = { resolution = "2K", aspect_ratio = "16:9", output_format = "png" }
-notes = "Follows long prompts and references well. Priced per image by resolution."
-price = { unit = "image", usd = "0.08", tiers = { "0.5K" = "0.06", "2K" = "0.12", "4K" = "0.16" }, synced = "2026-09-21" }
+defaults = { output_format = "png", num_images = 1, limit_generations = true, safety_tolerance = "4" }
+notes = "Follows long prompts and references well. Priced per picture by resolution."
+price = { unit = "image", usd = "0.08", tiers = { "0.5K" = "0.06", "2K" = "0.12", "4K" = "0.16" }, synced = "2026-09-22" }
+
+[[model]]
+id = "fal/nano-banana-pro"
+label = "Nano Banana Pro · fal"
+capability = "image.keyframe"
+provider = "fal"
+family = "nano_banana"
+endpoint = "fal-ai/nano-banana-pro/edit"
+endpoints = { text_to_image = "fal-ai/nano-banana-pro" }
+references = 4
+seed = true
+quality = { param = "resolution", options = ["1K", "2K", "4K"], default = "2K" }
+commercial_use = true
+licence = "fal commercial terms; confirm on the endpoint page"
+defaults = { output_format = "png", num_images = 1, limit_generations = true, safety_tolerance = "4" }
+notes = "Google's best picture model: the closest match to the cast sheet and the most faithful to long prompts. 4K costs double."
+price = { unit = "image", usd = "0.15", tiers = { "4K" = "0.30" }, synced = "2026-09-22" }
+
+[[model]]
+id = "fal/seedream-5-pro"
+label = "Seedream 5.0 Pro · fal"
+capability = "image.keyframe"
+provider = "fal"
+family = "seedream"
+endpoint = "bytedance/seedream/v5/pro/edit"
+endpoints = { text_to_image = "bytedance/seedream/v5/pro/text-to-image" }
+references = 10
+commercial_use = true
+licence = "fal commercial terms; confirm on the endpoint page"
+defaults = { output_format = "png", num_images = 1, enable_safety_checker = true }
+notes = "ByteDance's best: rich detail and faithful references. No seed input. Pictures over 1536×1536 cost double; every reference after the first costs extra."
+price = { unit = "image", usd = "0.0675", tiers = { large = "0.135", extra_reference = "0.0045" }, synced = "2026-09-22" }
+
+[[model]]
+id = "fal/flux-2-max"
+label = "FLUX.2 [max] · fal"
+capability = "image.keyframe"
+provider = "fal"
+family = "flux2"
+endpoint = "fal-ai/flux-2-max/edit"
+endpoints = { text_to_image = "fal-ai/flux-2-max" }
+references = 4
+seed = true
+commercial_use = true
+licence = "fal commercial terms; confirm on the endpoint page"
+defaults = { output_format = "png", safety_tolerance = "2", enable_safety_checker = true }
+notes = "Black Forest Labs' best FLUX.2, the big sibling of klein. Priced per megapixel, the references included, rounded up."
+price = { unit = "megapixel", usd = "0.03", first = "0.07", synced = "2026-09-22" }

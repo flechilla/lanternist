@@ -1,4 +1,6 @@
-# Narration. Clone engines take a reference clip from voices/; preset engines take a voice id.
+# Narration. A voice is one of the model's presets (`voices`), or, where `clone = true`, a recording
+# in voices/ it copies. `languages` are the ISO 639-1 codes it speaks.
+# Prices and inputs were read from each fal endpoint page and its OpenAPI schema on 21 and 22 Sep 2026.
 
 [[model]]
 id = "local/qwen3-tts-1.7b"
@@ -10,6 +12,7 @@ clone = true
 languages = ["en", "zh", "es", "fr", "de", "it", "ja", "ko", "pt", "ru"]
 commercial_use = true
 licence = "Apache 2.0"
+notes = "Clones one of your recordings, on this machine."
 price = { unit = "audio_second", gpu_seconds = 0.46 }
 
 [[model]]
@@ -25,9 +28,10 @@ voices = ["Vivian", "Serena", "Uncle_Fu", "Dylan", "Eric", "Ryan", "Aiden", "Ono
 languages = ["en", "zh", "es", "fr", "de", "it", "ja", "ko", "pt", "ru"]
 commercial_use = true
 licence = "Apache 2.0 model; fal commercial terms"
-defaults = { max_new_tokens = 4096 }   # the endpoint's default of 200 cuts long chunks short
-notes = "Same model as local; clones the same reference clip."
-price = { unit = "1k_chars", usd = "0.09", tiers = { clone_minute = "0.0008" }, synced = "2026-09-21" }
+# The endpoint's max_new_tokens of 200 cuts long chunks short; the rest are its defaults, stated.
+defaults = { max_new_tokens = 4096, temperature = 0.9, top_k = 50, top_p = 1.0, repetition_penalty = 1.05 }
+notes = "The same model as on this machine: it clones your recordings, or speaks in one of its own voices."
+price = { unit = "1k_chars", usd = "0.09", tiers = { clone = "0.0008" }, synced = "2026-09-21" }
 
 [[model]]
 id = "fal/elevenlabs-v3"
@@ -36,10 +40,15 @@ capability = "tts.speak"
 provider = "fal"
 family = "elevenlabs"
 endpoint = "fal-ai/elevenlabs/tts/eleven-v3"
-voices = ["Rachel"]                    # the preset list is filled in Phase F
+voices = [
+  "Rachel", "Aria", "Sarah", "Laura", "Charlotte", "Alice", "Matilda", "Jessica", "Lily",
+  "Roger", "Charlie", "George", "Callum", "River", "Liam", "Will", "Eric", "Chris", "Brian", "Daniel", "Bill",
+]
+languages = ["en", "es", "pt", "fr", "de", "it", "ru", "zh", "ja", "ko"]
 commercial_use = true
 licence = "fal commercial terms; confirm on the endpoint page"
-notes = "Preset voices, no cloning from a clip. Takes an ISO 639-1 language code."
+defaults = { stability = 0.5, apply_text_normalization = "auto" }
+notes = "The most expressive storyteller. Its own voices only: no cloning from a recording."
 price = { unit = "1k_chars", usd = "0.10", synced = "2026-09-21" }
 
 [[model]]
@@ -49,10 +58,17 @@ capability = "tts.speak"
 provider = "fal"
 family = "minimax"
 endpoint = "fal-ai/minimax/speech-2.8-hd"
-voices = ["Wise_Woman"]                # the preset list is filled in Phase F
+voices = [
+  "Wise_Woman", "Calm_Woman", "Friendly_Person", "Inspirational_girl", "Lively_Girl", "Lovely_Girl",
+  "Sweet_Girl_2", "Exuberant_Girl", "Abbess", "Deep_Voice_Man", "Casual_Guy", "Patient_Man",
+  "Young_Knight", "Determined_Man", "Decent_Boy", "Imposing_Manner", "Elegant_Man",
+]
+languages = ["en", "es", "pt", "fr", "de", "it", "ru", "zh", "ja", "ko"]
 commercial_use = true
 licence = "fal commercial terms; confirm on the endpoint page"
-defaults = { output_format = "url" }   # the default is hex in the response body
+# output_format "hex" (the default) would put the audio in the response body.
+defaults = { output_format = "url", voice_setting = { speed = 1.0, vol = 1.0, pitch = 0 }, audio_setting = { format = "mp3", sample_rate = 32000, bitrate = 128000, channel = 1 } }
+notes = "Warm, clear voices, strong in Chinese and many other languages."
 price = { unit = "1k_chars", usd = "0.10", synced = "2026-09-21" }
 
 [[model]]
@@ -63,8 +79,14 @@ provider = "fal"
 family = "chatterbox"
 endpoint = "fal-ai/chatterbox/text-to-speech/multilingual"
 clone = true
+seed = true
 max_chars = 300
+languages = [
+  "ar", "da", "de", "el", "en", "es", "fi", "fr", "he", "hi", "it", "ja", "ko", "ms", "nl", "no",
+  "pl", "pt", "ru", "sv", "sw", "tr", "zh",
+]
 commercial_use = true
 licence = "fal commercial terms; confirm on the endpoint page"
-notes = "Cheapest. 23 languages; clones from the reference clip's URL."
+defaults = { exaggeration = 0.5, temperature = 0.8, cfg_scale = 0.5 }
+notes = "The cheapest: clones your recordings, in 23 languages."
 price = { unit = "1k_chars", usd = "0.025", synced = "2026-09-21" }

@@ -13,10 +13,10 @@ from .db import Database
 
 EDITABLE = {
     "defaults.writer": "Writer model: empty for the local Ollama model, or ollama/<name>, openrouter/<id>",
-    "defaults.tts": "Narration model",
-    "defaults.image": "Picture model",
-    "defaults.video": "Video model",
-    "defaults.ambience": "Ambience model, or none",
+    "defaults.tts": "Narration",
+    "defaults.image": "Pictures",
+    "defaults.video": "Video",
+    "defaults.ambience": "Ambience, for video models with no sound of their own",
     "defaults.budget_usd": "Budget per story for remote models, in USD",
     "openrouter.recommended": "Writer models pinned at the top of the picker",
     "openrouter.data_collection": "allow or deny providers that store prompts",
@@ -29,6 +29,16 @@ MODEL_KEYS = {
     "defaults.video": "video.image_to_video",
     "defaults.ambience": "audio.ambience",
 }
+# Model settings that may be "none", and what that means.
+OFF = {"defaults.ambience": "Their scenes stay silent under the narration."}
+
+
+def default_model(cfg: Settings, capability: str) -> str:
+    """The model a stage uses when a story picks none."""
+    key = next((k for k, c in MODEL_KEYS.items() if c == capability), None)
+    if key is None:
+        raise ValueError(f"no model list for '{capability}'")
+    return _get(cfg, key)
 
 
 def _apply(cfg: Settings, values: dict) -> Settings:
@@ -57,12 +67,21 @@ def describe(cfg: Settings, db: Database) -> list[dict]:
     for key, label in EDITABLE.items():
         section, field = key.split(".", 1)
         source = "app" if key in saved else "file" if field in written.get(section, {}) else "default"
-        out.append({"key": key, "label": label, "value": _get(eff, key), "source": source})
+        out.append(
+            {
+                "key": key,
+                "label": label,
+                "value": _get(eff, key),
+                "source": source,
+                "capability": MODEL_KEYS.get(key),
+                "off": OFF.get(key),
+            }
+        )
     return out
 
 
 def _check_model(key: str, value, library) -> None:
-    if key == "defaults.ambience" and value == "none":
+    if key in OFF and value == "none":
         return
     entry = registry.get(value, library)  # KeyError names the known ids
     if entry.capability != MODEL_KEYS[key]:

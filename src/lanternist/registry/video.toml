@@ -1,6 +1,7 @@
-# Image-to-video. `durations` are the clip lengths a model bills, for the shot planner.
-# Every fal model here generates audio by default at extra cost; `defaults` turns it off unless
-# the model's sound is the ambience we want (`audio = "ambience"`).
+# Image-to-video. `durations` are the clip lengths a model bills, for the shot planner. Prices are
+# list prices read from each fal endpoint page on 21 and 22 Sep 2026, audio off unless the model's
+# own sound is the ambience we want (`audio = "ambience"`). A `quality` is the resolution a story may
+# pick; its price is the matching `tiers` entry, or `usd` for the default.
 
 [[model]]
 id = "local/ltx-2.5-22b-nvfp4"
@@ -9,10 +10,59 @@ capability = "video.image_to_video"
 provider = "local"
 engine_id = "ltx-2.5-22b-nvfp4@1"
 audio = "ambience"
+seed = true
 commercial_use = "below_10m_revenue"
 licence = "LTX-2.x Community Licence"
 durations = { frames = "8k+1", fps = 24, max_seconds = 20 }
 price = { unit = "output_second", gpu_seconds = 4.3 }
+
+[[model]]
+id = "fal/h3-max-turbo"
+label = "MiniMax H3 Max Turbo · fal"
+capability = "video.image_to_video"
+provider = "fal"
+family = "h3"
+endpoint = "minimax/h3-max-turbo/image-to-video"
+audio = "ambience"                      # no audio switch; it always returns a quiet sound bed
+seed = true
+durations = { min = 5, max = 15, step = 1 }
+quality = { param = "resolution", options = ["480P", "768P", "1080P"], default = "768P" }
+commercial_use = true
+licence = "fal commercial terms; confirm on the endpoint page"
+defaults = { prompt_expansion_mode = "disabled", enable_safety_checker = true }
+notes = "The cheapest good video: try a whole film for cents at 480P. Prompt expansion is off so the character lock isn't rewritten."
+
+[model.price]
+unit = "output_second"
+usd = "0.02"
+tiers = { "480P" = "0.0125", "1080P" = "0.04" }
+synced = "2026-09-22"
+until = "2026-09-30"                    # fal's launch price, half the regular one
+then = { unit = "output_second", usd = "0.04", tiers = { "480P" = "0.025", "1080P" = "0.08" } }
+
+[[model]]
+id = "fal/h3-max"
+label = "MiniMax H3 Max · fal"
+capability = "video.image_to_video"
+provider = "fal"
+family = "h3"
+endpoint = "minimax/h3-max/image-to-video"
+audio = "ambience"
+seed = true
+durations = { min = 5, max = 15, step = 1 }
+quality = { param = "resolution", options = ["480P", "768P", "1080P"], default = "768P" }
+commercial_use = true
+licence = "fal commercial terms; confirm on the endpoint page"
+defaults = { prompt_expansion_mode = "disabled", enable_safety_checker = true }
+notes = "fal's post-trained MiniMax H3: strong prompt following and looks, at a fraction of the premium models' price."
+
+[model.price]
+unit = "output_second"
+usd = "0.04"
+tiers = { "480P" = "0.025", "1080P" = "0.08" }
+synced = "2026-09-22"
+until = "2026-09-30"
+then = { unit = "output_second", usd = "0.08", tiers = { "480P" = "0.05", "1080P" = "0.16" } }
 
 [[model]]
 id = "fal/kling-v3-standard"
@@ -24,9 +74,71 @@ endpoint = "fal-ai/kling-video/v3/standard/image-to-video"
 commercial_use = true
 licence = "fal commercial terms; confirm on the endpoint page"
 durations = { min = 3, max = 15, step = 1 }
-defaults = { generate_audio = false, negative_prompt = "blur, distort, low quality", cfg_scale = 0.5 }
+defaults = { generate_audio = false, cfg_scale = 0.5 }
 notes = "No seed or size input: it follows the start image."
 price = { unit = "output_second", usd = "0.084", tiers = { audio_on = "0.126", voice_control = "0.154" }, synced = "2026-09-21" }
+
+[[model]]
+id = "fal/kling-v3-pro"
+label = "Kling v3 Pro · fal"
+capability = "video.image_to_video"
+provider = "fal"
+family = "kling"
+endpoint = "fal-ai/kling-video/v3/pro/image-to-video"
+commercial_use = true
+licence = "fal commercial terms; confirm on the endpoint page"
+durations = { min = 3, max = 15, step = 1 }
+defaults = { generate_audio = false, cfg_scale = 0.5 }
+notes = "Kling's best motion and detail. No seed or size input: it follows the start image."
+price = { unit = "output_second", usd = "0.112", tiers = { audio_on = "0.168", voice_control = "0.196" }, synced = "2026-09-22" }
+
+[[model]]
+id = "fal/veo-3.1"
+label = "Veo 3.1 · fal"
+capability = "video.image_to_video"
+provider = "fal"
+family = "veo"
+endpoint = "fal-ai/veo3.1/image-to-video"
+seed = true
+commercial_use = true
+licence = "fal commercial terms; confirm on the endpoint page"
+durations = { values = [4, 6, 8] }
+quality = { param = "resolution", options = ["720p", "1080p", "4k"], default = "1080p" }
+defaults = { generate_audio = false, aspect_ratio = "16:9", auto_fix = false }
+notes = "Google's best: the most cinematic motion. 1080p costs the same as 720p; slots over 8 s need two shots."
+price = { unit = "output_second", usd = "0.20", tiers = { "4k" = "0.40", audio_on = "0.40" }, synced = "2026-09-22" }
+
+[[model]]
+id = "fal/veo-3.1-fast"
+label = "Veo 3.1 fast · fal"
+capability = "video.image_to_video"
+provider = "fal"
+family = "veo"
+endpoint = "fal-ai/veo3.1/fast/image-to-video"
+seed = true
+commercial_use = true
+licence = "fal commercial terms; confirm on the endpoint page"
+durations = { values = [4, 6, 8] }
+quality = { param = "resolution", options = ["720p", "1080p", "4k"], default = "1080p" }
+defaults = { generate_audio = false, aspect_ratio = "16:9", auto_fix = false }
+notes = "Premium look at half Veo's price; slots over 8 s need two shots."
+price = { unit = "output_second", usd = "0.10", tiers = { "4k" = "0.30", audio_on = "0.15" }, synced = "2026-09-21" }
+
+[[model]]
+id = "fal/wan-3.0"
+label = "Wan 3.0 · fal"
+capability = "video.image_to_video"
+provider = "fal"
+family = "wan3"
+endpoint = "alibaba/wan-3.0/image-to-video"
+audio = "ambience"                      # its sound costs nothing extra
+commercial_use = true
+licence = "fal commercial terms; confirm on the endpoint page"
+durations = { min = 2, max = 30, step = 1 }
+quality = { param = "resolution", options = ["480p", "720p", "1080p"], default = "720p" }
+defaults = { audio = true, aspect_ratio = "16:9", enable_prompt_expansion = false, enable_thinking = false, enable_safety_checker = true }
+notes = "Alibaba's newest: any length from 2 to 30 s, so almost nothing is trimmed, with its own sound. No seed input."
+price = { unit = "output_second", usd = "0.10", tiers = { "480p" = "0.05", "1080p" = "0.20" }, synced = "2026-09-22" }
 
 [[model]]
 id = "fal/ltx-2.5-fast"
@@ -39,23 +151,10 @@ audio = "ambience"
 commercial_use = true
 licence = "fal commercial terms; confirm on the endpoint page"
 durations = { values = [6, 8, 10, 12, 14, 16, 18, 20] }
-defaults = { resolution = "720p", aspect_ratio = "16:9", fps = 24, generate_audio = true }
+quality = { param = "resolution", options = ["720p", "1080p"], default = "720p" }
+defaults = { aspect_ratio = "16:9", fps = 24, generate_audio = true }
 notes = "Same model as local, with its own ambience included in the price."
-price = { unit = "output_second", usd = "0.09", tiers = { "1080p" = "0.13", "1440p" = "0.19", "2160p" = "0.30" }, synced = "2026-09-21" }
-
-[[model]]
-id = "fal/veo-3.1-fast"
-label = "Veo 3.1 fast · fal"
-capability = "video.image_to_video"
-provider = "fal"
-family = "veo"
-endpoint = "fal-ai/veo3.1/fast/image-to-video"
-commercial_use = true
-licence = "fal commercial terms; confirm on the endpoint page"
-durations = { values = [4, 6, 8] }
-defaults = { generate_audio = false, resolution = "1080p", aspect_ratio = "16:9" }
-notes = "Premium look; slots over 8 s need two shots."
-price = { unit = "output_second", usd = "0.10", tiers = { audio_on = "0.15", "4k" = "0.30", "4k_audio_on" = "0.35" }, synced = "2026-09-21" }
+price = { unit = "output_second", usd = "0.09", tiers = { "1080p" = "0.13" }, synced = "2026-09-21" }
 
 [[model]]
 id = "fal/wan-2.6-flash"
@@ -64,9 +163,11 @@ capability = "video.image_to_video"
 provider = "fal"
 family = "wan"
 endpoint = "wan/v2.6/image-to-video/flash"   # no fal-ai/ prefix
+seed = true
 commercial_use = true
 licence = "fal commercial terms; confirm on the endpoint page"
 durations = { values = [5, 10, 15] }
-defaults = { resolution = "720p", enable_prompt_expansion = false, generate_audio = false }
-notes = "Cheapest. Prompt expansion is off so the character lock isn't rewritten. Audio off halves the listed price."
-price = { unit = "output_second", usd = "0.025", tiers = { "1080p" = "0.0375", audio_on = "0.05", "1080p_audio_on" = "0.075" }, synced = "2026-09-21" }
+quality = { param = "resolution", options = ["720p", "1080p"], default = "720p" }
+defaults = { enable_prompt_expansion = false, generate_audio = false, multi_shots = false }
+notes = "Cheap. Prompt expansion is off so the character lock isn't rewritten. Audio off halves the listed price."
+price = { unit = "output_second", usd = "0.025", tiers = { "1080p" = "0.0375" }, synced = "2026-09-21" }
