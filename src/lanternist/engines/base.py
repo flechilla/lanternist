@@ -10,10 +10,10 @@ hands the rest to its engine as one batch:
 A local engine loads its model once for the whole batch, under the GPU lease. A remote one runs the
 items concurrently under its provider's semaphore and never takes the lease.
 
-An item can wait on another in the same batch (`after`): keyframes on a cast sheet drawn in the
-same job. Its key and references are only known once that output is stored, so the engine calls
-`ctx.bind(item)` first: a remote engine before submitting it, a local one when its output arrives
-(the worker reads the reference straight from the work dir).
+An item can wait on others in the same batch (`after`): portraits on a cast sheet drawn in the
+same job, and keyframes on those portraits. Its key and references are only known once those outputs
+are stored, so the engine calls `ctx.bind(item)` first: a remote engine before submitting it, a local
+one when its output arrives (the worker reads the references straight from the work dir).
 """
 
 import asyncio
@@ -35,6 +35,8 @@ from ..store import Store
 log = logging.getLogger(__name__)
 
 CAST_SIZE = (1024, 1024)
+PORTRAIT_SIZE = (768, 1024)  # one character, full length
+MAX_REFS = 3  # portraits a picture is drawn from; a crowd gets the whole cast sheet instead
 
 
 def keyframe_size(cfg: Settings) -> tuple[int, int]:
@@ -49,7 +51,7 @@ class Item:
     key: str | None  # the step key; None until the item it waits on is stored
     scene: int | None = None
     params: dict = field(default_factory=dict)  # prompt, seed, size, refs, chunks, shots, …
-    after: str | None = None  # an item in the same batch whose output this one needs
+    after: tuple[str, ...] = ()  # the items earlier in the same batch whose outputs this one needs
     stage: str | None = None  # the progress row it reports under, when not its stage's own
 
 
@@ -91,7 +93,7 @@ def gpu_estimate(entry: ModelEntry, units: float, items: int) -> Estimate:
 
 
 def _unbound(item: Item) -> None:
-    raise RuntimeError(f"{item.id} waits on {item.after}, but its stage gave no way to bind it")
+    raise RuntimeError(f"{item.id} waits on {', '.join(item.after)}, but its stage gave no way to bind it")
 
 
 @dataclass

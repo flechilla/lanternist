@@ -7,6 +7,15 @@ export interface CastMember {
   id: string;
   name: string;
   look: string;
+  /** An object the story turns on is locked by its look alone, off the cast sheet. */
+  kind: "character" | "object";
+}
+
+/** A setting seen in more than one scene, restated in every picture set there. */
+export interface Place {
+  id: string;
+  name: string;
+  look: string;
 }
 
 export interface Line {
@@ -21,11 +30,15 @@ export interface Scene {
   motion: string;
   sound: string;
   cast: string[];
+  /** The id of the place it's set in, or empty. */
+  place: string;
   camera: Camera;
   mode: Mode;
   seed: number | null;
   /** A new take of the scene's video; null follows `seed`. */
   video_seed: number | null;
+  /** Another shot of the same paragraph as the scene before: a short pause and a cut, not a fade. */
+  continues: boolean;
 }
 
 export interface Storyboard {
@@ -39,6 +52,9 @@ export interface Storyboard {
   subtitles: "off" | "sidecar" | "burned";
   cast: CastMember[];
   cast_sheet_prompt: string | null;
+  /** Each character drawn alone from the cast sheet, and each picture given only who is in it. */
+  portraits: boolean;
+  places: Place[];
   models: Models;
   scenes: Scene[];
 }

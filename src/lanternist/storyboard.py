@@ -11,6 +11,7 @@ from typing import Annotated, Literal
 from pydantic import AfterValidator, BaseModel, Field
 
 Mode = Literal["still", "video"]
+CastKind = Literal["character", "object"]
 Camera = Literal["auto", "push_in", "pull_out", "pan_left", "pan_right", "static"]
 Audience = Literal["toddlers", "kids_5_8", "kids_9_12", "teens", "adults"]
 Subtitles = Literal["off", "sidecar", "burned"]
@@ -52,6 +53,16 @@ class CastMember(BaseModel):
     id: str = Field(description="short lowercase slug, e.g. 'luna'")
     name: str
     look: str = Field(description="English visual description restated in every prompt showing them")
+    kind: CastKind = Field(
+        "character",
+        description="an object the story turns on is locked by its look alone, off the cast sheet",
+    )
+
+
+class Place(BaseModel):
+    id: str = Field(description="short lowercase slug, e.g. 'windmill'")
+    name: str
+    look: str = Field(description="English description of the setting, restated in every picture set there")
 
 
 class Line(BaseModel):
@@ -66,10 +77,15 @@ class Scene(BaseModel):
     motion: str = Field("", description="English: what moves and how the camera moves")
     sound: str = Field("", description="English ambience only: no speech, no music")
     cast: list[str] = Field(default_factory=list, description="ids of cast members in the picture")
+    place: str = Field("", description="id of the place it's set in, if the story names its places")
     camera: Camera = "auto"
     mode: Mode = "still"
     seed: int | None = None
     video_seed: int | None = Field(None, description="a new take of the scene's video; None follows `seed`")
+    continues: bool = Field(
+        False,
+        description="another shot of the same paragraph as the scene before: a short pause and a cut, not a fade",
+    )
 
     @property
     def text(self) -> str:
@@ -107,6 +123,10 @@ class Storyboard(BaseModel):
     cast: list[CastMember] = Field(default_factory=list)
     # Overrides the cast sheet prompt built from `cast` (imported stories carry their own).
     cast_sheet_prompt: str | None = None
+    # Each character drawn alone from the cast sheet, and each picture given only the portraits of
+    # who is in it. Off, every picture gets the whole cast sheet, and draws characters who aren't in it.
+    portraits: bool = False
+    places: list[Place] = Field(default_factory=list)
     models: Models = Field(default_factory=Models)
     scenes: list[Scene]
 
@@ -118,7 +138,12 @@ class Storyboard(BaseModel):
         return scene.video_seed if scene.video_seed is not None else self.scene_seed(scene)
 
     def has_cast_sheet(self) -> bool:
-        return bool(self.cast_sheet_prompt or self.cast)
+        return bool(self.cast_sheet_prompt or self.characters)
+
+    @property
+    def characters(self) -> list[CastMember]:
+        """The cast on the cast sheet: everyone but the objects."""
+        return [c for c in self.cast if c.kind == "character"]
 
     def renumber(self) -> "Storyboard":
         for i, s in enumerate(self.scenes, 1):

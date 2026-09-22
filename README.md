@@ -49,9 +49,11 @@ The models don't fit on the 32 GB card together. Before each stage, Lanternist u
 ## How a film is made
 
 - A storyboard is a single JSON document (`lanternist schema` prints its schema). Narration is in the story's language. Picture, motion and sound prompts are in English.
-- Narration is recorded first. Each scene's picture holds exactly as long as its words, and crossfades sit on the scene boundaries.
+- The writer cuts each paragraph into one to three shots on its sentence boundaries, like a film editor: a wide shot, then a close-up. Shots of one paragraph cut straight to each other; paragraphs crossfade.
+- Narration is recorded first. Each shot's picture holds exactly as long as its words.
 - Every step is cached under a hash of its inputs, in `~/Lanternist/assets` and `~/Lanternist/steps`. A second render is instant. Editing one scene re-renders only that scene and the final mix.
-- Each character's look is restated in every prompt that shows them, and the cast sheet is the reference for every keyframe. This keeps characters consistent across scenes.
+- Consistency: each character's look, and the look of the objects and places the story returns to, is restated in every prompt that shows them. Each character is then drawn alone from the cast sheet, and every picture is drawn from the portraits of only who is in it, so nobody wanders into a scene they aren't in.
+- The mix levels each video clip's own sound against the narration, then sets the whole film to −16 LUFS in two passes.
 
 ## Develop
 

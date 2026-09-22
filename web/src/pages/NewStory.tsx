@@ -187,7 +187,7 @@ export default function NewStory() {
               <output>{brief.minutes} min</output>
             </div>
             <small>
-              About {words} words, {Math.max(3, Math.round(words / 32))} scenes.
+              About {words} words, {Math.max(3, Math.round(words / 32))} paragraphs.
             </small>
           </label>
           <WriterPicker

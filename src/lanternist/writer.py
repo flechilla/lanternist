@@ -18,17 +18,19 @@ from .config import Settings
 from .db import to_usd
 from .storyboard import (
     Camera,
+    CastKind,
     CastMember,
     Effort,
     Line,
     Mode,
     Models,
+    Place,
     Scene,
     Storyboard,
     WriterId,
     slugify,
 )
-from .text import LANGUAGES, word_count
+from .text import LANGUAGES, sentences, word_count
 
 STYLES = {
     "watercolour": "soft watercolour storybook illustration, gentle washes of colour, visible paper texture, "
@@ -74,7 +76,10 @@ WPM = {
     "ja": 240,
     "ko": 170,
 }
-WORDS_PER_SCENE = 32  # ~13 s of narration: one picture, and within one LTX generation
+WORDS_PER_SCENE = 32  # ~13 s of narration: one paragraph, which the storyboard cuts into shots
+MAX_SHOTS = 3  # a paragraph's shots, at most
+SHOT_WORDS = 12  # the fewest words the writer is asked to give a shot: about five seconds read aloud
+MIN_SHOT_WORDS = 8  # the fewest a shot keeps (about three seconds): less can't hold a picture
 
 
 CHARS_PER_WORD = 6  # five letters and a space, about, in the alphabetic languages
@@ -121,35 +126,55 @@ class Brief(BaseModel):
 
 class WriterCast(BaseModel):
     id: str = Field(description="short lowercase ascii slug of the name, e.g. 'luna'")
-    name: str = Field(description="the character's name as used in the story")
+    name: str = Field(description="the name the story uses")
     look: str = Field(
-        description="English, 15-35 words: species or age, build, colours, clothing, one "
-        "distinctive accessory. Concrete and visual. No name, no personality."
+        description="English, 15-35 words. A character: species or age, build, colours, clothing, one "
+        "distinctive accessory. An object: shape, material, colours, size, markings. Concrete and "
+        "visual. No name, no personality."
     )
+    kind: CastKind = Field(description="'character', or 'object' for a thing the story turns on")
+
+
+class WriterPlace(BaseModel):
+    id: str = Field(description="short lowercase ascii slug, e.g. 'windmill'")
+    name: str = Field(description="what the story calls it")
+    look: str = Field(
+        description="English, 15-35 words: what fixes the setting: its layout, materials, colours and "
+        "landmarks. No people, no weather, no time of day."
+    )
+
+
+class WriterShot(BaseModel):
+    sentences: int = Field(description="how many of the paragraph's sentences the shot covers, in order")
+    visual: str = Field(
+        description="English image prompt for the shot's first frame, 30-70 words: shot size and angle "
+        "first, then who is where doing what, then the light. Characters, objects and places by name only."
+    )
+    motion: str = Field(
+        description="English, 2-4 sentences in present tense: the shot as one continuous take, in time "
+        "order: the main action, what else moves, and one camera move with its size and speed."
+    )
+    sound: str = Field(
+        description="English, the shot's own sounds, specific, e.g. 'wind gusting over wet sand, a paper "
+        "tail snapping'. Never speech, singing or music."
+    )
+    cast: list[str] = Field(description="ids of the characters and objects visible in this picture")
+    place: str = Field(description="id of the place it's set in, or '' for a place seen only once")
+    camera: Camera = Field(description="the move when the shot is shown as a still picture")
+    key_moment: bool = Field(description="true for about one shot in three: the most dramatic or magical")
 
 
 class WriterScene(BaseModel):
     n: int
-    visual: str = Field(
-        description="English image prompt, 25-60 words: shot type (wide, medium or close-up), "
-        "setting, time of day and light, and what the characters are doing in this "
-        "one moment. Refer to characters by name only."
+    shots: list[WriterShot] = Field(
+        description=f"1 to {MAX_SHOTS} shots, covering the paragraph's sentences in order"
     )
-    motion: str = Field(
-        description="English, one or two sentences: what moves in the shot and how the camera moves."
-    )
-    sound: str = Field(
-        description="English ambience only, e.g. 'wind over water, distant waves'. Never speech, "
-        "singing or music."
-    )
-    cast: list[str] = Field(description="ids of the cast members visible in this picture")
-    camera: Camera = Field(description="camera move for this shot")
-    key_moment: bool = Field(description="true for the few most dramatic or magical moments of the story")
 
 
 class WriterBoard(BaseModel):
     title: str = Field(description="a short, evocative title in the story's own language")
     cast: list[WriterCast]
+    places: list[WriterPlace]
     scenes: list[WriterScene]
 
 
@@ -159,6 +184,7 @@ class RewrittenScene(BaseModel):
     motion: str
     sound: str
     cast: list[str]
+    place: str
     camera: Camera
 
 
@@ -239,20 +265,47 @@ def story_prompt(b: Brief) -> tuple[str, str]:
 
 def board_prompt(b: Brief, title: str | None, paras: list[str]) -> tuple[str, str]:
     system = (
-        "You are the storyboard artist for an illustrated, narrated film. You turn a story into image and "
-        "motion prompts for AI image and video models. All prompts are in English, whatever the story's "
-        f"language. {ALWAYS}"
+        "You are the director and storyboard artist of an illustrated, narrated film. You cut a story into "
+        "shots and write the prompts AI image and video models draw and animate them from. All prompts are "
+        f"in English, whatever the story's language. {ALWAYS}"
     )
-    numbered = "\n\n".join(f"[{i}] {p}" for i, p in enumerate(paras, 1))
+    numbered = "\n\n".join(
+        f"[{i}]\n" + "\n".join(f"  {j}. {s}" for j, s in enumerate(sentences(p), 1))
+        for i, p in enumerate(paras, 1)
+    )
+    slow = (
+        " In the last third, as the story winds toward sleep, use fewer, longer shots and slower movement."
+        if b.kind == "bedtime"
+        else ""
+    )
     user = (
         f"Story: {title or '(untitled)'}\nAudience: {AUDIENCES.get(b.audience, b.audience)}\n\n{numbered}\n\n"
-        f"Return the cast and exactly {len(paras)} scenes, one per numbered paragraph, in order (n = 1..{len(paras)}).\n"
-        "Cast: every recurring character, with a concrete visual 'look'. Their looks are added to every prompt "
-        "automatically, so in scene prompts refer to characters by name only.\n"
-        "Scenes: the 'visual' shows the paragraph's key moment as one picture; vary shot types across the story "
-        "(wide establishing shots, medium shots, close-ups). 'motion' describes gentle, physically plausible "
-        "movement over about ten seconds. 'sound' is ambience only. Mark 3 to 5 scenes as key_moment. "
-        "Pick a camera move that suits each shot and vary them across the story; use 'static' rarely."
+        f"Return the cast, the places and exactly {len(paras)} scenes, one per numbered paragraph, in order "
+        f"(n = 1..{len(paras)}).\n\n"
+        "Cast: every recurring character (kind 'character'), and every object the story turns on that must "
+        "look the same in every picture (kind 'object': a kite, a lantern, a toy boat). What a character "
+        "wears or always carries belongs in their look. Looks are added to every prompt automatically, so "
+        "prompts name characters and objects by name only.\n"
+        "Places: every setting seen in more than one shot, with a look that fixes it. A shot names its "
+        "place's id, or '' for a place seen once, which its visual describes.\n\n"
+        f"Shots: split each paragraph into 1 to {MAX_SHOTS} shots. A shot covers whole sentences, in order: "
+        "'sentences' counts them, and a paragraph's counts add up to its number of sentences. A shot lasts "
+        f"as long as its sentences take to read aloud, so every shot needs at least {SHOT_WORDS} words: never "
+        "give a short sentence a shot of its own. Most paragraphs get two shots; a short or quiet one stays one. "
+        "The shots of a paragraph are one continuous scene, "
+        "cut like a film: change the shot size or angle between them (a wide shot, then a close-up on a face "
+        f"or hands), and keep the place, light and objects the same.{slow}\n"
+        "- visual: the first frame, one moment in one framing (never 'then'). Start with the shot size and "
+        "angle (wide establishing shot, medium shot, close-up, low angle, over the shoulder) and vary them "
+        "across the film. Then who is where doing what, naming every character in the shot each time: never "
+        "'the children' or 'they', which draws more of them, and no one the story doesn't name. Then the "
+        "light. Show feelings through faces and bodies. No readable text, signs or labels.\n"
+        "- motion: the shot as one continuous take, in time order: the characters' one main action, gentle "
+        "and physically possible; what else moves (hair, cloth, water, leaves, light); and one camera move with "
+        "its size and speed ('the camera slowly pushes in a little', 'the camera holds still'). Nothing fast, "
+        "spinning or twisting. Nobody talks.\n"
+        "- sound: what this shot sounds like, concrete and specific. Never speech, singing or music.\n"
+        "- camera: the move used when the shot is shown as a still picture; match the motion's camera move."
     )
     return system, user
 
@@ -317,6 +370,8 @@ async def write_storyboard(
                 wb = WriterBoard.model_validate_json(_json_text(reply.text))
                 if len(wb.scenes) != len(paras):
                     raise ValueError(f"returned {len(wb.scenes)} scenes for {len(paras)} paragraphs")
+                if empty := [ws.n for ws in wb.scenes if not ws.shots]:
+                    raise ValueError(f"scenes {empty} have no shots")
                 break
             except (ValidationError, ValueError) as e:
                 error = str(e)[:500]
@@ -324,9 +379,11 @@ async def write_storyboard(
                 wb = None
         if wb is None:
             raise RuntimeError(f"the storyboard didn't validate twice: {error}")
-        emit(f"storyboard ready: {len(wb.cast)} characters, {len(wb.scenes)} scenes{_spent(reply)}")
-
     sb = assemble(b, title or wb.title, paras, wb)
+    emit(
+        f"storyboard ready: {len(sb.cast)} in the cast, {len(sb.places)} places, {len(sb.scenes)} shots "
+        f"in {len(paras)} scenes{_spent(reply)}"
+    )
     sb.models = Models(writer=llm.id, writer_effort=b.effort)
     return sb
 
@@ -361,6 +418,28 @@ def ambience_only(sound: str) -> str:
     return ", ".join(keep) or "soft room tone"
 
 
+def split_shots(paragraph: str, shots: list[WriterShot]) -> list[tuple[str, WriterShot]]:
+    """Each shot's narration: the sentences it covers, in order. Counts that don't add up are mended,
+    not refused: the last shot takes what's left, a shot left with nothing is dropped, and a shot too
+    short to hold a picture joins its neighbour."""
+    said = sentences(paragraph)
+    out: list[tuple[str, WriterShot]] = []
+    i = 0
+    for k, shot in enumerate(shots):
+        take = len(said) - i if k == len(shots) - 1 else max(shot.sentences, 1)
+        part = " ".join(said[i : i + take])
+        i += take
+        if not part:
+            break
+        if out and word_count(part) < MIN_SHOT_WORDS:
+            out[-1] = (f"{out[-1][0]} {part}", out[-1][1])
+        else:
+            out.append((part, shot))
+    if len(out) > 1 and word_count(out[0][0]) < MIN_SHOT_WORDS:
+        out[:2] = [(f"{out[0][0]} {out[1][0]}", out[0][1])]
+    return out
+
+
 def assemble(b: Brief, title: str, paras: list[str], wb: WriterBoard) -> Storyboard:
     cast: list[CastMember] = []
     ids: set[str] = set()
@@ -368,36 +447,49 @@ def assemble(b: Brief, title: str, paras: list[str], wb: WriterBoard) -> Storybo
         cid = slugify(c.id or c.name) or f"c{len(cast) + 1}"
         if cid not in ids:
             ids.add(cid)
-            cast.append(CastMember(id=cid, name=c.name.strip(), look=c.look.strip()))
+            cast.append(CastMember(id=cid, name=c.name.strip(), look=c.look.strip(), kind=c.kind))
     by_name = {c.name.lower(): c.id for c in cast}
-    # Hybrid animates only the peaks: about 30% of scenes, spread across the story's key moments.
-    marked = [i for i, ws in enumerate(wb.scenes[: len(paras)]) if ws.key_moment]
-    k = max(1, round(len(paras) * 0.3))
+    places: list[Place] = []
+    for pl in wb.places:
+        pid = slugify(pl.id or pl.name)
+        if pid and pid not in {p.id for p in places}:
+            places.append(Place(id=pid, name=pl.name.strip(), look=pl.look.strip()))
+    place_ids = {p.id for p in places}
+    shots = [
+        (j, words, ws)
+        for p, scene in zip(paras, wb.scenes, strict=True)
+        for j, (words, ws) in enumerate(split_shots(p, scene.shots))
+    ]
+    # Hybrid animates only the peaks: about 30% of shots, spread across the story's key moments.
+    marked = [k for k, (_, _, ws) in enumerate(shots) if ws.key_moment]
+    k = max(1, round(len(shots) * 0.3))
     if not marked:
-        marked = [len(paras) * 2 // 3]
+        marked = [len(shots) * 2 // 3]
     if len(marked) > k:
         marked = [marked[round(j * (len(marked) - 1) / (k - 1))] for j in range(k)] if k > 1 else [marked[-1]]
     video = set(marked)
     scenes = []
-    for i, (p, ws) in enumerate(zip(paras, wb.scenes, strict=True), 1):
+    for n, (j, words, ws) in enumerate(shots, 1):
         members = []
         for ref in ws.cast:
             found = slugify(ref) if slugify(ref) in ids else by_name.get(ref.lower())
             if found and found not in members:
                 members.append(found)
-        mode: Mode = ("video" if i - 1 in video else "still") if b.mode == "hybrid" else b.mode
+        mode: Mode = ("video" if n - 1 in video else "still") if b.mode == "hybrid" else b.mode
         # A still with a static camera is a slide; stills always get a move ("auto" alternates in and out).
         camera = "auto" if mode == "still" and ws.camera == "static" else ws.camera
         scenes.append(
             Scene(
-                n=i,
-                narration=[Line(text=p)],
+                n=n,
+                narration=[Line(text=words)],
                 visual=ws.visual.strip(),
                 motion=ws.motion.strip(),
                 sound=ambience_only(ws.sound),
                 cast=members,
+                place=slugify(ws.place) if slugify(ws.place) in place_ids else "",
                 camera=camera,
                 mode=mode,
+                continues=j > 0,
             )
         )
     return Storyboard(
@@ -409,6 +501,8 @@ def assemble(b: Brief, title: str, paras: list[str], wb: WriterBoard) -> Storybo
         voice=b.voice,
         seed=random.randint(1, 99_999),
         cast=cast,
+        portraits=True,
+        places=places,
         scenes=scenes,
     )
 
@@ -425,7 +519,9 @@ async def rewrite_scene(
     lang = _language_name(sb.language)
     system = (
         f"You edit one scene of an illustrated, narrated story. Narration stays in {lang}; visual, motion "
-        f"and sound prompts stay in English and refer to characters by name only. {ALWAYS}"
+        "and sound prompts stay in English and name characters, objects and places by name only: their "
+        "looks are added to every prompt. 'cast' lists the ids of the characters and objects in the "
+        f"picture, and 'place' the id of the place it's set in, or '' for a place seen only once. {ALWAYS}"
     )
     user = (
         f"The whole storyboard, for context:\n{sb.model_dump_json(exclude={'cast_sheet_prompt', 'models'})}\n\n"
@@ -439,6 +535,7 @@ async def rewrite_scene(
         )
     r = RewrittenScene.model_validate_json(_json_text(reply.text))
     ids = {c.id for c in sb.cast}
+    place = slugify(r.place)
     return scene.model_copy(
         update={
             "narration": [Line(text=" ".join(r.narration.split()))],
@@ -446,6 +543,7 @@ async def rewrite_scene(
             "motion": r.motion.strip(),
             "sound": r.sound.strip(),
             "cast": [c for c in r.cast if c in ids],
+            "place": place if place in {p.id for p in sb.places} else "",
             "camera": r.camera,
         }
     )

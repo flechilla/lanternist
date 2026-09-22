@@ -5,8 +5,8 @@ Job:
      "items": [{"id": "cast", "prompt": "...", "seed": 7, "width": 1024, "height": 1024,
                 "refs": [], "out": "/.../cast.png"}, ...]}
 
-Items run in order, so a cast sheet rendered first can be the reference of the keyframes after
-it. klein is step-distilled: the model card asks for 4 steps at guidance 1.0, and raising either
+Items run in order, so a picture rendered first (the cast sheet, a portrait) can be the reference
+of those after it. klein is step-distilled: the model card asks for 4 steps at guidance 1.0, and raising either
 makes it worse. Its 35 GB of weights need CPU offload on a 32 GB card.
 """
 

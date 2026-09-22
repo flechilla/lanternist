@@ -98,7 +98,7 @@ def _objects(node):
 def test_strict_schema_closes_every_object():
     schema = strict_schema(inline_schema(WriterBoard))
     objects = list(_objects(schema))
-    assert len(objects) == 3  # the board, a cast member, a scene
+    assert len(objects) == 5  # the board, a cast member, a place, a scene, a shot
     for o in objects:
         assert o["additionalProperties"] is False and set(o["required"]) == set(o["properties"])
     assert "default" not in json.dumps(strict_schema(inline_schema(RewrittenScene)))
@@ -254,13 +254,16 @@ async def test_rewrites_use_the_storys_writer(cfg, db, world, leases):
                 "motion": "waves",
                 "sound": "wind",
                 "cast": [sb.cast[0].id, "nobody"],
+                "place": "the moon",
                 "camera": "push_in",
             }
         )
     )
+    assert sb.scenes[1].place  # the fake writer sets every shot in its one place
     scene = await rewrite_scene(cfg, sb, 2, "make it windier")
     assert [c["model"] for c in world.openrouter.chats] == ["fake/cheap"]
     assert scene.text == "A new line." and scene.cast == [sb.cast[0].id] and scene.camera == "push_in"
+    assert scene.place == ""  # moved somewhere the story has no place for: its visual describes it
     assert "writer_effort" not in world.openrouter.chats[0]["messages"][1]["content"]  # not shown to the LLM
 
 

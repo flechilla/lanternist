@@ -10,9 +10,10 @@ from lanternist.engines import catalog
 from lanternist.engines.base import Item, keyframe_size
 from lanternist.engines.fal_image import FalImage, aspect_ratio
 from lanternist.engines.local import LocalQwenTts
+from lanternist.estimate import estimate
 from lanternist.pipeline import Board, Narration, Pipeline
 from lanternist.providers.fal import FalError
-from lanternist.storyboard import CastMember, Line, Scene, Storyboard
+from lanternist.storyboard import CastMember, Line, Place, Scene, Storyboard
 from lanternist.voices import Voice
 
 
@@ -63,13 +64,27 @@ def test_local_step_keys_are_unchanged(tmp_path):
         "922654e7748ecc83f2b49e97b79471b2163894993d0b4083a3b35df1eb6b945c"
     )
     cast = "c" * 64 + ".png"
-    assert [p._keyframe_key(img, prompts.keyframe(sb, sc), sb.scene_seed(sc), cast) for sc in sb.scenes] == [
+    assert [
+        p._keyframe_key(img, prompts.keyframe(sb, sc), sb.scene_seed(sc), [cast]) for sc in sb.scenes
+    ] == [
         "32ca4d4cd71be93f15a3affcc9114da574230b910a184e31f3327cb717fb2f25",
         "ceb0287acc0a2c2198e028f021b9e09d6ec0e0fa280466cf68b43e9c2c7efe26",
     ]
-    assert p._keyframe_key(img, prompts.keyframe(sb, sb.scenes[0]), 8, None) == (
+    assert p._keyframe_key(img, prompts.keyframe(sb, sb.scenes[0]), 8, []) == (
         "4f6e92a861c3f8be5f135ec9fb2a453024064af47748bc3210d6889f26fddf56"
     )
+    # Pinned since portraits came (22 Sep): a character alone, and pictures drawn from two and from one.
+    ps = portrait_story()
+    assert p.portrait_items(img, ps, cast)[1].key == (
+        "4d1f2c8f1e8aec4d8586aa973357f9cca080603eae4bc8e9b71af5194336c290"
+    )
+    two = ["a" * 64 + ".png", "b" * 64 + ".png"]
+    assert [
+        p.keyframe_item(img, ps, sc, refs).key for sc, refs in zip(ps.scenes[:2], (two, two[1:]), strict=True)
+    ] == [
+        "dd2e77bef1f9d2e793a3d79df60c95a945894ca264d916f7dc941f41d34f2d27",
+        "b3b869714e6aec43a1172f37c7ebdc39f793a3e0718331e4cfe5dc298bb4b226",
+    ]
     tl = timing.timeline([12.0, 30.0], 0.45, 0.5, 1.5, 0.8)
     board = Board(
         [Narration("a.wav", 12.0, [], []), Narration("b.wav", 30.0, [], [])],
@@ -294,18 +309,127 @@ def test_fal_step_keys_are_pinned(tmp_path):
     assert (
         p._cast_key(img, sb, "a cast") == "7f5577c05795157a562c9395a593f1ae3cfed5f1c92636f2d2e219be9b0b8b9d"
     )
-    assert p._keyframe_key(img, "a picture", 8, "c" * 64 + ".png") == (
+    assert p._keyframe_key(img, "a picture", 8, ["c" * 64 + ".png"]) == (
         "6c9ba2fa0266073eb676203c111e706d27f1e7833df294b13444cb4b8f5180bb"
+    )
+    assert p._portrait_key(img, "a portrait", 7, "c" * 64 + ".png") == (
+        "f5497ef39a7bc9dcebcc810201775efd3afba2b5ee8d9329657017e90c8b8b45"
     )
     assert p.narration_items(sb, p.tts(sb))[0].key == (
         "03aad02697fdca5a853d873e6cee22891f6a7c589475d592de91ac31f005ef48"
     )
     motion = p.motion_items(sb, timing.timeline([6.0], 0.45, 0.5, 1.5, 0.8), ["k1.png"], p.video(sb))
-    assert (motion[0].key, motion[0].params["shots"]) == (
-        "b4500d49d597fe9c2943b32ae3d2934cdfef0255644c82a37012b3b760b2542b",
-        [7.0],
+    assert (
+        (motion[0].key, motion[0].params["shots"])
+        == (
+            "8e230c4633706e63c77a057321a43783771f71a92bb3ab0b19500571d8b277b6",  # H3 rewrites its prompt since 22 Sep
+            [7.0],
+        )
     )
     ambience = catalog.ambience(cfg, None, "fal/mmaudio-v2")
     assert p.ambience_items(sb, motion, {1: "v" * 64 + ".mp4"}, ambience)[0].key == (
         "9e18612b73d890ada8660debe6cb7a5a5a2d8ccfb9c4ed3bb086ea54829e8683"
     )
+
+
+def portrait_story() -> Storyboard:
+    """Two characters, an object and a place: one scene with both, one with Sol and the kite, one empty."""
+    sb = golden()
+    sb.portraits = True
+    sb.cast += [
+        CastMember(id="sol", name="Sol", look="tall girl in a yellow coat"),
+        CastMember(id="kite", name="Poppy", look="red diamond kite", kind="object"),
+    ]
+    sb.places = [Place(id="faro", name="el faro", look="white stone lighthouse with a red lamp room")]
+    sb.scenes[0].cast, sb.scenes[0].place = ["luna", "sol"], "faro"
+    sb.scenes[1].cast = ["sol", "kite"]
+    sb.scenes.append(
+        Scene(n=3, narration=[Line(text="La noche cayó sobre el mar.")], visual="The sea at night")
+    )
+    return sb
+
+
+async def test_each_picture_is_drawn_from_the_portraits_of_who_is_in_it(fake_cfg, db, fakes):
+    sb = portrait_story()
+    sb.models.image = "fal/flux-2-klein-9b"
+    p = Pipeline(fake_cfg, db=db)
+    assert (
+        estimate(p, sb, "board")["lines"][1]["steps"] == 1 + 2 + 3
+    )  # the sheet, two portraits, three pictures
+    # klein bills each megapixel in and out: a portrait reads the sheet; a picture reads its portraits.
+    img = p.image(sb)
+    _, portrait_items, keyframe_items = p.picture_items(img, sb)
+    assert [img.estimate([it]).micros for it in (portrait_items[0], *keyframe_items)] == [
+        19_651,
+        44_979,
+        33_979,
+        12_534,
+    ]
+
+    cast, keyframes = await p.draw(sb)
+    reqs = [fakes.fal.requests[r] for r in fakes.fal.submits]
+    sheet = next(r for r in reqs if "character sheet" in r.arguments["prompt"])
+    portraits = [r for r in reqs if "show only the" in r.arguments["prompt"]]
+    pictures = [r for r in reqs if r is not sheet and r not in portraits]
+    assert "2 characters" in sheet.arguments["prompt"] and "kite" not in sheet.arguments["prompt"]
+    assert [r.endpoint for r in portraits] == ["fal-ai/flux-2/klein/9b/edit"] * 2
+    assert "show only the first from the left: small grey cat" in portraits[0].arguments["prompt"]
+    assert "show only the second from the left" in portraits[1].arguments["prompt"]
+    sheet_url, *_ = fakes.fal.uploads
+    assert all(r.arguments["image_urls"] == [sheet_url] for r in portraits)
+    both, sol, empty = (
+        next(r for r in pictures if r.arguments["prompt"].startswith(visual))
+        for visual in ("A lighthouse at dusk", "A gull lands", "The sea at night")
+    )
+    assert len(both.arguments["image_urls"]) == 2 and sheet_url not in both.arguments["image_urls"]
+    assert "Luna (image 1), small grey cat; Sol (image 2), tall girl" in both.arguments["prompt"]
+    assert "Setting: white stone lighthouse" in both.arguments["prompt"]
+    assert (
+        len(sol.arguments["image_urls"]) == 1
+        and "Objects: Poppy, red diamond kite" in sol.arguments["prompt"]
+    )
+    # Nobody in it: drawn from the prompt alone, so no one from the cast sheet wanders in. It waits on
+    # nothing, so it goes in the first wave with the sheet; a picture waits on its portraits.
+    assert empty.endpoint == "fal-ai/flux-2/klein/9b" and "image_urls" not in empty.arguments
+    assert reqs.index(empty) < 2 and reqs.index(sheet) < 2
+    assert max(map(reqs.index, portraits)) < min(reqs.index(both), reqs.index(sol))
+
+    # Everything drawn is found again: the board, the estimate and a second draw are all cache hits.
+    assert [row["keyframe"] for row in p.peek(sb)["scenes"]] == keyframes
+    assert estimate(p, sb, "board")["lines"][1]["todo"] == 0
+    fakes.fal.submits.clear()
+    assert await p.draw(sb) == (cast, keyframes) and not fakes.fal.submits
+
+
+async def test_portraits_are_drawn_locally_in_one_batch_on_a_row_of_their_own(fake_cfg, db):
+    sb = portrait_story()
+    events = []
+    cast, keyframes = await Pipeline(fake_cfg, events.append, db=db).draw(sb)
+    assert cast and len(keyframes) == 3
+    # One batch, so one klein load: every row starts before anything is drawn.
+    first = next(i for i, e in enumerate(events) if e.status == "done")
+    assert [e.stage for e in events[:first] if e.status == "start"] == ["cast", "portraits", "keyframes"]
+    assert not [e for e in events[first:] if e.status == "start"]
+    done = [(e.stage, e.done, e.total) for e in events if e.status == "done"]
+    assert done[:3] == [("cast", 1, 1), ("portraits", 1, 2), ("portraits", 2, 2)]
+    # The cast sheet's row shows the sheet, never a portrait.
+    assert [e.asset for e in events if e.stage == "cast" and e.asset] == [cast]
+
+
+async def test_a_picture_is_drawn_from_a_stored_portrait_and_one_drawn_beside_it(fake_cfg, db):
+    """A board that stopped after Luna's portrait: the next one draws Sol's and the pictures Sol is in,
+    and the one with both reads Luna's from the library and Sol's from the batch."""
+    sb = portrait_story()
+    cast, keyframes = await Pipeline(fake_cfg, db=db).draw(sb)
+    events = []
+    p = Pipeline(fake_cfg, events.append, db=db)
+    sol = p.portrait_items(p.image(sb), sb, cast)[1]
+    assert sol.key
+    p.store._step_path(sol.key).unlink()
+    assert await p.draw(sb) == (cast, keyframes)  # keyed as when drawn in one go
+    assert [(e.stage, e.scene) for e in events if e.status == "done"] == [
+        ("portraits", None),
+        ("keyframes", 1),
+        ("keyframes", 2),
+    ]
+    assert Pipeline(fake_cfg, db=db).peek(sb)["cast"] == cast

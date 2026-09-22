@@ -93,10 +93,12 @@ export default function ScriptEditor(p: Props) {
         motion: "",
         sound: "",
         cast: [],
+        place: "",
         camera: "auto",
         mode: "still",
         seed: null,
         video_seed: null,
+        continues: false,
       };
       sb.scenes.splice(i + 1, 0, blank);
       sb.scenes.forEach((s, k) => {
@@ -107,6 +109,10 @@ export default function ScriptEditor(p: Props) {
 
   function removeScene(n: number) {
     edit((sb) => {
+      const i = sb.scenes.findIndex((s) => s.n === n);
+      // The shot after a paragraph's first one now starts the paragraph.
+      const next = sb.scenes[i + 1];
+      if (next && !sb.scenes[i].continues) next.continues = false;
       sb.scenes = sb.scenes.filter((s) => s.n !== n);
       sb.scenes.forEach((s, k) => {
         s.n = k + 1;
@@ -233,13 +239,29 @@ export default function ScriptEditor(p: Props) {
                     aria-label={`How ${c.name || "they"} look`}
                     rows={3}
                     value={c.look}
-                    placeholder="How they look: age or species, colours, clothes, one detail"
+                    placeholder={
+                      c.kind === "object"
+                        ? "How it looks: shape, material, colours, markings"
+                        : "How they look: age or species, colours, clothes, one detail"
+                    }
                     onChange={(e) =>
                       edit((sb) => {
                         sb.cast[i].look = e.target.value;
                       })
                     }
                   />
+                  <label className="row" style={{ gap: 6 }}>
+                    <input
+                      type="checkbox"
+                      checked={c.kind === "object"}
+                      onChange={(e) =>
+                        edit((sb) => {
+                          sb.cast[i].kind = e.target.checked ? "object" : "character";
+                        })
+                      }
+                    />
+                    An object, not on the cast sheet
+                  </label>
                 </div>
               ))}
             </div>
@@ -247,11 +269,83 @@ export default function ScriptEditor(p: Props) {
               className="small"
               onClick={() =>
                 edit((sb) => {
-                  sb.cast.push({ id: `new-${Date.now()}`, name: "", look: "" });
+                  sb.cast.push({ id: `new-${Date.now()}`, name: "", look: "", kind: "character" });
                 })
               }
             >
-              Add a character
+              Add a character or object
+            </button>
+            {draft.cast_sheet_prompt === null && (
+              <label className="row" style={{ gap: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={draft.portraits}
+                  onChange={(e) =>
+                    edit((sb) => {
+                      sb.portraits = e.target.checked;
+                    })
+                  }
+                />
+                Draw each character apart, so a picture shows only who is in it
+              </label>
+            )}
+          </section>
+
+          <section className="panel stack">
+            <h2>Places</h2>
+            <small>A place's look is added to every picture set there, so it stays the same place.</small>
+            {draft.places.map((pl, i) => (
+              <div className="cast-member" key={pl.id}>
+                <div className="row">
+                  <input
+                    type="text"
+                    aria-label="Place name"
+                    value={pl.name}
+                    placeholder="Name"
+                    onChange={(e) =>
+                      edit((sb) => {
+                        sb.places[i].name = e.target.value;
+                      })
+                    }
+                    style={{ flex: 1, fontWeight: 600 }}
+                  />
+                  <button
+                    className="quiet small danger"
+                    aria-label={`Remove ${pl.name || "place"}`}
+                    onClick={() =>
+                      edit((sb) => {
+                        sb.places.splice(i, 1);
+                        sb.scenes.forEach((s) => {
+                          if (s.place === pl.id) s.place = "";
+                        });
+                      })
+                    }
+                  >
+                    Remove
+                  </button>
+                </div>
+                <textarea
+                  aria-label={`How ${pl.name || "the place"} looks`}
+                  rows={3}
+                  value={pl.look}
+                  placeholder="Layout, materials, colours, landmarks"
+                  onChange={(e) =>
+                    edit((sb) => {
+                      sb.places[i].look = e.target.value;
+                    })
+                  }
+                />
+              </div>
+            ))}
+            <button
+              className="small"
+              onClick={() =>
+                edit((sb) => {
+                  sb.places.push({ id: `place-${Date.now()}`, name: "", look: "" });
+                })
+              }
+            >
+              Add a place
             </button>
           </section>
 
@@ -452,8 +546,42 @@ function SceneEditor({
               ))}
             </select>
           </label>
+          {draft.places.length > 0 && (
+            <label className="row" style={{ gap: 6 }}>
+              Place
+              <select
+                value={s.place}
+                onChange={(e) =>
+                  scene(s.n, (x) => {
+                    x.place = e.target.value;
+                  })
+                }
+              >
+                <option value="">Somewhere else</option>
+                {draft.places.map((pl) => (
+                  <option key={pl.id} value={pl.id}>
+                    {pl.name || "Unnamed"}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {s.n > 1 && (
+            <label className="row" style={{ gap: 6 }}>
+              <input
+                type="checkbox"
+                checked={s.continues}
+                onChange={(e) =>
+                  scene(s.n, (x) => {
+                    x.continues = e.target.checked;
+                  })
+                }
+              />
+              Same moment as the scene before: cut to it
+            </label>
+          )}
           {draft.cast.length > 0 && (
-            <div className="checks" role="group" aria-label="Characters in the picture">
+            <div className="checks" role="group" aria-label="Characters and objects in the picture">
               {draft.cast.map((c) => (
                 <label key={c.id}>
                   <input

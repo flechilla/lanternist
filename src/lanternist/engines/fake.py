@@ -39,6 +39,9 @@ def tts(item: dict, sample_rate: int = 24000, chunk_gap: float = 0.25) -> dict:
 
 
 async def image(item: dict) -> dict:
+    # The klein worker opens every reference it's given, so a wrong path fails here as it would there.
+    if missing := [r for r in item.get("refs", []) if not Path(r).is_file()]:
+        raise FileNotFoundError(f"{item['id']}: no reference picture at {missing[0]}")
     hue = (item["seed"] * 47) % 360
     await ffmpeg.run(
         [

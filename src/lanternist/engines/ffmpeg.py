@@ -8,6 +8,8 @@ narration on top, so editing one scene re-encodes one clip and the mix.
 import asyncio
 import json
 import logging
+import math
+import re
 import subprocess
 from pathlib import Path
 
@@ -15,6 +17,11 @@ from ..config import Render
 from ..timing import Timeline
 
 log = logging.getLogger(__name__)
+SILENT = -70.0  # LUFS: where ebur128 stops measuring; a still's silent track reads as this
+MAX_LIFT = 12.0  # dB: the most a faint clip's sound is raised toward the narration
+MEASURING = 8  # loudness measurements at once; each decodes one file's sound
+TRUE_PEAK = -1.5  # dBTP: headroom for the AAC encoder's overshoot
+LOUDNESS_RANGE = 11  # LU: loudnorm's default, which narration sits well inside
 SUB_STYLE = "FontName=Noto Sans,FontSize=20,PrimaryColour=&H00FFFFFF,OutlineColour=&H90000000,BorderStyle=3,MarginV=36"
 
 
@@ -22,8 +29,9 @@ class FfmpegError(RuntimeError):
     pass
 
 
-async def run(args: list[str]) -> None:
-    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", *args]
+async def run(args: list[str], loglevel: str = "error") -> str:
+    """Run ffmpeg and return what it logged, which is nothing but errors unless `loglevel` asks for more."""
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", loglevel, "-nostdin", "-y", *args]
     proc = await asyncio.create_subprocess_exec(*cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     try:
         _, err = await proc.communicate()
@@ -31,10 +39,10 @@ async def run(args: list[str]) -> None:
         proc.kill()
         await proc.wait()
         raise
+    log_text = err.decode(errors="replace")
     if proc.returncode != 0:
-        raise FfmpegError(
-            f"ffmpeg failed: {err.decode(errors='replace')[-2000:]}\ncmd: {' '.join(cmd)[:1500]}"
-        )
+        raise FfmpegError(f"ffmpeg failed: {log_text[-2000:]}\ncmd: {' '.join(cmd)[:1500]}")
+    return log_text
 
 
 async def encode(build, r: Render) -> None:
@@ -56,7 +64,7 @@ def probe(path: Path) -> dict:
             "-v",
             "error",
             "-show_entries",
-            "format=duration:stream=codec_type,width,height",
+            "format=duration:stream=codec_type,width,height,duration",
             "-of",
             "json",
             str(path),
@@ -70,6 +78,7 @@ def probe(path: Path) -> dict:
     video: dict = next((s for s in streams if s.get("codec_type") == "video"), {})
     return {
         "duration": float(data.get("format", {}).get("duration", 0) or 0),
+        "video_duration": float(video.get("duration", 0) or 0),
         "has_audio": any(s.get("codec_type") == "audio" for s in streams),
         "width": video.get("width"),
         "height": video.get("height"),
@@ -227,23 +236,33 @@ async def mux_audio(video: Path, sound: Path, out: Path) -> None:
     )
 
 
-def mix_graph(tl: Timeline, r: Render, subtitles: Path | None) -> str:
+def ambience_gains(clips: list[float], narration: list[float]) -> list[float]:
+    """dB that bring each clip's sound to the narration's loudness, so `ambience` puts every scene the
+    same distance under the voice: a video model's sound bed swings by 30 dB from one clip to the
+    next. A silent clip stays silent, and a faint one is lifted at most MAX_LIFT, not its noise with it."""
+    voiced = [x for x in narration if x > SILENT]
+    if not voiced:
+        return [0.0] * len(clips)
+    voice = 10 * math.log10(sum(10 ** (x / 10) for x in voiced) / len(voiced))
+    return [0.0 if c <= SILENT else round(min(voice - c, MAX_LIFT), 2) for c in clips]
+
+
+async def integrated(path: Path) -> float:
+    """A file's integrated loudness in LUFS; SILENT when it has no sound."""
+    report = await run(["-i", str(path), "-map", "0:a", "-af", "ebur128", "-f", "null", "-"], loglevel="info")
+    found = re.findall(r"I:\s+(-?[\d.]+|-inf) LUFS", report)
+    return max(float(found[-1]), SILENT) if found and found[-1] != "-inf" else SILENT
+
+
+def audio_graph(tl: Timeline, r: Render, gains: list[float] | None = None) -> str:
+    """The film's sound, before its loudness is set: each clip's ambience, levelled by `gains`, placed
+    with its clip, the narration on top, and a fade out at the end, as [mixed]."""
     n = tl.n
     chains = []
-    # Video: crossfades centred on the scene boundaries.
-    last = "0:v"
-    for i in range(1, n):
-        offset = tl.bounds[i] - tl.xfade / 2
-        chains.append(f"[{last}][{i}:v]xfade=transition=fade:duration={tl.xfade}:offset={offset:.3f}[x{i}]")
-        last = f"x{i}"
-    vf = f"fade=t=in:d=1,fade=t=out:st={max(tl.total - 1.2, 0):.3f}:d=1.2"
-    if subtitles:
-        vf += f",subtitles=filename='{subtitles}':force_style='{SUB_STYLE}'"
-    chains.append(f"[{last}]{vf},format=yuv420p[vout]")
-
     # Ambience: each clip's own sound, placed where its clip starts, ducked under the voice.
     for i in range(n):
-        chains.append(f"[{i}:a]adelay=delays={int(tl.clip_start(i) * 1000)}:all=1[a{i}]")
+        level = f"volume={gains[i]}dB," if gains and gains[i] else ""
+        chains.append(f"[{i}:a]{level}adelay=delays={int(tl.clip_start(i) * 1000)}:all=1[a{i}]")
     amb = "".join(f"[a{i}]" for i in range(n))
     chains.append(
         f"{amb}amix=inputs={n}:normalize=0:duration=longest,volume={r.ambience}[amb]"
@@ -264,9 +283,73 @@ def mix_graph(tl: Timeline, r: Render, subtitles: Path | None) -> str:
     )
     chains.append(
         f"[nar][amb]amix=inputs=2:duration=first:normalize=0,"
-        f"afade=t=out:st={max(tl.total - 1.2, 0):.3f}:d=1.2[aout]"
+        f"afade=t=out:st={max(tl.total - 1.2, 0):.3f}:d=1.2[mixed]"
     )
     return ";".join(chains)
+
+
+def loudnorm(r: Render, measured: dict[str, str] | None = None) -> str:
+    """ffmpeg's loudnorm at the film's target: measuring, or, given what the first pass measured,
+    one linear gain for the whole film, so quiet pauses stay quiet instead of being pumped up."""
+    target = f"loudnorm=I={r.loudness}:TP={TRUE_PEAK}:LRA={LOUDNESS_RANGE}"
+    if measured is None:
+        return f"{target}:print_format=json"
+    return (
+        f"{target}:measured_I={measured['input_i']}:measured_TP={measured['input_tp']}"
+        f":measured_LRA={measured['input_lra']}:measured_thresh={measured['input_thresh']}"
+        f":offset={measured['target_offset']}:linear=true,aresample=48000"
+    )
+
+
+def mix_graph(
+    tl: Timeline,
+    r: Render,
+    subtitles: Path | None,
+    gains: list[float] | None = None,
+    measured: dict[str, str] | None = None,
+) -> str:
+    n = tl.n
+    # Video: crossfades centred on the scene boundaries, and straight cuts between the shots of a
+    # paragraph. A cut is a concat, not a zero-length crossfade, which ends the video there; and
+    # xfade takes only inputs on one timebase, which a concat's output is not until every clip is.
+    chains = [f"[{i}:v]settb=AVTB[v{i}]" for i in range(n)]
+    last = "v0"
+    for i in range(1, n):
+        if i in tl.cuts:
+            chains.append(f"[{last}][v{i}]concat=n=2:v=1:a=0[x{i}]")
+        else:
+            chains.append(
+                f"[{last}][v{i}]xfade=transition=fade:duration={tl.xfade}:offset={tl.clip_start(i):.3f}[x{i}]"
+            )
+        last = f"x{i}"
+    vf = f"fade=t=in:d=1,fade=t=out:st={max(tl.total - 1.2, 0):.3f}:d=1.2"
+    if subtitles:
+        vf += f",subtitles=filename='{subtitles}':force_style='{SUB_STYLE}'"
+    chains.append(f"[{last}]{vf},format=yuv420p[vout]")
+    chains.append(audio_graph(tl, r, gains))
+    chains.append(f"[mixed]{loudnorm(r, measured)}[aout]")
+    return ";".join(chains)
+
+
+async def loudness(inputs: list[str], tl: Timeline, r: Render, gains: list[float]) -> dict[str, str]:
+    """The first loudnorm pass: how loud the film's sound is, as the second pass wants it told."""
+    report = await run(
+        [
+            *inputs,
+            "-filter_complex",
+            f"{audio_graph(tl, r, gains)};[mixed]{loudnorm(r)}[m]",
+            "-map",
+            "[m]",
+            "-f",
+            "null",
+            "-",
+        ],
+        loglevel="info",
+    )
+    found = re.search(r"\{[^{}]*\"input_i\"[^{}]*\}", report)
+    if found is None:
+        raise FfmpegError(f"ffmpeg's loudnorm didn't report the film's loudness: {report[-500:]}")
+    return json.loads(found.group(0))
 
 
 async def mix(
@@ -277,11 +360,20 @@ async def mix(
         inputs += ["-i", str(c)]
     for w in wavs:
         inputs += ["-i", str(w)]
+    sem = asyncio.Semaphore(MEASURING)
+
+    async def measure(path: Path) -> float:
+        async with sem:
+            return await integrated(path)
+
+    levels = await asyncio.gather(*(measure(f) for f in [*clips, *wavs]))
+    gains = ambience_gains(levels[: len(clips)], levels[len(clips) :])
+    measured = await loudness(inputs, tl, r, gains)
     await encode(
         lambda r: [
             *inputs,
             "-filter_complex",
-            mix_graph(tl, r, subtitles),
+            mix_graph(tl, r, subtitles, gains, measured),
             "-map",
             "[vout]",
             "-map",

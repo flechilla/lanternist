@@ -4,11 +4,15 @@ Narration is recorded first, so every picture holds exactly as long as its words
 runs from the start of its first word to the start of the next scene's first word (the pause
 belongs to the shot before); the last slot adds a tail. Crossfades are centred on slot
 boundaries, so each clip carries half a crossfade of handle on each side it meets another clip.
+
+A scene that continues the paragraph before it is another shot of the same moment: it follows the
+short pause inside a paragraph, and cuts in on its first word instead of dissolving, as a film
+cuts within a scene and dissolves where time or place moves on.
 """
 
 import itertools
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .text import MAX_CUE, pack
 
@@ -18,6 +22,7 @@ class Timeline:
     speech_starts: list[float]  # when each scene's narration starts
     bounds: list[float]  # scene boundaries b0=0 .. bN=total
     xfade: float
+    cuts: list[int] = field(default_factory=list)  # boundaries (1..n-1) crossed by a cut, not a crossfade
 
     @property
     def n(self) -> int:
@@ -30,24 +35,40 @@ class Timeline:
     def slot(self, i: int) -> float:
         return self.bounds[i + 1] - self.bounds[i]
 
+    def fade(self, i: int) -> float:
+        """The crossfade at boundary i: none where a cut crosses it."""
+        return 0.0 if i in self.cuts else self.xfade
+
     def clip_start(self, i: int) -> float:
         """Where scene i's clip begins on the film timeline."""
-        return 0.0 if i == 0 else self.bounds[i] - self.xfade / 2
+        return 0.0 if i == 0 else self.bounds[i] - self.fade(i) / 2
 
     def clip_length(self, i: int) -> float:
-        """Slot plus half a crossfade on every side that meets another clip."""
-        handles = (i > 0) + (i < self.n - 1)
-        return self.slot(i) + handles * self.xfade / 2
+        """Slot plus half a crossfade on every side that meets another clip with one."""
+        before = self.fade(i) / 2 if i > 0 else 0.0
+        after = self.fade(i + 1) / 2 if i < self.n - 1 else 0.0
+        return self.slot(i) + before + after
 
 
-def timeline(durations: list[float], gap: float, lead_in: float, tail: float, xfade: float) -> Timeline:
+def timeline(
+    durations: list[float],
+    gap: float,
+    lead_in: float,
+    tail: float,
+    xfade: float,
+    continues: list[bool] | None = None,
+    shot_gap: float = 0.0,
+) -> Timeline:
+    """`continues[i]`: scene i is another shot of the paragraph before, `shot_gap` after it, cut to."""
+    joined = continues or [False] * len(durations)
     starts, t = [], lead_in
-    for d in durations:
+    for i, d in enumerate(durations):
         starts.append(round(t, 3))
-        t += d + gap
+        t += d + (shot_gap if i + 1 < len(durations) and joined[i + 1] else gap)
     end = starts[-1] + durations[-1] + tail
     bounds = [0.0, *starts[1:], round(end, 3)]
-    return Timeline(speech_starts=starts, bounds=bounds, xfade=xfade)
+    cuts = [i for i in range(1, len(durations)) if joined[i]]
+    return Timeline(speech_starts=starts, bounds=bounds, xfade=xfade, cuts=cuts)
 
 
 def ltx_frames(seconds: float, fps: int) -> int:

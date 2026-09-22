@@ -98,11 +98,12 @@ class Render(BaseModel):
     height: int = 1080
     fps: int = 24
     xfade: float = 0.8  # crossfade, centred on each scene boundary
-    gap: float = 0.45  # silence between scenes' narration
-    chunk_gap: float = 0.25  # silence between synthesis chunks inside a scene
+    gap: float = 0.45  # silence between paragraphs' narration
+    chunk_gap: float = 0.25  # silence between synthesis chunks, and between the shots of a paragraph
     lead_in: float = 0.5  # silence before the first word
     tail: float = 1.5  # the last shot breathes after the final word
     ambience: float = 0.3  # generated sound, ducked under the voice
+    loudness: float = -16.0  # the film's integrated loudness, LUFS: where spoken web video and podcasts sit
     hold_max: float = 1.0  # a remote clip may end on its last frame held this long, rather than pay for more
     encoder: str = "h264_nvenc"
     bitrate: str = "12M"

@@ -54,7 +54,7 @@ def answer(messages: list[dict], schema: dict | None) -> str:
     if schema is None:
         return FAKE_STORY
     prompt = (messages[-1].get("content") or "") if messages else ""
-    paragraphs = len(re.findall(r"^\[\d+\] ", prompt, flags=re.MULTILINE))
+    paragraphs = len(re.findall(r"^\[\d+\]\s", prompt, flags=re.MULTILINE))
     return json.dumps(sample(schema, {"scenes": paragraphs} if paragraphs else None))
 
 
@@ -253,6 +253,8 @@ class FakeFal:
             await media.video(int(secs * 24), 24, 320, 180, path)
             url = self._store(path.name, path.read_bytes(), "video/mp4")
             req.output, req.units = {"video": {"url": url, "content_type": "video/mp4"}}, secs
+            if a.get("prompt_expansion_mode", "disabled") != "disabled":
+                req.output["expanded_prompt"] = f"Shot: {a['prompt']}"
         elif any(k in ep for k in ("tts", "speech", "chatterbox")):
             text = a.get("text") or a.get("prompt") or ""
             path = out.with_suffix(".wav")

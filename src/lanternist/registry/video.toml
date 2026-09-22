@@ -29,8 +29,10 @@ durations = { min = 5, max = 15, step = 1 }
 quality = { param = "resolution", options = ["480P", "768P", "1080P"], default = "768P" }
 commercial_use = true
 licence = "fal commercial terms; confirm on the endpoint page"
-defaults = { prompt_expansion_mode = "disabled", enable_safety_checker = true }
-notes = "The cheapest good video: try a whole film for cents at 480P. Prompt expansion is off so the character lock isn't rewritten."
+# MiniMax's own rewrite of the prompt, into the shot format H3 was trained on: in a side-by-side on the
+# same shots it kept the cast and followed the camera direction better than our prompt sent as is (22 Sep).
+defaults = { prompt_expansion_mode = "balanced", enable_safety_checker = true }
+notes = "The cheapest good video: try a whole film for cents at 480P. MiniMax rewrites the prompt into H3's own shot format; the clip's record keeps what it wrote."
 
 [model.price]
 unit = "output_second"
