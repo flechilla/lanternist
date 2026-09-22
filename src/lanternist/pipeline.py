@@ -14,6 +14,7 @@ import logging
 import shutil
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Any
 
 from . import check, prompts, registry, text, timing
@@ -41,6 +42,8 @@ from .writer import narration_seconds
 
 log = logging.getLogger(__name__)
 
+THUMBNAILS = (384, 768)  # the widths a picture is also served at: a slide on the reel, a card on the board
+PICTURE_TYPES = (".png", ".jpg", ".jpeg", ".webp")
 CLIP = "clip@1"
 MIX = "mix@3"  # 2: loudness normalised; 3: cuts are concats, not zero-length crossfades
 LABELS = {  # in the order the stages run: the progress draws them in this order
@@ -752,6 +755,24 @@ class Pipeline:
                     rec = self.cached(it)
                     by_scene[it.scene]["motion"] = rec["assets"]["video"] if rec else None
         return out
+
+    # ---------------------------------------------------------------- for the pages
+    async def thumbnail(self, asset: str, width: int) -> Path:
+        """A picture as a JPEG at least `width` wide (the next of THUMBNAILS), made the first time it's
+        asked for and kept: a board of 37 pictures is then a few hundred kilobytes, not 100 MB."""
+        if not asset.endswith(PICTURE_TYPES):
+            raise ValueError(f"only a picture can be served smaller, and {asset} isn't one")
+        w = next((t for t in THUMBNAILS if t >= width), THUMBNAILS[-1])
+        path = self.store.derived(asset, f"w{w}.jpg")
+        if not path.is_file():
+            work = self.store.tmp()
+            try:
+                await ffmpeg.thumbnail(self.store.path(asset), work / "thumb.jpg", w)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                (work / "thumb.jpg").replace(path)  # whole or not at all, if two pages ask at once
+            finally:
+                shutil.rmtree(work, ignore_errors=True)
+        return path
 
     # ---------------------------------------------------------------- all of it
     async def render(self, sb: Storyboard, board: Board | None = None) -> Film:

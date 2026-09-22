@@ -694,7 +694,9 @@ mini reel in the dock everywhere else; no sound; streaming the writer's prose co
   made, the job's own pace takes over. A guess spreads the range wider than a measurement, and items
   waiting at fal widen it. The snapshot also gives each stage's share of the time, how far through the
   job it is, how long each stage has worked, and where the mix is, from ffmpeg's `-progress`.
-- [ ] **Thumbnails** (`feat/thumbnails`): `/api/assets/{id}?w=` serves a small JPEG of a picture.
+- [x] **Thumbnails** (`feat/thumbnails`). `/api/assets/{id}?w=` serves a picture as a JPEG 384 or 768
+  wide, made the first time it's asked for and kept under `derived/`. The lab's 37 pictures of a
+  story weigh 120 MB as PNGs; the Board's slides now load 3.1 MB of them, and the reel's 1 MB.
 - [ ] **The reel** (`feat/reel`) on the Film step, with hover cards and Behind the scenes.
 - [ ] **Progress everywhere** (`feat/progress-everywhere`): the dock's mini reel, the tab title, a
   notification when asked for, and the Library.

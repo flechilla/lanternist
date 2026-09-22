@@ -68,3 +68,22 @@ def test_story_lifecycle(client, wait):
 
     assert client.delete(f"/api/stories/{sid}").status_code == 204
     assert client.get(f"/api/stories/{sid}").status_code == 404
+
+
+def test_a_picture_is_served_small_and_made_once(client, wait, tmp_path):
+    sid = client.post("/api/stories", json={"storyboard": storyboard(1)}).json()["story"]["id"]
+    wait(client.post(f"/api/stories/{sid}/board").json()["id"])
+    picture = client.get(f"/api/stories/{sid}").json()["board"]["scenes"][0]["keyframe"]
+    full = client.get(f"/api/assets/{picture}")
+
+    small = client.get(f"/api/assets/{picture}?w=300")
+    assert small.status_code == 200 and small.headers["content-type"] == "image/jpeg"
+    assert len(small.content) * 5 < len(full.content)
+    assert client.get(f"/api/assets/{picture}?w=300").content == small.content
+    client.get(f"/api/assets/{picture}?w=2000")  # wider than any: the largest there is
+    made = sorted(p.name.split("-")[1] for p in (tmp_path / "lib" / "derived").rglob("*.jpg"))
+    assert made == ["w384.jpg", "w768.jpg"]
+
+    film = wait(client.post(f"/api/stories/{sid}/render").json()["id"])["result"]["film"]
+    assert client.get(f"/api/assets/{film}?w=300").status_code == 422
+    assert client.get(f"/api/assets/{picture}?w=0").status_code == 422

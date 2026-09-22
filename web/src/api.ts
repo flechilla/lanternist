@@ -521,6 +521,10 @@ export const recording = (name: string) => `/api/voices/${encodeURIComponent(nam
 export const asset = (id: string | null | undefined, download?: string) =>
   id ? `/api/assets/${id}${download ? `?download=${encodeURIComponent(download)}` : ""}` : undefined;
 
+/** A picture about as wide as it's shown: the server makes a small JPEG of it once and keeps it. */
+export const thumb = (id: string | null | undefined, width: number) =>
+  id ? `/api/assets/${id}?w=${width}` : undefined;
+
 export const isActive = (j: Job) => j.status === "queued" || j.status === "running";
 
 export const LANGUAGE_NAMES: Record<string, string> = {

@@ -213,7 +213,7 @@ async def to_wav(src: Path, out: Path, rate: int) -> None:
 
 
 async def thumbnail(src: Path, out: Path, width: int) -> None:
-    """A picture as a JPEG `width` wide: what a vision model is shown."""
+    """A picture as a JPEG `width` wide: what a vision model is shown, and what the pages show."""
     await run(["-i", str(src), "-vf", f"scale={width}:-2", "-q:v", "4", str(out)])
 
 

@@ -8,7 +8,7 @@ import subprocess
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
@@ -468,12 +468,19 @@ async def job_events(job_id: str, request: Request):
 
 # ---------------------------------------------------------------------------------- assets & voices
 @app.get("/api/assets/{asset}")
-def get_asset(asset: str, download: str | None = None):
+async def get_asset(asset: str, download: str | None = None, w: int | None = Query(None, gt=0)):
+    """A stored file; with `w`, a picture as a JPEG at least that wide."""
     if not ASSET.match(asset):
         raise HTTPException(400, "bad asset id")
-    path = Pipeline(cfg).store.path(asset)
+    pipeline = Pipeline(cfg)
+    path = pipeline.store.path(asset)
     if not path.is_file():
         raise HTTPException(404, "asset not found")
+    if w is not None:
+        try:
+            path = await pipeline.thumbnail(asset, w)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from None
     media = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
     if asset.endswith(".vtt"):
         media = "text/vtt"
