@@ -42,7 +42,8 @@ from .writer import narration_seconds
 
 log = logging.getLogger(__name__)
 
-THUMBNAILS = (384, 768)  # the widths a picture is also served at: a slide on the reel, a card on the board
+THUMBNAIL = "thumb@1"  # in every kept thumbnail's name: bump it when ffmpeg.thumbnail changes on purpose
+THUMBNAIL_WIDTHS = (768,)  # the widths a picture is also served at: a card on the Board
 PICTURE_TYPES = (".png", ".jpg", ".jpeg", ".webp")
 CLIP = "clip@1"
 MIX = "mix@3"  # 2: loudness normalised; 3: cuts are concats, not zero-length crossfades
@@ -758,12 +759,12 @@ class Pipeline:
 
     # ---------------------------------------------------------------- for the pages
     async def thumbnail(self, asset: str, width: int) -> Path:
-        """A picture as a JPEG at least `width` wide (the next of THUMBNAILS), made the first time it's
-        asked for and kept: a board of 37 pictures is then a few hundred kilobytes, not 100 MB."""
+        """A picture as a JPEG as wide as the smallest of THUMBNAIL_WIDTHS that's at least `width`, else
+        the largest; made the first time it's asked for and kept, so a page never loads a 3 MB PNG."""
         if not asset.endswith(PICTURE_TYPES):
             raise ValueError(f"only a picture can be served smaller, and {asset} isn't one")
-        w = next((t for t in THUMBNAILS if t >= width), THUMBNAILS[-1])
-        path = self.store.derived(asset, f"w{w}.jpg")
+        w = next((t for t in THUMBNAIL_WIDTHS if t >= width), THUMBNAIL_WIDTHS[-1])
+        path = self.store.derived(asset, f"{THUMBNAIL}-w{w}.jpg")
         if not path.is_file():
             work = self.store.tmp()
             try:

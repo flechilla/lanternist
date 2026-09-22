@@ -17,6 +17,7 @@ from .. import keys, llm, prefs
 from ..config import settings
 from ..db import Database, Job, Story, StoryVersion, to_micros, to_usd
 from ..engines import catalog as engines
+from ..engines.ffmpeg import FfmpegError
 from ..estimate import Kind, estimate
 from ..jobs import Runner, is_terminal
 from ..pipeline import Pipeline
@@ -469,22 +470,28 @@ async def job_events(job_id: str, request: Request):
 # ---------------------------------------------------------------------------------- assets & voices
 @app.get("/api/assets/{asset}")
 async def get_asset(asset: str, download: str | None = None, w: int | None = Query(None, gt=0)):
-    """A stored file; with `w`, a picture as a JPEG at least that wide."""
+    """A stored file; with `w`, a picture as a smaller JPEG (`Pipeline.thumbnail`)."""
     if not ASSET.match(asset):
         raise HTTPException(400, "bad asset id")
     pipeline = Pipeline(cfg)
     path = pipeline.store.path(asset)
     if not path.is_file():
         raise HTTPException(404, "asset not found")
+    # An asset never changes under its name; a thumbnail can, when THUMBNAIL does, so it's checked daily.
+    headers = {"Cache-Control": "public, max-age=31536000, immutable"}
     if w is not None:
         try:
             path = await pipeline.thumbnail(asset, w)
         except ValueError as e:
             raise HTTPException(422, str(e)) from None
+        except FfmpegError:
+            raise HTTPException(
+                500, f"The picture {asset} can't be read. Draw its scene again on the Board."
+            ) from None
+        headers = {"Cache-Control": "public, max-age=86400"}
     media = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
     if asset.endswith(".vtt"):
         media = "text/vtt"
-    headers = {"Cache-Control": "public, max-age=31536000, immutable"}
     return FileResponse(
         path,
         media_type=media,
