@@ -64,7 +64,7 @@ def probe(path: Path) -> dict:
             "-v",
             "error",
             "-show_entries",
-            "format=duration:stream=codec_type,width,height",
+            "format=duration:stream=codec_type,width,height,duration",
             "-of",
             "json",
             str(path),
@@ -78,6 +78,7 @@ def probe(path: Path) -> dict:
     video: dict = next((s for s in streams if s.get("codec_type") == "video"), {})
     return {
         "duration": float(data.get("format", {}).get("duration", 0) or 0),
+        "video_duration": float(video.get("duration", 0) or 0),
         "has_audio": any(s.get("codec_type") == "audio" for s in streams),
         "width": video.get("width"),
         "height": video.get("height"),
@@ -308,14 +309,18 @@ def mix_graph(
     measured: dict[str, str] | None = None,
 ) -> str:
     n = tl.n
-    chains = []
-    # Video: crossfades centred on the scene boundaries.
-    last = "0:v"
+    # Video: crossfades centred on the scene boundaries, and straight cuts between the shots of a
+    # paragraph. A cut is a concat, not a zero-length crossfade, which ends the video there; and
+    # xfade takes only inputs on one timebase, which a concat's output is not until every clip is.
+    chains = [f"[{i}:v]settb=AVTB[v{i}]" for i in range(n)]
+    last = "v0"
     for i in range(1, n):
-        # A cut is a crossfade of no length: xfade takes 0 and joins the clips on the frame.
-        chains.append(
-            f"[{last}][{i}:v]xfade=transition=fade:duration={tl.fade(i)}:offset={tl.clip_start(i):.3f}[x{i}]"
-        )
+        if i in tl.cuts:
+            chains.append(f"[{last}][v{i}]concat=n=2:v=1:a=0[x{i}]")
+        else:
+            chains.append(
+                f"[{last}][v{i}]xfade=transition=fade:duration={tl.xfade}:offset={tl.clip_start(i):.3f}[x{i}]"
+            )
         last = f"x{i}"
     vf = f"fade=t=in:d=1,fade=t=out:st={max(tl.total - 1.2, 0):.3f}:d=1.2"
     if subtitles:

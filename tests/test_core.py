@@ -147,8 +147,8 @@ def test_a_paragraph_cuts_between_its_shots():
     assert tl.clip_start(1) == pytest.approx(10.75) and tl.clip_length(1) == pytest.approx(5.9)
     assert tl.clip_start(2) + tl.clip_length(2) == pytest.approx(tl.total)
     g = ffmpeg.mix_graph(tl, Render(), None)
-    assert "xfade=transition=fade:duration=0.0:offset=10.750[x1]" in g
-    assert "xfade=transition=fade:duration=0.8:offset=15.850[x2]" in g
+    assert "[v0][v1]concat=n=2:v=1:a=0[x1]" in g
+    assert "[x1][v2]xfade=transition=fade:duration=0.8:offset=15.850[x2]" in g
     # Without continuing shots, nothing moves.
     assert timing.timeline([10.0, 5.0], 0.5, 0.5, 1.5, 0.8, [False, False], 0.25) == timing.timeline(
         [10.0, 5.0], gap=0.5, lead_in=0.5, tail=1.5, xfade=0.8

@@ -250,7 +250,7 @@ Every fal picture model draws the cast sheet from text (`endpoints.text_to_image
 
 | Model | Billable lengths | Price (list, 22 Sep) | Notes |
 |---|---|---|---|
-| **MiniMax H3 Max Turbo** (`minimax/h3-max-turbo/image-to-video`) | 5–15 s, any whole second | $0.0125/s at 480P, $0.02 at 768P, $0.04 at 1080P until 30 Sep; then double | **The cheapest good video: a whole film for cents at 480P, for trying the flow.** A seed. `prompt_expansion_mode` defaults to "balanced": send "disabled". No audio switch, but its quiet sound bed serves as ambience. |
+| **MiniMax H3 Max Turbo** (`minimax/h3-max-turbo/image-to-video`) | 5–15 s, any whole second | $0.0125/s at 480P, $0.02 at 768P, $0.04 at 1080P until 30 Sep; then double | **The cheapest good video: a whole film for cents at 480P, for trying the flow.** A seed. `prompt_expansion_mode` defaults to "balanced", MiniMax's rewrite of the prompt into H3's own shot format: kept on since the quality review (§6). No audio switch, but its quiet sound bed serves as ambience. |
 | **MiniMax H3 Max** (`minimax/h3-max/image-to-video`) | 5–15 s | $0.025/s at 480P, $0.04 at 768P, $0.08 at 1080P until 30 Sep; then double | fal's post-trained H3: strong prompt following. Same inputs as Turbo. |
 | Kling v3 Standard | "3"–"15" s, any whole second | $0.084/s with audio off | `start_image_url`. No seed or size input: it follows the image. **`generate_audio` defaults to true: send false.** |
 | **Kling v3 Pro** | "3"–"15" s | $0.112/s with audio off | Kling's best motion; same inputs as Standard. |
