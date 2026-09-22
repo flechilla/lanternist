@@ -688,8 +688,12 @@ mini reel in the dock everywhere else; no sound; streaming the writer's prose co
   one lands. `pipeline.ACTIONS` says what each stage is
   doing in plain words. `LANTERNIST_FAKE_PACE` makes each fake item take that many seconds. No step
   key changes.
-- [ ] **Time left and the phase bar** (`feat/progress-time`): a range from the job's estimate and
-  the pace so far; each stage's share of the time; the mix's position from ffmpeg.
+- [x] **Time left and the phase bar** (`feat/progress-time`). A board or render says how long it
+  has left as a range (`pace.py`): each stage expects its items to take what its model took here
+  before (the median of its step_runs), else what the registry lists, else a guess; once two are
+  made, the job's own pace takes over. A guess spreads the range wider than a measurement, and items
+  waiting at fal widen it. The snapshot also gives each stage's share of the time, how far through the
+  job it is, how long each stage has worked, and where the mix is, from ffmpeg's `-progress`.
 - [ ] **Thumbnails** (`feat/thumbnails`): `/api/assets/{id}?w=` serves a small JPEG of a picture.
 - [ ] **The reel** (`feat/reel`) on the Film step, with hover cards and Behind the scenes.
 - [ ] **Progress everywhere** (`feat/progress-everywhere`): the dock's mini reel, the tab title, a

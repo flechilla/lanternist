@@ -121,6 +121,7 @@ class Event:
     who: str | None = None  # the character whose portrait it is
     ahead: int | None = None  # waiting: the requests ahead of it in the provider's queue
     failed: str | None = None  # a verdict: why the picture check failed the item's picture
+    at: float | None = None  # working: how far through the item it is, when it says (the mix), 0 to 1
 
     def dict(self) -> dict:
         return asdict(self)
@@ -309,6 +310,7 @@ class Pipeline:
                     total=total.get(stage, 0),
                 ),
                 phase=lambda it, phase, ahead: told(it, phase, ahead=ahead),
+                advance=lambda it, at: told(it, "working", at=round(at, 3)),
             )
             if bind:
                 ctx.bind = lambda it: bind(it, records)

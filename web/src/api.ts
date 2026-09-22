@@ -84,6 +84,10 @@ export interface StageState {
   asset?: string;
   /** What the stage has paid for so far, when it runs on a paid model. */
   spent_usd?: number;
+  /** How long it has worked, from starting on its first item. */
+  secs?: number;
+  /** How far through its one item it is, 0 to 1, when it says: the mix, from ffmpeg. */
+  at?: number;
 }
 
 /** Where one scene's step in a stage, or one character's portrait, has got to in a job. */
@@ -111,6 +115,12 @@ export interface Progress {
   cast?: Record<string, Step>;
   /** What the job has paid for so far. */
   spent_usd?: number;
+  /** A board's or render's time left, in seconds, as a range: never a countdown. */
+  eta_s?: [number, number];
+  /** Each stage's share of the job's time, in the order they run, so a long stage is drawn long. */
+  phases?: { stage: string; share: number }[];
+  /** How far through the job it is, 0 to 1, by time. */
+  fraction?: number;
   log?: string[];
   message?: string;
 }

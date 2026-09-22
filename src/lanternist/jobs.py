@@ -13,7 +13,7 @@ import time
 import traceback
 from typing import Any, cast
 
-from . import prefs
+from . import pace, prefs
 from .config import Settings
 from .db import TERMINAL, Database, Job, now
 from .keys import redact
@@ -52,6 +52,11 @@ class Progress:
     each stage, and each character's portrait, as they move from queued to done; what the job has
     spent, in all and by stage; and a short log.
 
+    For a board or render, told what its stages should take (`expect`), it also says how long is left
+    as a range (`eta_s`), each stage's share of the time (`phases`) and how far through it is
+    (`fraction`, by time). A stage row says how long it has worked (`secs`), and the mix how far
+    through the film it is (`at`).
+
     A step is {state, asset, secs, tries, ahead, note, cost_micros}: its state is an item status, or
     "failed" when the picture check failed its picture, with why in `note`. A step made again keeps
     its last asset until the new one lands, so the page can show the old picture meanwhile. Its cost
@@ -62,9 +67,13 @@ class Progress:
         self.db, self.job_id = db, job_id
         self.snap: dict[str, Any] = {"stages": {}, "scenes": {}, "cast": {}, "log": [], "message": ""}
         self.t0 = time.time()
+        # What each stage of a board or render is expected to take: how long is left comes from it.
+        self.expect: dict[str, pace.Expect] = {}
         self._last_write = 0.0
         self._later: asyncio.TimerHandle | None = None
         self._began: dict[tuple[str, str], float] = {}  # when work on each step began, by row and whose
+        self._ran: dict[str, float] = {}  # seconds each stage has worked, not counting its current run
+        self._since: dict[str, float] = {}  # when each stage at work now started on its first item
 
     def stage(self, e: Event) -> None:
         st = self.snap["stages"].setdefault(
@@ -86,8 +95,15 @@ class Progress:
             st.update(status="done", done=1, total=1)
         else:
             st["status"] = "running"
+        # A stage's time runs from starting on its first item, so a batch's rows don't count each other's.
+        if e.status in ("waiting", "working"):
+            self._since.setdefault(e.stage, time.time())
+        if st["status"] == "done" and e.stage in self._since:
+            self._ran[e.stage] = self._ran.get(e.stage, 0.0) + time.time() - self._since.pop(e.stage)
         if e.asset and e.scene is None and e.who is None:
             st["asset"] = e.asset
+        if e.at is not None:
+            st["at"] = e.at
         if e.status in ITEM:
             self._move(e)
         if e.message or e.status in ("start", "done", "finish"):
@@ -113,7 +129,7 @@ class Progress:
         step.pop("ahead", None)
         if e.ahead is not None:
             step["ahead"] = e.ahead
-        if e.status == "working":
+        if e.status in ("waiting", "working"):  # from the moment it's asked for: a queue is part of it
             self._began.setdefault((e.stage, whose), time.time())
         if e.status in ("cached", "done"):
             step["asset"] = e.asset
@@ -144,7 +160,35 @@ class Progress:
             self._later = None
         self._last_write = time.time()
         self._spend()
+        self._time()
         self.db.update_job(self.job_id, progress=dict(self.snap))
+
+    def _time(self) -> None:
+        """How long each stage has worked; and, for a job that knows what its stages should take, how
+        long it has left, each stage's share of its time and how far through it is."""
+        now = time.time()
+        seen: dict[str, pace.Seen] = {}
+        for stage, st in self.snap["stages"].items():
+            elapsed = self._ran.get(stage, 0.0) + (now - self._since[stage] if stage in self._since else 0.0)
+            st["secs"] = round(elapsed, 1)
+            steps = [s[stage] for s in self.snap["scenes"].values() if stage in s]
+            if stage == "portraits":
+                steps += self.snap["cast"].values()
+            seen[stage] = pace.Seen(
+                left=st["total"] - st["done"],
+                secs=[s["secs"] for s in steps if "secs" in s],
+                elapsed=elapsed,
+                at=st.get("at", 0.0),
+                waiting=any(s.get("state") == "waiting" for s in steps),
+            )
+        if not self.expect:
+            return
+        lo, hi, whole = pace.left(self.expect, seen)
+        total = sum(whole.values())
+        ran = now - self.t0
+        self.snap["eta_s"] = [round(lo), round(hi)]
+        self.snap["phases"] = [{"stage": k, "share": round(v / total, 4)} for k, v in whole.items() if v > 0]
+        self.snap["fraction"] = round(ran / (ran + (lo + hi) / 2), 3) if ran + lo + hi else 0.0
 
     def _spend(self) -> None:
         """What the job has paid for so far: in all, by stage, and for each scene's step."""
@@ -307,6 +351,8 @@ class Runner:
         with self.db.session() as s:
             story, row = self.db.storyboard(s, job.story_id, job.version)
         sb = Storyboard.model_validate(row.storyboard)
+        if job.kind in ("board", "render"):
+            progress.expect = pace.plan(cfg, self.db, job.estimate, job.kind, len(sb.scenes))
 
         if job.kind == "rewrite":
             from .writer import rewrite_scene

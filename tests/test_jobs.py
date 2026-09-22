@@ -116,7 +116,9 @@ async def test_a_render_reports_each_scene_through_motion_clips_and_the_mix(fake
     await Pipeline(fake_cfg, events.append).render(make_story(("still", "video")))
 
     def moves(stage: str, scene: int | None = None) -> list[str]:
-        return [e.status for e in events if e.stage == stage and e.scene == scene and e.status in ITEM]
+        """Where an item went, in order: the mix says it's working again each time ffmpeg moves on."""
+        statuses = [e.status for e in events if e.stage == stage and e.scene == scene and e.status in ITEM]
+        return [st for i, st in enumerate(statuses) if not i or statuses[i - 1] != st]
 
     assert moves("motion", 2) == ["queued", "working", "done"]
     assert moves("clips", 1) == ["queued", "working", "done"]

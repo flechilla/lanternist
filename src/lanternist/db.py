@@ -421,6 +421,18 @@ class Database:
         with self.session() as s:
             return int(s.scalar(q))
 
+    def step_seconds(self, stage: str, model_id: str, limit: int) -> list[float]:
+        """How long a model's most recent steps in a stage took, end to end, newest first."""
+        q = (
+            select(func.coalesce(StepRun.wall_seconds, StepRun.gpu_seconds))
+            .where(StepRun.stage == stage, StepRun.model_id == model_id, StepRun.status == "done")
+            .where(func.coalesce(StepRun.wall_seconds, StepRun.gpu_seconds).is_not(None))
+            .order_by(StepRun.created_at.desc())
+            .limit(limit)
+        )
+        with self.session() as s:
+            return [float(secs) for secs in s.scalars(q)]
+
     def spend_by_step(self, job_id: str) -> dict[tuple[str, int | None], int]:
         """What a job has paid for, by stage and scene: only steps with a cost, so no local ones."""
         q = (

@@ -113,6 +113,8 @@ class StepContext:
     # Where an item is while it's made: "working" on it, or "waiting" in a provider's queue with a
     # number of requests ahead of it.
     phase: Callable[[Item, str, int | None], None] = lambda item, phase, ahead: None
+    # How far through an item it is, 0 to 1, for an item that can say: the mix, from ffmpeg.
+    advance: Callable[[Item, float], None] = lambda item, at: None
     bind: Callable[[Item], None] = _unbound
 
 

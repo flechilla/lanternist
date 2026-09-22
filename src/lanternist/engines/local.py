@@ -278,23 +278,28 @@ class Mix(Maker):
 
     async def run(self, items: list[Item], ctx: StepContext, on_item: OnItem) -> None:
         for it in items:
-            ctx.phase(it, "working", None)
-            p = it.params
-            extra = {}
-            srt_path = None
-            if p["subtitles"] != "off":
-                srt_path = ctx.work / "film.srt"
-                srt_path.write_text(timing.srt(p["cues"]), encoding="utf-8")
-                vtt_path = ctx.work / "film.vtt"
-                vtt_path.write_text(timing.vtt(p["cues"]), encoding="utf-8")
-                extra = {"srt": srt_path, "vtt": vtt_path}
-            film = ctx.work / "film.mp4"
-            await ffmpeg.mix(
-                [ctx.store.path(c) for c in p["clips"]],
-                [ctx.store.path(w) for w in p["wavs"]],
-                p["timeline"],
-                ctx.cfg.render,
-                film,
-                subtitles=srt_path if p["subtitles"] == "burned" else None,
-            )
-            on_item(Output(it, film, {"duration": round(p["timeline"].total, 3)}, extra=extra))
+            await self.film(it, ctx, on_item)
+
+    async def film(self, it: Item, ctx: StepContext, on_item: OnItem) -> None:
+        ctx.phase(it, "working", None)
+        p = it.params
+        extra = {}
+        srt_path = None
+        if p["subtitles"] != "off":
+            srt_path = ctx.work / "film.srt"
+            srt_path.write_text(timing.srt(p["cues"]), encoding="utf-8")
+            vtt_path = ctx.work / "film.vtt"
+            vtt_path.write_text(timing.vtt(p["cues"]), encoding="utf-8")
+            extra = {"srt": srt_path, "vtt": vtt_path}
+        film = ctx.work / "film.mp4"
+        length = p["timeline"].total
+        await ffmpeg.mix(
+            [ctx.store.path(c) for c in p["clips"]],
+            [ctx.store.path(w) for w in p["wavs"]],
+            p["timeline"],
+            ctx.cfg.render,
+            film,
+            subtitles=srt_path if p["subtitles"] == "burned" else None,
+            on_time=lambda secs: ctx.advance(it, min(secs / length, 1)),
+        )
+        on_item(Output(it, film, {"duration": round(length, 3)}, extra=extra))
