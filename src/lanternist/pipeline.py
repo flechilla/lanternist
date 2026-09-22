@@ -482,14 +482,14 @@ class Pipeline:
         narration = await self.narrate(sb)
         cast, keyframes = await self.draw(sb)
         checked = await self.check(sb, keyframes)
-        for _ in range(check.MAX_REDRAWS):
+        for tries in range(1, check.MAX_REDRAWS + 1):
             again = {n: why for n, why in checked.failed.items() if n in checked.asked}
             if not again:
                 break
             self._redraw(sb, again)
             self.emit("check", "progress", message=f"drawing again: {_scenes(again)}")
             cast, keyframes = await self.draw(sb)
-            checked = await self.check(sb, keyframes)
+            checked = await self.check(sb, keyframes, last=tries == check.MAX_REDRAWS)
         if checked.failed:
             n = len(sb.scenes)
             self.emit("check", "finish", done=n, total=n, message=f"still failing: {_scenes(checked.failed)}")
@@ -512,8 +512,9 @@ class Pipeline:
             items.append(Item(_sid(sc), key, sc.n, {"image": image, "question": q}))
         return items
 
-    async def check(self, sb: Storyboard, keyframes: list[str]) -> Checked:
-        """The scenes whose picture the checker fails, with why; nothing when no checker is set."""
+    async def check(self, sb: Storyboard, keyframes: list[str], last: bool = False) -> Checked:
+        """The scenes whose picture the checker fails, with why; nothing when no checker is set. On the
+        board's `last` look a fail is only flagged, so one given before the check broke is too."""
         model = self.cfg.defaults.checker
         if not model:
             return Checked({}, set())
@@ -528,12 +529,15 @@ class Pipeline:
         except BaseException:
             # The verdicts given before it failed are cached, and a cached "fail" only flags: give those
             # pictures their new seeds now, so the next board draws them again rather than keeping them.
-            failed = [
-                (it, rec["meta"]) for it in items if it.scene in checker.asked and (rec := self.cached(it))
-            ]
-            self._redraw(
-                sb, {it.scene: v["reason"] for it, v in failed if v["verdict"] == "fail" and it.scene}
-            )
+            if not last:
+                given = [
+                    (it.scene, rec["meta"])
+                    for it in items
+                    if it.scene in checker.asked and (rec := self.cached(it))
+                ]
+                self._redraw(
+                    sb, {n: v["reason"] for n, v in given if n is not None and v["verdict"] == "fail"}
+                )
             raise
         verdicts = {it.scene: records[it.id]["meta"] for it in items if it.scene is not None}
         return Checked({n: v["reason"] for n, v in verdicts.items() if v["verdict"] == "fail"}, checker.asked)

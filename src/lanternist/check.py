@@ -15,6 +15,7 @@ picture that still failed at the end is only flagged, not drawn again.
 import asyncio
 from typing import Literal
 
+import httpx
 from pydantic import BaseModel, Field, ValidationError
 
 from . import llm as llms
@@ -62,7 +63,9 @@ class CheckError(RuntimeError):
 
 
 PICK_ANOTHER = "Pick a checker that takes pictures and structured output in Settings, or clear it."
-CANT = (400, 404)  # what OpenRouter answers a model that can't take a picture or a schema
+# What OpenRouter answers a model that can't take a picture or a schema. 503 is "no provider can serve
+# this request with the required parameters", once the client's retries are spent.
+CANT = (400, 404, 503)
 
 
 def question(sb: Storyboard, scene: Scene) -> str:
@@ -100,12 +103,14 @@ class Checker(Maker):
             return
         try:
             pricing = (await self.llm.info()).get("pricing") or {}
-        except llms.LLMError as e:  # OpenRouter doesn't list it
+        except llms.LLMError as e:  # not in OpenRouter's list of models with structured output
             raise CheckError(
-                f"The picture check can't use {self.model}: OpenRouter doesn't list it. {PICK_ANOTHER}"
+                f"The picture check can't use {self.model}: OpenRouter doesn't list it with structured "
+                f"output. {PICK_ANOTHER}"
             ) from e
-        except OpenRouterError as e:
-            raise CheckError(f"The picture check couldn't read {self.model}'s prices: {e}") from e
+        except (OpenRouterError, httpx.HTTPError) as e:
+            why = str(e).rstrip(".") or type(e).__name__
+            raise CheckError(f"The picture check couldn't read {self.model}'s prices: {why}.") from e
         self.per_check = to_micros(llms.token_price(pricing, TOKENS))
 
     def estimate(self, items: list[Item]) -> Estimate:
@@ -131,12 +136,12 @@ class Checker(Maker):
                     )
                     verdict = Verdict.model_validate_json(json_text(reply.text))
                 except OpenRouterError as e:
-                    # A 400 or 404 is the model refusing a picture or a schema. The key, credit or an
-                    # outage is no reason to change checkers, so those keep their own advice.
+                    # The key, credit or a rate limit is no reason to change checkers: those keep their
+                    # own advice.
                     advice = f" {PICK_ANOTHER}" if e.status in CANT else ""
                     raise CheckError(f"{why}: {str(e).rstrip('.')}.{advice}") from e
-                except llms.LLMError as e:
-                    raise CheckError(f"{why}: {str(e).rstrip('.')}.") from e
+                except llms.LLMError as e:  # Ollama refusing the model or the picture, or no room to answer
+                    raise CheckError(f"{why}: {str(e).rstrip('.')}. {PICK_ANOTHER}") from e
                 except ValidationError as e:
                     raise CheckError(f"{why}: its answer wasn't a verdict. {PICK_ANOTHER}") from e
                 out = ctx.work / f"{it.id}.json"

@@ -80,6 +80,14 @@ def needs(cfg: Settings) -> dict[str, bool]:
     }
 
 
+def ollama_models(cfg: Settings) -> list[str]:
+    """The Ollama models the default writer and picture check run on; the configured one when neither
+    does, so the check still says whether it's there."""
+    d = cfg.defaults
+    ids = (d.writer or f"ollama/{cfg.ollama.model}", d.checker)
+    return [m.removeprefix("ollama/") for m in ids if m.startswith("ollama/")] or [cfg.ollama.model]
+
+
 async def provider_rows(cfg: Settings) -> list[dict]:
     """Each remote provider: is there a key, where it's from, and does the provider accept it."""
     from .providers.fal import Fal
@@ -181,11 +189,13 @@ async def run_checks(cfg: Settings) -> list[Check]:
         try:
             tags = (await client.get(f"{cfg.ollama.url}/api/tags")).json()
             names = [m["name"] for m in tags.get("models", [])]
+            used = ollama_models(cfg)
+            unpulled = [m for m in used if m not in names]
             add(
                 "ollama",
-                "ok" if cfg.ollama.model in names else "fail",
-                f"{cfg.ollama.model} {'present' if cfg.ollama.model in names else 'NOT pulled'} "
-                f"({len(names)} models at {cfg.ollama.url})",
+                "fail" if unpulled else "ok",
+                (f"{', '.join(unpulled)} NOT pulled" if unpulled else f"{', '.join(used)} present")
+                + f" ({len(names)} models at {cfg.ollama.url})",
             )
         except httpx.HTTPError as e:
             add("ollama", "fail", f"not reachable at {cfg.ollama.url}: {e.__class__.__name__}")

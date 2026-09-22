@@ -1,5 +1,6 @@
 """The picture check: a vision model's verdict on every picture, and a failing one drawn again."""
 
+import asyncio
 import json
 
 import pytest
@@ -10,9 +11,9 @@ from lanternist.check import CheckError
 from lanternist.cli import _flagged, _keep_redraws
 from lanternist.config import Settings
 from lanternist.db import Job, StepRun, to_micros
-from lanternist.doctor import needs
+from lanternist.doctor import needs, ollama_models
 from lanternist.jobs import Runner
-from lanternist.pipeline import Board, BudgetExceeded, Pipeline, timing
+from lanternist.pipeline import Board, BudgetExceeded, Event, Pipeline, timing
 from lanternist.storyboard import CastMember, Storyboard, next_seed
 
 TWICE = json.dumps(
@@ -148,13 +149,26 @@ async def test_a_checker_openrouter_doesnt_list_says_to_pick_another(fake_cfg, d
         await Pipeline(checking(fake_cfg, "openrouter/fake/nowhere"), db=db).board(make_story(("still",)))
 
 
-async def test_a_refused_key_is_not_a_reason_to_pick_another_checker(fake_cfg, db, fakes, make_story):
-    fakes.openrouter.replies = [(401, {"error": {"code": 401, "message": "User not found."}})]
+@pytest.mark.parametrize(
+    ("reply", "says"),
+    [
+        # The key is no reason to change checkers; a model that won't take a picture is.
+        (
+            (401, {"error": {"code": 401, "message": "User not found."}}),
+            "OpenRouter rejected the key: User not found.",
+        ),
+        (
+            (400, {"error": {"code": 400, "message": "Image input is not supported."}}),
+            f"OpenRouter error 400: Image input is not supported. {check.PICK_ANOTHER}",
+        ),
+    ],
+)
+async def test_a_check_that_fails_says_what_to_do_about_it(fake_cfg, db, fakes, make_story, reply, says):
+    fakes.openrouter.replies = [reply]
     with pytest.raises(CheckError) as e:
         await Pipeline(checking(fake_cfg), db=db).board(make_story(("still",)))
     assert str(e.value) == (
-        "The picture check with openrouter/fake/cheap couldn't judge scene 1's picture: "
-        "OpenRouter rejected the key: User not found."
+        f"The picture check with openrouter/fake/cheap couldn't judge scene 1's picture: {says}"
     )
 
 
@@ -172,11 +186,27 @@ async def test_a_fail_given_before_the_check_broke_draws_that_picture_again(fake
     assert not (await Pipeline(checking(fake_cfg), db=db).board(sb)).flagged
 
 
-def test_the_doctor_counts_the_checkers_provider(fake_cfg):
+async def test_a_check_that_breaks_on_its_last_look_draws_nothing_past_the_limit(
+    fake_cfg, db, fakes, make_story
+):
+    sb = make_story(("still", "still"))
+    limit = [next_seed(next_seed(sb.scene_seed(sc))) for sc in sb.scenes]
+    assert check.MAX_REDRAWS == 2
+    fakes.openrouter.replies = [TWICE] * 4 + [TWICE, NO_PICTURES]  # both fail twice; then one breaks
+    with pytest.raises(CheckError):
+        await Pipeline(checking(fake_cfg), db=db).board(sb)
+    assert [sc.seed for sc in sb.scenes] == limit  # the last look's fail is only flagged, as it would be
+
+
+def test_the_doctor_counts_the_checkers_provider_and_model(fake_cfg):
     local = with_defaults(fake_cfg, writer="ollama/qwen3.8:latest")
     assert not needs(local)["openrouter"] and needs(checking(local))["openrouter"]
     remote = with_defaults(fake_cfg, writer="openrouter/fake/cheap")
-    assert not needs(remote)["ollama"] and needs(checking(remote, "ollama/qwen3.8:latest"))["ollama"]
+    assert not needs(remote)["ollama"] and needs(checking(remote, "ollama/llava:latest"))["ollama"]
+    # It looks for the models the defaults run on, not a configured one nothing uses.
+    assert ollama_models(checking(remote, "ollama/llava:latest")) == ["llava:latest"]
+    assert ollama_models(checking(local, "ollama/llava:latest")) == ["qwen3.8:latest", "llava:latest"]
+    assert ollama_models(remote) == [fake_cfg.ollama.model]
 
 
 async def test_a_cached_board_needs_no_prices(fake_cfg, db, fakes, make_story, monkeypatch):
@@ -241,23 +271,40 @@ async def test_a_look_edited_while_the_job_ran_keeps_its_new_seed_out(fake_cfg, 
     assert Runner(fake_cfg, db).keep_redraws(p, job_row(db, story_row, started), before, after) is None
 
 
-async def test_a_board_that_fails_after_a_redraw_runs_again_from_its_new_seed(
-    fake_cfg, db, fakes, story_row, make_story
+def stop_when_drawing_again(e: Event) -> None:
+    """Stops the board as a cancel would, just after the check gave a picture its new seed."""
+    if e.message.startswith("drawing again"):
+        raise asyncio.CancelledError
+
+
+@pytest.mark.parametrize(
+    ("ending", "job_takes_it"), [("error", False), ("shutdown", True), ("cancel", False)]
+)
+async def test_a_board_stopped_after_a_redraw_keeps_its_new_seed(
+    fake_cfg, db, fakes, story_row, make_story, ending, job_takes_it
 ):
+    """The new seed is saved however the board stops. A shutdown queues the job again, so it moves to
+    that version and runs from the new seed; a job that failed or was cancelled keeps the version whose
+    pictures it drew, which the story page shows its pictures for."""
     sb = make_story(("still",))
     first = sb.scene_seed(sb.scenes[0])
     started = db.add_version(story_row, sb.model_dump(), note="the version the board runs")
-    job = job_row(db, story_row, started)
-    fakes.openrouter.replies = [TWICE, NO_PICTURES]  # the second look fails outright
-    p = Pipeline(checking(fake_cfg), db=db, story_id=story_row)
-    with pytest.raises(CheckError):
-        await Runner(fake_cfg, db).checked_board(p, job, sb)
+    job, runner = job_row(db, story_row, started), Runner(fake_cfg, db)
+    if ending == "error":
+        fakes.openrouter.replies = [TWICE, NO_PICTURES]  # the second look fails outright
+        p = Pipeline(checking(fake_cfg), db=db, story_id=story_row)
+    else:
+        fakes.openrouter.replies = [TWICE]
+        p = Pipeline(checking(fake_cfg), stop_when_drawing_again, db=db, story_id=story_row)
+        if ending == "cancel":
+            runner.cancel_requested.add(job.id)
+    with pytest.raises((CheckError, asyncio.CancelledError)):
+        await runner.checked_board(p, job, sb)
     with db.session() as s:
         story, row = db.storyboard(s, story_row)
         assert story.version == started + 1
         assert Storyboard.model_validate(row.storyboard).scenes[0].seed == next_seed(first)
-        # Run again after a restart, the job loads its own version: the new seed, not the failing picture.
-        assert s.get(Job, job.id).version == started + 1
+        assert s.get(Job, job.id).version == (started + 1 if job_takes_it else started)
 
 
 def job_with_a_redraw(client, wait, fakes, story: Storyboard, kind: str) -> tuple[str, dict]:

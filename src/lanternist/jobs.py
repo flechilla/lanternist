@@ -287,9 +287,12 @@ class Runner:
         before = sb.model_copy(deep=True)
         try:
             b = await pipeline.board(sb)
-        except BaseException:
-            # Run again after a restart, the job starts from the new seeds, not the pictures that failed.
-            self._take_version(job, self.keep_redraws(pipeline, job, before, sb))
+        except BaseException as e:
+            kept = self.keep_redraws(pipeline, job, before, sb)
+            if isinstance(e, asyncio.CancelledError) and not self.user_cancelled(job.id):
+                # A shutdown: the job runs again on the next start, from the new seeds rather than the
+                # pictures that failed. A job that failed or was cancelled keeps the version it drew.
+                self._take_version(job, kept)
             raise
         checked: dict = {"flagged": b.flagged} if b.flagged else {}
         kept = self.keep_redraws(pipeline, job, before, sb)
