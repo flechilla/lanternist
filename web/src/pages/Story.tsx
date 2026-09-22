@@ -8,6 +8,7 @@ import {
   fmtUsd,
   isActive,
   LANGUAGE_NAMES,
+  type Estimate,
   type Job,
   type MediaCatalog,
   type Mode,
@@ -58,6 +59,20 @@ export default function Story() {
       setError(e instanceof ApiError && e.status === 404 ? "This story no longer exists." : errorMessage(e)),
     );
   }, [load, setError]);
+
+  // What preparing the board and rendering would cost now; fetched again whenever the story reloads.
+  const [estimates, setEstimates] = useState<{ board: Estimate; render: Estimate } | null>(null);
+  const [estimateError, setEstimateError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!detail?.version) return;
+    Promise.all([api.estimate(id, "board"), api.estimate(id, "render")]).then(
+      ([board, render]) => {
+        setEstimates({ board, render });
+        setEstimateError(null);
+      },
+      (e: unknown) => setEstimateError(errorMessage(e)),
+    );
+  }, [id, detail]);
 
   const [pictures, setPictures] = useState<MediaCatalog | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
@@ -163,6 +178,24 @@ export default function Story() {
       await saveBoard(sb, note);
     });
 
+  const setBudget = (usd: number | null) =>
+    run(async () => {
+      await api.setBudget(id, usd);
+      await load();
+    });
+
+  // The last board or render, if it stopped before a stage that would have gone over the budget.
+  const lastRun = jobs.find((j) => (j.kind === "board" || j.kind === "render") && !isActive(j));
+  const stopped = lastRun?.status === "failed" ? lastRun.result?.budget : undefined;
+  const raiseTo = stopped && Math.ceil((stopped.spent_usd + stopped.need_usd) * 2) / 2;
+  const carryOn = () =>
+    run(async () => {
+      await api.setBudget(id, raiseTo!);
+      const job = await api.run(id, lastRun!.kind as "board" | "render");
+      setStarted((s) => [job, ...s]);
+      await load();
+    });
+
   const actions = {
     board: () => startJob(() => api.run(id, "board")),
     render: () =>
@@ -204,6 +237,7 @@ export default function Story() {
           {detail.board?.total && <span>{fmtSeconds(detail.board.total)} with narration</span>}
           {!writing && <span>version {detail.version}</span>}
           {writtenBy && <span>{writtenBy}</span>}
+          {detail.budget.spent_usd > 0 && <span>{fmtUsd(detail.budget.spent_usd)} spent</span>}
           <span className="spacer" />
           {confirmDelete ? (
             <span className="row">
@@ -240,6 +274,14 @@ export default function Story() {
         </p>
       )}
       {error && !stale && <p className="error">{error}</p>}
+      {stopped && lastRun && (
+        <div className="error row" role="status">
+          <span className="spacer">{lastRun.error}</span>
+          <button className="small primary" onClick={carryOn} disabled={busy || !!current}>
+            Raise the budget to {fmtUsd(raiseTo)} and carry on
+          </button>
+        </div>
+      )}
 
       {writing ? (
         <section className="panel stack" style={{ maxWidth: 720 }}>
@@ -309,6 +351,10 @@ export default function Story() {
               dirty={dirty}
               pictures={pictures}
               catalogError={catalogError}
+              estimates={estimates}
+              estimateError={estimateError}
+              budget={detail.budget}
+              onBudget={setBudget}
               onMode={actions.setMode}
               onModels={setModels}
               onReroll={actions.reroll}
@@ -317,7 +363,14 @@ export default function Story() {
             />
           )}
           {step === "film" && (
-            <FilmView detail={detail} jobs={jobs} busy={busy} onRender={actions.render} onCancel={cancel} />
+            <FilmView
+              detail={detail}
+              jobs={jobs}
+              busy={busy}
+              renderUsd={estimates?.render.total_usd}
+              onRender={actions.render}
+              onCancel={cancel}
+            />
           )}
         </>
       )}

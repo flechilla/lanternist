@@ -87,6 +87,51 @@ export interface FilmResult {
   path: string;
 }
 
+/** Why a job stopped before a remote stage: it would have gone past the story's budget. */
+export interface BudgetStop {
+  stage: string;
+  need_usd: number;
+  spent_usd: number;
+  budget_usd: number;
+  short_usd: number;
+}
+
+export interface EstimateLine {
+  stage: string;
+  label: string;
+  model: string;
+  model_label: string;
+  local: boolean;
+  steps: number;
+  todo: number;
+  cost_usd: number;
+  gpu_seconds: number;
+  paid_seconds: number;
+  waste_seconds: number;
+}
+
+/** What a board or render would cost now: cached steps are free, local ones cost GPU time. */
+export interface Estimate {
+  kind: "board" | "render";
+  lines: EstimateLine[];
+  total_usd: number;
+  gpu_seconds: number;
+  waste_seconds: number;
+  /** Scene lengths come from recorded narration, not from the words. */
+  measured: boolean;
+  price_date: string | null;
+  budget_usd?: number;
+  spent_usd?: number;
+  short_usd?: number;
+}
+
+export interface Budget {
+  usd: number;
+  /** The story has no budget of its own and follows Settings. */
+  default: boolean;
+  spent_usd: number;
+}
+
 export interface Job {
   id: string;
   story_id: string;
@@ -96,9 +141,12 @@ export interface Job {
   params: Record<string, unknown>;
   progress: Progress;
   result:
-    | (Partial<FilmResult> & WriterResult & { version?: number; cast?: string | null; keyframes?: string[] })
+    | (Partial<FilmResult> &
+        WriterResult & { version?: number; cast?: string | null; keyframes?: string[]; budget?: BudgetStop })
     | null;
   error: string | null;
+  /** The estimate shown before the job ran. */
+  estimate: Estimate | null;
   created_at: string | null;
   started_at: string | null;
   finished_at: string | null;
@@ -120,6 +168,7 @@ export interface StoryListItem extends StoryMeta {
   film: FilmResult | null;
   film_version: number | null;
   poster: string | null;
+  spent_usd: number;
 }
 
 export interface BoardScene {
@@ -146,6 +195,7 @@ export interface StoryDetail {
   versions: { version: number; note: string; created_at: string }[];
   film: Job | null;
   writer: StoryWriter | null;
+  budget: Budget;
 }
 
 /** Who wrote a story, and what writing and rewriting it has cost, failed attempts included. */
@@ -338,6 +388,9 @@ export const api = {
     call<{ version: number; job: Job }>("POST", `/api/stories/${id}/scenes/${n}/reroll`),
   rerollCast: (id: string) => call<{ version: number; job: Job }>("POST", `/api/stories/${id}/cast/reroll`),
   run: (id: string, kind: "cast" | "board" | "render") => call<Job>("POST", `/api/stories/${id}/${kind}`),
+  estimate: (id: string, kind: "board" | "render") =>
+    call<Estimate>("GET", `/api/stories/${id}/estimate?kind=${kind}`),
+  setBudget: (id: string, usd: number | null) => call<Budget>("PUT", `/api/stories/${id}/budget`, { usd }),
   job: (id: string) => call<Job>("GET", `/api/jobs/${id}`),
   cancel: (id: string) => call<{ cancelled: boolean }>("POST", `/api/jobs/${id}/cancel`),
   providers: () => call<Provider[]>("GET", "/api/providers"),
@@ -385,6 +438,11 @@ export function fmtUsd(usd: number | null | undefined): string {
   if (usd === 0) return "free";
   if (usd < 0.01) return `$${usd.toFixed(usd < 0.001 ? 4 : 3)}`;
   return `$${usd.toFixed(2)}`;
+}
+
+/** A button's label with what pressing it costs, when it costs money. */
+export function withPrice(label: string, usd: number | undefined): string {
+  return usd ? `${label} · ${fmtUsd(usd)}` : label;
 }
 
 export function fmtSeconds(s: number | null | undefined): string {

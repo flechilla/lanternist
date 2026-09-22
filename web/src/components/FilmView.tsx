@@ -1,20 +1,23 @@
-import { asset, fmtSeconds, isActive, type Job, type StoryDetail } from "../api";
+import { asset, fmtSeconds, isActive, withPrice, type Job, type StoryDetail } from "../api";
 import { Log, Stages } from "./JobProgress";
 
 interface Props {
   detail: StoryDetail;
   jobs: Job[];
   busy: boolean;
+  /** What rendering again would cost now. */
+  renderUsd: number | undefined;
   onRender: () => void;
   onCancel: (job: Job) => void;
 }
 
-export default function FilmView({ detail, jobs, busy, onRender, onCancel }: Props) {
+export default function FilmView({ detail, jobs, busy, renderUsd, onRender, onCancel }: Props) {
   const renders = jobs.filter((j) => j.kind === "render");
   const running = renders.find(isActive);
   const film = renders.find((j) => j.status === "done" && j.result?.film) ?? detail.film;
   const lastFinished = renders.find((j) => !isActive(j));
-  const failed = lastFinished?.status === "failed" ? lastFinished : undefined;
+  // A budget stop is shown at the top of the story, with the way to carry on.
+  const failed = lastFinished?.status === "failed" && !lastFinished.result?.budget ? lastFinished : undefined;
   const result = film?.result;
   const name = detail.story.slug || "film";
 
@@ -72,7 +75,7 @@ export default function FilmView({ detail, jobs, busy, onRender, onCancel }: Pro
             )}
             <span className="spacer" />
             <button className="small" onClick={onRender} disabled={busy || !!running}>
-              Render again
+              {withPrice("Render again", renderUsd)}
             </button>
           </div>
           <p className="note" style={{ marginTop: 10 }}>
@@ -91,7 +94,7 @@ export default function FilmView({ detail, jobs, busy, onRender, onCancel }: Pro
             each scene's ambience.
           </p>
           <button className="primary" onClick={onRender} disabled={busy}>
-            Approve and render
+            {withPrice("Approve and render", renderUsd)}
           </button>
         </section>
       ) : null}

@@ -329,6 +329,32 @@ class Database:
         with self.session() as s:
             return int(s.scalar(q))
 
+    def spend_by_story(self) -> dict[str, int]:
+        """What each story has cost so far, in one query, for the library."""
+        q = (
+            select(StepRun.story_id, func.coalesce(func.sum(StepRun.cost_micros), 0))
+            .where(StepRun.story_id.is_not(None))
+            .group_by(StepRun.story_id)
+        )
+        with self.session() as s:
+            return {sid: int(total) for sid, total in s.execute(q) if sid}
+
+    def budget_micros(self, story_id: str, default_usd: float) -> int:
+        """The story's own budget, or the default from Settings when it has none."""
+        story = self.get_story(story_id)
+        if story is not None and story.budget_micros is not None:
+            return story.budget_micros
+        return to_micros(str(default_usd))
+
+    def set_budget(self, story_id: str, micros: int | None) -> Story | None:
+        """Set a story's budget; None goes back to the default. None if there's no such story."""
+        with self.session() as s:
+            story = s.get(Story, story_id)
+            if story is not None:
+                story.budget_micros = micros
+                s.commit()
+            return story
+
     def writer_tokens_per_minute(self) -> dict[str, dict]:
         """For each writer model: average tokens in and out per minute of story, over finished write jobs."""
         q = (

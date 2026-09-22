@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { api, errorMessage, type Provider, type ProviderName } from "../api";
+import {
+  api,
+  errorMessage,
+  type MediaCatalog,
+  type Provider,
+  type ProviderName,
+  type SettingRow,
+} from "../api";
+import ModelPicker from "../components/ModelPicker";
 import { useAction } from "../hooks";
 
 const ABOUT: Record<ProviderName, { what: string; keys: string; tip: string }> = {
@@ -108,6 +116,83 @@ function ProviderCard({ p, onChange }: { p: Provider; onChange: (p?: Provider) =
   );
 }
 
+/** A saved setting as text: model ids are strings and the budget a number. */
+function text(rows: SettingRow[] | null, key: string): string {
+  const v = rows?.find((r) => r.key === key)?.value;
+  return typeof v === "string" || typeof v === "number" ? String(v) : "";
+}
+
+function Defaults() {
+  const [rows, setRows] = useState<SettingRow[] | null>(null);
+  const [pictures, setPictures] = useState<MediaCatalog | null>(null);
+  const [budget, setBudget] = useState("");
+  const { busy, error, setError, run } = useAction();
+
+  const loadPictures = useCallback(
+    () => api.models("image.keyframe").then(setPictures, (e: unknown) => setError(errorMessage(e))),
+    [setError],
+  );
+  useEffect(() => {
+    api.settings().then(
+      (r) => {
+        setRows(r);
+        setBudget(text(r, "defaults.budget_usd"));
+      },
+      (e: unknown) => setError(errorMessage(e)),
+    );
+    void loadPictures();
+  }, [loadPictures, setError]);
+
+  const save = (changes: Record<string, unknown>) =>
+    run(async () => {
+      setRows(await api.saveSettings(changes));
+      await loadPictures();
+    });
+
+  return (
+    <section className="panel stack" aria-labelledby="defaults-title">
+      <h2 id="defaults-title">Defaults for every story</h2>
+      <p className="muted">A story uses these unless it picks its own on the Board step.</p>
+      <ModelPicker
+        label="Pictures"
+        catalog={pictures}
+        error={error}
+        value={text(rows, "defaults.image")}
+        allowDefault={false}
+        disabled={busy}
+        onChange={(image) => void save({ "defaults.image": image })}
+      />
+      <form
+        className="key-form"
+        onSubmit={(e: FormEvent) => {
+          e.preventDefault();
+          void save({ "defaults.budget_usd": Number(budget) });
+        }}
+      >
+        <label className="field" htmlFor="default-budget">
+          Budget per story, in dollars
+          <small>
+            A remote stage that would take a story past it stops before it spends anything. A story can have
+            its own.
+          </small>
+        </label>
+        <input
+          id="default-budget"
+          type="number"
+          min={0}
+          step={0.5}
+          value={budget}
+          onChange={(e) => setBudget(e.target.value)}
+        />
+        <button type="submit" disabled={busy || budget === "" || Number(budget) < 0}>
+          Save budget
+        </button>
+      </form>
+      {error && <p className="error">{error}</p>}
+    </section>
+  );
+}
+
 export default function Settings() {
   const [providers, setProviders] = useState<Provider[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -128,8 +213,8 @@ export default function Settings() {
         <div>
           <h1>Settings</h1>
           <p>
-            Keys for remote models. Each key is kept on this machine and sent only to its own provider. Every
-            model on this machine keeps working without them, free.
+            Keys for remote models, and the defaults every story starts from. Each key is kept on this machine
+            and sent only to its own provider. Every model on this machine keeps working without them, free.
           </p>
         </div>
       </div>
@@ -140,6 +225,7 @@ export default function Settings() {
           {providers.map((p) => (
             <ProviderCard key={p.name} p={p} onChange={changed} />
           ))}
+          <Defaults />
         </div>
       )}
     </>

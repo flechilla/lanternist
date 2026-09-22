@@ -1,6 +1,6 @@
 # Lanternist M2: OpenRouter and fal.ai
 
-> **Status, 21 Sep 2026: Phases A and B are built and checked against the live APIs.** 91 tests pass offline, and your library is migrated to `0002` (backup in `~/Lanternist/backups/`). Both keys work. A first real video was made end to end: GPT Luna wrote the story and MiniMax H3 Max rendered the shot on fal, for $0.80 as estimated. Stories can now be written by any OpenRouter model with structured output, picked on New story; Claude Opus 5 wrote a Spanish story in the app for $0.21, as estimated. **22 Sep: Phase C is built offline** (the engine interface, and pictures on fal with five models, Nano Banana Pro, Seedream 5.0 Pro and FLUX.2 [max] among them); its live check is pending. Phases D–F are next.
+> **Status, 21 Sep 2026: Phases A and B are built and checked against the live APIs.** 91 tests pass offline, and your library is migrated to `0002` (backup in `~/Lanternist/backups/`). Both keys work. A first real video was made end to end: GPT Luna wrote the story and MiniMax H3 Max rendered the shot on fal, for $0.80 as estimated. Stories can now be written by any OpenRouter model with structured output, picked on New story; Claude Opus 5 wrote a Spanish story in the app for $0.21, as estimated. **22 Sep: Phases C and D are built offline**: the engine interface, pictures on fal with five models (Nano Banana Pro, Seedream 5.0 Pro and FLUX.2 [max] among them), and an estimate and a budget before anything is spent. Their live checks are pending. Phases E and F are next.
 >
 > This is the blueprint's M2 ("fal, registry, estimator, your own key") with one change: the writer calls OpenRouter directly instead of going through fal's `openrouter/router`. Going direct gives the real cost of every request, the full list of models, and one hop fewer.
 > API facts below were read from the OpenRouter and fal docs, the per-model `llms.txt` pages and the fal-client 1.0.3 source on 21 Sep 2026. Anything marked **verify** was not confirmed and gets checked in Phase A.
@@ -509,16 +509,21 @@ Each phase ends with something that runs end to end. Sizes assume one developer 
 - [x] A second board is all cache hits. Re-rolling one scene costs one image (`test_a_board_on_fal_draws_the_cast_first_and_uploads_it_once`, offline).
 - [x] The existing local stories re-render entirely from cache (the golden keys).
 
-### Phase D: estimate and budget (≈1.5 days)
+### Phase D: estimate and budget (≈1.5 days) · built 22 Sep 2026
 
 This phase comes before video on purpose: video is where the money goes.
-- [ ] `estimate.py` and `GET …/estimate`, with an `EstimateBox` before "Prepare board" and before "Render": lines per stage, the total, waste, price date, and GPU time for local steps.
-- [ ] Budget checks before remote stages. The "Raise budget and continue" flow. A default budget in Settings.
-- [ ] Cost so far on the story and in the Library.
+- [x] `estimate.py` and `GET …/estimate`, with an `EstimateBox` before "Prepare board" and before "Render": lines per stage, the total, waste, price date, and GPU time for local steps.
+  - It walks the same items the stages build (`Pipeline.narration_items`, `cast_item`, `keyframe_item`, `motion_items`), so it prices exactly the steps that would run.
+  - "Prepare board" and "Approve and render" carry their price on the button; so does each scene's redraw.
+  - Every board and render job keeps the estimate shown before it (`jobs.estimate`, in micro-dollars); the API shows every `*_micros` field as `*_usd`.
+- [x] Budget checks before remote stages. The "Raise budget and continue" flow. A default budget in Settings.
+  - The check runs in `Pipeline._stage` before a remote engine's batch: the story's spend so far plus that batch's estimate must fit. Otherwise the job fails with "needs $X more" and a structured `result.budget`, and the story page offers "Raise the budget to $Y and carry on" (the next half dollar that fits).
+  - Settings gained "Defaults for every story": the default picture model and the default budget. A story's own budget is set, or handed back to Settings, in the estimate box.
+- [x] Cost so far on the story and in the Library.
 
 **Exit:**
-- The estimate for a cached story is $0.
-- A render over budget stops before spending and continues from the cache once the budget is raised.
+- [x] The estimate for a cached story is $0.
+- [x] A render over budget stops before spending and continues from the cache once the budget is raised (tested offline, and checked by hand in the app in fake mode).
 
 ### Phase E: video on fal (≈3 days)
 

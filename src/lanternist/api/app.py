@@ -11,12 +11,13 @@ from pathlib import Path
 from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from .. import keys, llm, prefs
 from ..config import settings
-from ..db import Database, Job, Story, StoryVersion, to_usd
+from ..db import Database, Job, Story, StoryVersion, to_micros, to_usd
 from ..engines.catalog import catalog as media_catalog
+from ..estimate import Kind, estimate
 from ..jobs import Runner, is_terminal
 from ..pipeline import Pipeline
 from ..storyboard import Storyboard, slugify
@@ -53,12 +54,27 @@ def job_dict(j: Job) -> dict:
         "status": j.status,
         "params": j.params,
         "progress": j.progress,
-        "result": j.result,
+        "result": dollars(j.result),
         "error": j.error,
+        "estimate": dollars(j.estimate),
         "created_at": j.created_at.isoformat() if j.created_at else None,
         "started_at": j.started_at.isoformat() if j.started_at else None,
         "finished_at": j.finished_at.isoformat() if j.finished_at else None,
     }
+
+
+def dollars(obj):
+    """Money as the API shows it: every `*_micros` field becomes `*_usd`, in dollars."""
+    if isinstance(obj, dict):
+        return {
+            (k.removesuffix("_micros") + "_usd" if k.endswith("_micros") else k): (
+                to_usd(v) if k.endswith("_micros") else dollars(v)
+            )
+            for k, v in obj.items()
+        }
+    if isinstance(obj, list):
+        return [dollars(v) for v in obj]
+    return obj
 
 
 def story_dict(st: Story) -> dict:
@@ -81,8 +97,27 @@ def _get(story_id: str, version: int | None = None) -> tuple[Story, StoryVersion
             raise HTTPException(404, "story or version not found") from None
 
 
+def _pipeline(story_id: str | None = None) -> Pipeline:
+    return Pipeline(prefs.effective(cfg, db), db=db, story_id=story_id)
+
+
+def _quote(story_id: str, version: int | None, kind: Kind) -> dict:
+    """What a board or render of this version would cost now, in micro-dollars."""
+    _, row = _get(story_id, version)
+    try:
+        return estimate(_pipeline(story_id), Storyboard.model_validate(row.storyboard), kind)
+    except (FileNotFoundError, ValueError) as e:
+        raise HTTPException(422, str(e)) from None
+
+
 def _enqueue(story_id: str, kind: str, version: int | None, params: dict | None = None) -> dict:
-    return job_dict(runner.enqueue(story_id, kind, version, params))
+    quote = None
+    if kind in ("board", "render"):
+        try:
+            quote = _quote(story_id, version, "board" if kind == "board" else "render")
+        except HTTPException:
+            quote = None  # the job itself fails with the reason, where the user sees it
+    return job_dict(runner.enqueue(story_id, kind, version, params, estimate=quote))
 
 
 # ---------------------------------------------------------------------------------- meta
@@ -181,6 +216,7 @@ def options():
 def list_stories():
     with db.session() as s:
         stories = s.query(Story).order_by(Story.updated_at.desc()).all()
+        spent = db.spend_by_story()
         out = []
         for st in stories:
             film = (
@@ -206,6 +242,7 @@ def list_stories():
                     "film": film.result if film else None,
                     "film_version": film.version if film else None,
                     "poster": (drawn.result or {}).get("poster") if drawn else None,
+                    "spent_usd": to_usd(spent.get(st.id, 0)),
                 }
             )
         return out
@@ -260,7 +297,7 @@ def get_story(story_id: str, version: int | None = None):
     ]
     # Validated, so a storyboard saved before a field existed comes back with its default.
     sb = Storyboard.model_validate(row.storyboard) if row else None
-    board = Pipeline(prefs.effective(cfg, db), db=db).peek(sb) if sb else None
+    board = _pipeline(story_id).peek(sb) if sb else None
     films = [j for j in jobs if j["kind"] == "render" and j["status"] == "done"]
     return {
         "story": story_dict(st),
@@ -271,7 +308,34 @@ def get_story(story_id: str, version: int | None = None):
         "versions": versions,
         "film": films[0] if films else None,
         "writer": writer_dict(story_id, sb),
+        "budget": budget_dict(st),
     }
+
+
+def budget_dict(st: Story) -> dict:
+    """The story's budget (its own, or the default from Settings) and what it has spent."""
+    return {
+        "usd": to_usd(db.budget_micros(st.id, prefs.effective(cfg, db).defaults.budget_usd)),
+        "default": st.budget_micros is None,
+        "spent_usd": to_usd(db.spend_micros(story_id=st.id)),
+    }
+
+
+@app.get("/api/stories/{story_id}/estimate")
+def get_estimate(story_id: str, kind: Kind = "render", version: int | None = None):
+    return dollars(_quote(story_id, version, kind))
+
+
+class BudgetBody(BaseModel):
+    usd: float | None = Field(None, ge=0, description="None goes back to the default from Settings")
+
+
+@app.put("/api/stories/{story_id}/budget")
+def set_budget(story_id: str, body: BudgetBody):
+    st = db.set_budget(story_id, None if body.usd is None else to_micros(str(body.usd)))
+    if st is None:
+        raise HTTPException(404, "story not found")
+    return budget_dict(st)
 
 
 class SaveStory(BaseModel):

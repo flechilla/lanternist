@@ -4,11 +4,15 @@ import {
   chosenModel,
   fmtUsd,
   type BoardPeek,
+  type Budget,
+  type Estimate,
   type MediaCatalog,
   type Mode,
   type Models,
   type Storyboard,
+  withPrice,
 } from "../api";
+import EstimateBox from "./EstimateBox";
 import ModelPicker from "./ModelPicker";
 import Slide from "./Slide";
 
@@ -22,6 +26,10 @@ interface Props {
   dirty: boolean;
   pictures: MediaCatalog | null;
   catalogError: string | null;
+  estimates: { board: Estimate; render: Estimate } | null;
+  estimateError: string | null;
+  budget: Budget;
+  onBudget: (usd: number | null) => void;
   onMode: (n: number, mode: Mode) => void;
   onModels: (change: Partial<Models>, note: string) => void;
   onReroll: (n: number) => void;
@@ -91,10 +99,10 @@ export default function BoardView(p: Props) {
         <span className="summary">{summary}</span>
         <span className="spacer" />
         <button onClick={p.onBoard} disabled={p.busy || p.jobActive || (ready && !p.dirty)}>
-          {ready ? "Board is ready" : "Prepare board"}
+          {ready ? "Board is ready" : withPrice("Prepare board", p.estimates?.board.total_usd)}
         </button>
         <button className="primary" onClick={p.onRender} disabled={p.busy || p.jobActive}>
-          Approve and render
+          {withPrice("Approve and render", p.estimates?.render.total_usd)}
         </button>
       </div>
       {!p.board.voice_ok && (
@@ -119,6 +127,13 @@ export default function BoardView(p: Props) {
           }
         />
       </section>
+      <EstimateBox
+        estimate={p.estimates?.render ?? null}
+        error={p.estimateError}
+        budget={p.budget}
+        busy={p.busy}
+        onBudget={p.onBudget}
+      />
       <audio ref={audio} hidden />
       <div className="board">
         {scenes.map(({ s, peek, keyframe }) => (

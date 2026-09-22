@@ -7,9 +7,11 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from lanternist import config
+from lanternist import config, providers
 from lanternist.config import Paths, Settings
 from lanternist.db import Database
+from lanternist.providers.fake import FakeWorld
+from lanternist.storyboard import CastMember, Line, Scene, Storyboard
 
 
 @pytest.fixture(autouse=True)
@@ -43,6 +45,45 @@ def voices(tmp_path):
 @pytest.fixture
 def cfg(tmp_path) -> Settings:
     return Settings(paths=Paths(library=tmp_path / "lib"))
+
+
+@pytest.fixture
+def fake_cfg(tmp_path, voices) -> Settings:
+    """Fake engines on the test's own library, so boards and renders run end to end in seconds."""
+    return Settings(paths=Paths(library=tmp_path / "lib", voices=[voices]), fake_engines=True)
+
+
+@pytest.fixture
+def fakes(fake_cfg) -> FakeWorld:
+    """The fake fal, OpenRouter and Ollama that fake mode talks to, to steer and inspect."""
+    providers.transport(fake_cfg)
+    world = providers.fake_world()
+    assert world is not None
+    return world
+
+
+@pytest.fixture
+def make_story():
+    """A small storyboard: one scene per mode given, each showing one character and saying a few words."""
+
+    def make(modes=("still", "video", "still"), **kw) -> Storyboard:
+        return Storyboard(
+            title="Test",
+            cast=[CastMember(id="a", name="Ann", look="girl in a red coat")],
+            scenes=[
+                Scene(
+                    n=i,
+                    narration=[Line(text=f"Scene {i} has a few words to say out loud here.")],
+                    visual=f"picture {i}",
+                    cast=["a"],
+                    mode=m,
+                )
+                for i, m in enumerate(modes, 1)
+            ],
+            **kw,
+        )
+
+    return make
 
 
 @pytest.fixture

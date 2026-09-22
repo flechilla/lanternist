@@ -9,7 +9,6 @@ from lanternist.engines.base import Item, keyframe_size
 from lanternist.engines.fal_image import FalImage, aspect_ratio
 from lanternist.engines.local import LocalQwenTts
 from lanternist.pipeline import Board, Narration, Pipeline
-from lanternist.providers.fake import FakeWorld
 from lanternist.providers.fal import FalError
 from lanternist.storyboard import CastMember, Line, Scene, Storyboard
 from lanternist.voices import Voice
@@ -53,7 +52,7 @@ def test_local_step_keys_are_unchanged(tmp_path):
         Voice("demo", tmp_path / "demo.wav", "Hola", "ab" * 32),
         "es",
     )
-    assert [it.key for it in p._narration_items(sb, tts)] == [
+    assert [it.key for it in p.narration_items(sb, tts)] == [
         "59f230d6dc6a815aa547a50b0152fdf0583f1fd42790880f875dc539e7c575d5",
         "5d6261e2357fade810d7545bf509d88d43007013051df741f9323fe6e60719b4",
     ]
@@ -77,7 +76,7 @@ def test_local_step_keys_are_unchanged(tmp_path):
         tl,
     )
     sb.scenes[1].mode = "video"
-    assert [it.key for it in p._motion_items(sb, board, p.video())] == [
+    assert [it.key for it in p.motion_items(sb, board.timeline, list(board.keyframes), p.video())] == [
         "1219dfec2dc822a08708f82898540b2e8b23198b36bb6a28d27508962f575d5a",
         "6e1cc8dd8a3011f1f7483191002cbfb8fd898d157ecf4a7921d1673aee25535b",
     ]
@@ -200,54 +199,40 @@ def test_a_launch_price_ends_on_its_date():
 
 
 # ------------------------------------------------------------------------------------ fal board, end to end
-@pytest.fixture
-def fal_cfg(tmp_path, voices):
-    return Settings(paths=Paths(library=tmp_path / "lib", voices=[voices]), fake_engines=True)
-
-
-@pytest.fixture
-def world(monkeypatch) -> FakeWorld:
-    from lanternist import providers
-
-    w = FakeWorld()
-    monkeypatch.setattr(providers, "_fake", w)
-    return w
-
-
-async def test_a_board_on_fal_draws_the_cast_first_and_uploads_it_once(fal_cfg, db, world):
+async def test_a_board_on_fal_draws_the_cast_first_and_uploads_it_once(fake_cfg, db, fakes):
     sb = golden()
     sb.models.image = "fal/flux-2-klein-9b"
     events = []
-    p = Pipeline(fal_cfg, events.append, db=db, story_id=None)
+    p = Pipeline(fake_cfg, events.append, db=db, story_id=None)
     cast, keyframes = await p.draw(sb)
-    reqs = [world.fal.requests[r] for r in world.fal.submits]
+    reqs = [fakes.fal.requests[r] for r in fakes.fal.submits]
     assert [r.endpoint for r in reqs] == ["fal-ai/flux-2/klein/9b"] + ["fal-ai/flux-2/klein/9b/edit"] * 2
-    assert len(world.fal.uploads) == 1  # every keyframe shares one upload of the cast sheet
-    assert all(r.arguments["image_urls"] == world.fal.uploads for r in reqs[1:])
+    assert len(fakes.fal.uploads) == 1  # every keyframe shares one upload of the cast sheet
+    assert all(r.arguments["image_urls"] == fakes.fal.uploads for r in reqs[1:])
     assert cast and len(keyframes) == 2
     assert any(e.stage == "cast" and e.status == "done" and e.asset == cast for e in events)
     assert any("generating at fal" in e.message for e in events if e.status == "progress")
 
     # A second board is all cache hits; a re-roll asks for one picture.
-    world.fal.submits.clear()
+    fakes.fal.submits.clear()
     assert await p.draw(sb) == (cast, keyframes)
     sb.scenes[1].seed = 99
     await p.draw(sb)
-    assert len(world.fal.submits) == 1
+    assert len(fakes.fal.submits) == 1
 
 
-async def test_a_blanked_picture_is_an_error_not_a_black_frame(fal_cfg, db, world, monkeypatch):
+async def test_a_blanked_picture_is_an_error_not_a_black_frame(fake_cfg, db, fakes, monkeypatch):
     sb = golden()
     sb.models.image = "fal/flux-2-klein-9b"
-    real = world.fal._make
+    real = fakes.fal._make
 
     async def nsfw(req):
         await real(req)
         req.output["has_nsfw_concepts"] = [True]
 
-    monkeypatch.setattr(world.fal, "_make", nsfw)
+    monkeypatch.setattr(fakes.fal, "_make", nsfw)
     with pytest.raises(FalError, match="safety check blanked the cast sheet"):
-        await Pipeline(fal_cfg, db=db).draw(sb)
+        await Pipeline(fake_cfg, db=db).draw(sb)
 
 
 def test_the_picture_catalog_prices_every_model(cfg):

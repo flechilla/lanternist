@@ -42,6 +42,7 @@ user's models and takes the GPU for minutes). Neither runs by default.
 | `providers/` | OpenRouter and fal clients, and in-process fakes of both |
 | `registry/` | Every model the app offers, with limits and prices (TOML) |
 | `db.py`, `migrations/` | SQLite through SQLAlchemy; Alembic migrations |
+| `estimate.py` | What a board or render would cost, before it runs; the budget check uses the same prices |
 | `jobs.py` | The in-process job queue and progress snapshots |
 | `api/app.py` | FastAPI: REST, SSE progress, the built web app |
 | `keys.py`, `prefs.py`, `config.py` | API keys; settings saved in the app; `lanternist.toml` |
@@ -80,7 +81,7 @@ sends it; the frontend doesn't hard-code it.
 | Languages | `text.LANGUAGES` | `/api/options` |
 | Styles, audiences, kinds | `writer.py` | `/api/options` |
 | Story length: words per minute and per scene | `writer.WPM`, `Brief.target_words`, `Brief.scenes` | the writer |
-| Stage names and labels | `jobs.LABELS` | progress snapshots |
+| Stage names and labels | `pipeline.LABELS` | progress snapshots, the estimate, budget messages |
 | Models, limits, prices | `registry/*.toml` | pickers, estimator, doctor, adapters |
 | Config defaults | `config.py` | documented in `lanternist.example.toml` (keep it in step) |
 | Settings the app may change | `prefs.EDITABLE` | Settings page |

@@ -39,6 +39,44 @@ log = logging.getLogger(__name__)
 
 CLIP = "clip@1"
 MIX = "mix@1"
+LABELS = {
+    "write": "Writing",
+    "narration": "Narration",
+    "cast": "Cast sheet",
+    "keyframes": "Pictures",
+    "motion": "Animation",
+    "clips": "Scene clips",
+    "mix": "Final mix",
+}
+
+
+class BudgetExceeded(RuntimeError):
+    """A remote stage would take the story past its budget. Nothing was spent on it; what the story
+    made before is cached, so raising the budget carries on from there."""
+
+    def __init__(self, stage: str, need_micros: int, spent_micros: int, budget_micros: int):
+        self.stage, self.need, self.spent, self.budget = stage, need_micros, spent_micros, budget_micros
+        self.short = spent_micros + need_micros - budget_micros
+        super().__init__(
+            f"{LABELS.get(stage, stage)} would cost about {usd(need_micros)}, and this story has "
+            f"{usd(max(budget_micros - spent_micros, 0))} of its {usd(budget_micros)} budget left: it needs "
+            f"{usd(self.short)} more. Raise the story's budget and run it again; nothing made so far is lost."
+        )
+
+    def info(self) -> dict:
+        return {
+            "stage": self.stage,
+            "need_micros": self.need,
+            "spent_micros": self.spent,
+            "budget_micros": self.budget,
+            "short_micros": self.short,
+        }
+
+
+def usd(micros: int) -> str:
+    """Dollars for a message: cents, or a tenth of a cent below a cent."""
+    dollars = micros / 1_000_000
+    return f"${dollars:.3f}" if 0 < dollars < 0.01 else f"${dollars:.2f}"
 
 
 @dataclass
@@ -99,12 +137,14 @@ class Pipeline:
         story_id: str | None = None,
         job_id: str | None = None,
         user_cancelled: Callable[[], bool] = lambda: False,
+        budget_micros: int | None = None,
     ):
         self.cfg = cfg
         self.store = Store(cfg.library)
         self._emit = emit or (lambda e: None)
         self.db, self.story_id, self.job_id = db, story_id, job_id
         self.user_cancelled = user_cancelled
+        self.budget_micros = budget_micros  # the story's; None checks nothing (the CLI)
 
     def emit(self, stage: str, status: str, **kw) -> None:
         self._emit(Event(stage, status, **kw))
@@ -133,7 +173,7 @@ class Pipeline:
         Returns every item's step record, by item id."""
         records: dict[str, dict] = {}
         for it in items:
-            if it.key and (rec := self.store.get_step(it.key)):
+            if rec := self.cached(it):
                 records[it.id] = rec
         pending = [it for it in items if it.id not in records]
         total = len(items)
@@ -173,13 +213,23 @@ class Pipeline:
             if bind:
                 ctx.bind = lambda it: bind(it, records)
             try:
-                if maker.remote and self.db is not None:
-                    await registry.ensure_synced(self.cfg, self.db)
+                if isinstance(maker, Engine) and maker.remote:
+                    self._check_budget(stage, maker.estimate(pending).micros)
+                    if self.db is not None:
+                        await registry.ensure_synced(self.cfg, self.db)
                 await maker.run(pending, ctx, on_item)
             finally:
                 shutil.rmtree(work, ignore_errors=True)
         self.emit(stage, "finish", done=total, total=total)
         return records
+
+    def _check_budget(self, stage: str, need: int) -> None:
+        """Stop before a remote stage that would take the story past its budget."""
+        if self.budget_micros is None or self.db is None or self.story_id is None:
+            return
+        spent = self.db.spend_micros(story_id=self.story_id)
+        if spent + need > self.budget_micros:
+            raise BudgetExceeded(stage, need, spent, self.budget_micros)
 
     def _log_local(self, maker: Maker, stage: str, it: Item, out: Output) -> None:
         """A step_runs row for each step a local model made: what it cost is GPU time, not money."""
@@ -200,7 +250,7 @@ class Pipeline:
         )
 
     # ---------------------------------------------------------------- narration
-    def _narration_items(self, sb: Storyboard, eng: TtsEngine) -> list[Item]:
+    def narration_items(self, sb: Storyboard, eng: TtsEngine) -> list[Item]:
         items = []
         for sc in sb.scenes:
             chunks = eng.chunks(sc.text)
@@ -222,7 +272,7 @@ class Pipeline:
                 f"narration language '{sb.language}' is not supported by {eng.entry.label} "
                 f"(supported: {', '.join(languages)})"
             )
-        items = self._narration_items(sb, eng)
+        items = self.narration_items(sb, eng)
         records = await self._stage("narration", eng, items, "audio")
         return [_narration(records[it.id]) for it in items]
 
@@ -239,7 +289,7 @@ class Pipeline:
             refs=[cast] if cast else [],
         )
 
-    def _keyframe_item(self, eng: Engine, sb: Storyboard, sc: Scene, cast: str | None, after: bool) -> Item:
+    def keyframe_item(self, eng: Engine, sb: Storyboard, sc: Scene, cast: str | None, after: bool) -> Item:
         p, seed = prompts.keyframe(sb, sc), sb.scene_seed(sc)
         w, h = keyframe_size(self.cfg)
         params = {"prompt": p, "seed": seed, "width": w, "height": h, "refs": [cast] if cast else []}
@@ -247,26 +297,33 @@ class Pipeline:
             return Item(_sid(sc), None, sc.n, params, after="cast")
         return Item(_sid(sc), self._keyframe_key(eng, p, seed, cast), sc.n, params)
 
+    def cast_item(self, eng: Engine, sb: Storyboard) -> Item | None:
+        prompt = prompts.cast_sheet(sb)
+        if not prompt:
+            return None
+        w, h = CAST_SIZE
+        params = {"prompt": prompt, "seed": sb.seed, "width": w, "height": h, "refs": []}
+        return Item("cast", self._cast_key(eng, sb, prompt), None, params, stage="cast")
+
+    def cached(self, it: Item) -> dict | None:
+        """The item's step record if the cache holds it; an item without a key yet is never cached."""
+        return self.store.get_step(it.key) if it.key else None
+
     async def draw(self, sb: Storyboard, cast_only: bool = False) -> tuple[str | None, list[str]]:
         """Cast sheet, then one keyframe per scene with the cast sheet as reference, as one batch."""
         eng = self.image(sb)
-        cast_prompt = prompts.cast_sheet(sb)
         cast: str | None = None
         items: list[Item] = []
-        if cast_prompt:
-            key = self._cast_key(eng, sb, cast_prompt)
-            rec = self.store.get_step(key)
-            if rec:
+        if cast_item := self.cast_item(eng, sb):
+            if rec := self.cached(cast_item):
                 cast = rec["assets"]["image"]
                 self.emit("cast", "cached", asset=cast)
             else:
-                w, h = CAST_SIZE
-                params = {"prompt": cast_prompt, "seed": sb.seed, "width": w, "height": h, "refs": []}
-                items.append(Item("cast", key, None, params, stage="cast"))
+                items.append(cast_item)
         redraw = bool(items)
         if not cast_only:
             # Keyframes drawn after a new cast sheet key on it, so none of them can be a cache hit yet.
-            items += [self._keyframe_item(eng, sb, sc, cast, after=redraw) for sc in sb.scenes]
+            items += [self.keyframe_item(eng, sb, sc, cast, after=redraw) for sc in sb.scenes]
 
         def bind(it: Item, records: dict[str, dict]) -> None:
             new_cast = records["cast"]["assets"]["image"]
@@ -279,27 +336,29 @@ class Pipeline:
         return cast, [] if cast_only else [records[_sid(sc)]["assets"]["image"] for sc in sb.scenes]
 
     # ---------------------------------------------------------------- board
-    def timeline(self, narration: list[Narration]) -> timing.Timeline:
+    def timeline(self, durations: list[float]) -> timing.Timeline:
         r = self.cfg.render
-        return timing.timeline([n.duration for n in narration], r.gap, r.lead_in, r.tail, r.xfade)
+        return timing.timeline(durations, r.gap, r.lead_in, r.tail, r.xfade)
 
     async def board(self, sb: Storyboard) -> Board:
         narration = await self.narrate(sb)
         cast, keyframes = await self.draw(sb)
-        return Board(narration, cast, keyframes, self.timeline(narration))
+        return Board(narration, cast, keyframes, self.timeline([n.duration for n in narration]))
 
     # ---------------------------------------------------------------- motion
-    def _motion_items(self, sb: Storyboard, board: Board, eng: VideoEngine) -> list[Item]:
+    def motion_items(
+        self, sb: Storyboard, tl: timing.Timeline, keyframes: list[str | None], eng: VideoEngine
+    ) -> list[Item]:
+        """One item per video scene. Without its keyframe (the estimate, before the board) it has no key."""
         items = []
         for i, sc in enumerate(sb.scenes):
             if sc.mode != "video":
                 continue
             prompt, seed = prompts.video(sb, sc), sb.scene_seed(sc)
-            shots = eng.shots(board.timeline.clip_length(i))
-            inputs = {"prompt": prompt, "seed": seed, "keyframe": board.keyframes[i]}
-            items.append(
-                Item(_sid(sc), eng.key("motion", shots=shots, **inputs), sc.n, {"shots": shots, **inputs})
-            )
+            shots = eng.shots(tl.clip_length(i))
+            inputs = {"prompt": prompt, "seed": seed, "keyframe": keyframes[i]}
+            key = eng.key("motion", shots=shots, **inputs) if keyframes[i] else None
+            items.append(Item(_sid(sc), key, sc.n, {"shots": shots, **inputs}))
         return items
 
     async def motion(self, sb: Storyboard, board: Board) -> dict[int, str]:
@@ -307,7 +366,7 @@ class Pipeline:
         if not any(sc.mode == "video" for sc in sb.scenes):
             return {}
         eng = self.video()
-        items = self._motion_items(sb, board, eng)
+        items = self.motion_items(sb, board.timeline, list(board.keyframes), eng)
         records = await self._stage("motion", eng, items, "video")
         return {it.scene: records[it.id]["assets"]["video"] for it in items if it.scene is not None}
 
@@ -383,32 +442,28 @@ class Pipeline:
         except FileNotFoundError:
             tts, out["voice_ok"] = None, False
         narration = []
-        for it, row in zip(self._narration_items(sb, tts) if tts else [], scenes, strict=False):
-            rec = self.store.get_step(it.key) if it.key else None
-            if rec:
+        for it, row in zip(self.narration_items(sb, tts) if tts else [], scenes, strict=False):
+            if rec := self.cached(it):
                 row["audio"], row["duration"] = rec["assets"]["audio"], rec["meta"]["duration"]
                 narration.append(_narration(rec))
         try:
             img = self.image(sb)
         except ValueError:  # the story's picture model left the registry: nothing of it is cached
             return out
-        cast_prompt = prompts.cast_sheet(sb)
-        if cast_prompt:
-            rec = self.store.get_step(self._cast_key(img, sb, cast_prompt))
-            out["cast"] = rec["assets"]["image"] if rec else None
-        if out["cast"] or not cast_prompt:
+        cast_item = self.cast_item(img, sb)
+        if cast_item and (rec := self.cached(cast_item)):
+            out["cast"] = rec["assets"]["image"]
+        if out["cast"] or not cast_item:
             for sc, row in zip(sb.scenes, scenes, strict=True):
-                it = self._keyframe_item(img, sb, sc, out["cast"], after=False)
-                rec = self.store.get_step(it.key) if it.key else None
+                rec = self.cached(self.keyframe_item(img, sb, sc, out["cast"], after=False))
                 row["keyframe"] = rec["assets"]["image"] if rec else None
         if len(narration) == len(sb.scenes):
-            tl = self.timeline(narration)
+            tl = self.timeline([n.duration for n in narration])
             out["total"] = round(tl.total, 2)
-            if all(r["keyframe"] for r in scenes) and any(sc.mode == "video" for sc in sb.scenes):
-                board = Board(narration, out["cast"], [r["keyframe"] for r in scenes], tl)
+            if any(sc.mode == "video" for sc in sb.scenes):
                 by_scene = {row["n"]: row for row in scenes}
-                for it in self._motion_items(sb, board, self.video()):
-                    rec = self.store.get_step(it.key) if it.key else None
+                for it in self.motion_items(sb, tl, [r["keyframe"] for r in scenes], self.video()):
+                    rec = self.cached(it)
                     by_scene[it.scene]["motion"] = rec["assets"]["video"] if rec else None
         return out
 

@@ -30,6 +30,7 @@ export default function ModelPicker({
   value,
   quality,
   disabled,
+  allowDefault = true,
   onChange,
 }: {
   label: string;
@@ -37,12 +38,15 @@ export default function ModelPicker({
   error: string | null;
   /** The story's choice; empty means the default from Settings. */
   value: string;
-  quality: string | null;
+  /** The chosen quality; leave it out where there's no quality to choose (Settings). */
+  quality?: string | null;
   disabled?: boolean;
+  /** Offer "the default" as a choice: yes for a story, no in Settings, where the default is chosen. */
+  allowDefault?: boolean;
   onChange: (model: string, quality: string | null) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const { model, qualityId, price } = chosenModel(catalog, value, quality);
+  const { model, qualityId, price } = chosenModel(catalog, value, quality ?? null);
   const models = (catalog?.models ?? []).filter((m) => m.status !== "deprecated" || m.id === model?.id);
   const local = models.filter((m) => m.local);
   const remote = models.filter((m) => !m.local);
@@ -61,7 +65,7 @@ export default function ModelPicker({
         <div className="what">
           <b>
             {model?.label ?? (value || "…")}
-            {!value && model ? " (the default)" : ""}
+            {allowDefault && !value && model ? " (the default)" : ""}
           </b>
           <small>{model ? priceOf(price, model.per) : (error ?? "Loading the models…")}</small>
         </div>
@@ -75,7 +79,7 @@ export default function ModelPicker({
           {open ? "Close" : "Change"}
         </button>
       </div>
-      {model?.quality && (
+      {model?.quality && quality !== undefined && (
         <div className="segmented" role="group" aria-label={`${label}: quality`}>
           {model.quality.options.map((o) => (
             <button
@@ -95,7 +99,7 @@ export default function ModelPicker({
       {open && catalog && (
         <div className="pick-menu">
           <div className="pick-list">
-            {byDefault && (
+            {allowDefault && byDefault && (
               <button type="button" className="pick-row" aria-pressed={!value} onClick={() => pick("")}>
                 <b>The default: {byDefault.label}</b>
                 <small>Follows what Settings says for every story.</small>

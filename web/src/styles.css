@@ -1206,3 +1206,55 @@ details > summary {
 .models .segmented {
   justify-self: start;
 }
+
+/* what a board or render costs, stage by stage */
+.estimate {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.estimate h2 {
+  margin: 0;
+}
+.estimate dl {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+.estimate dl > div {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: baseline;
+}
+.estimate dt {
+  font-weight: 650;
+  color: var(--ink);
+}
+.estimate dd {
+  margin: 0;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.estimate dd.cost {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.estimate .total {
+  border-top: 1px solid var(--rule);
+  padding-top: 6px;
+}
+.estimate .total .cost {
+  font-weight: 700;
+  color: var(--lamp-ink);
+}
+@media (max-width: 600px) {
+  .estimate dl > div {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .estimate dd:not(.cost) {
+    grid-column: 1 / -1;
+    order: 3;
+  }
+}

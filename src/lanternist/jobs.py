@@ -18,20 +18,10 @@ from .config import Settings
 from .db import TERMINAL, Database, Job, now
 from .keys import redact
 from .llm import Calls
-from .pipeline import Event, Pipeline
+from .pipeline import LABELS, BudgetExceeded, Event, Pipeline
 from .storyboard import Storyboard
 
 log = logging.getLogger(__name__)
-
-LABELS = {
-    "write": "Writing",
-    "narration": "Narration",
-    "cast": "Cast sheet",
-    "keyframes": "Pictures",
-    "motion": "Animation",
-    "clips": "Scene clips",
-    "mix": "Final mix",
-}
 
 
 def describe(e: Event) -> str:
@@ -127,9 +117,23 @@ class Runner:
         if self._loop:
             self._loop.cancel()
 
-    def enqueue(self, story_id: str, kind: str, version: int | None, params: dict | None = None) -> Job:
+    def enqueue(
+        self,
+        story_id: str,
+        kind: str,
+        version: int | None,
+        params: dict | None = None,
+        estimate: dict | None = None,
+    ) -> Job:
         with self.db.session() as s:
-            job = Job(story_id=story_id, kind=kind, version=version, params=params or {}, progress={})
+            job = Job(
+                story_id=story_id,
+                kind=kind,
+                version=version,
+                params=params or {},
+                progress={},
+                estimate=estimate,
+            )
             s.add(job)
             s.commit()
         self.wake.set()
@@ -175,6 +179,9 @@ class Runner:
                 status = "queued"  # the server is shutting down: run it again on the next start
                 raise
             status = "cancelled"
+        except BudgetExceeded as e:  # not a crash: the UI offers to raise the budget and carry on
+            status, result, error = "failed", {"budget": e.info()}, str(e)
+            progress.note(f"stopped before spending: {e}")
         except Exception as e:  # a failed job must not stop the queue
             log.exception("job %s failed", job_id)
             status, error = "failed", redact(f"{e}\n\n{traceback.format_exc()[-3000:]}")
@@ -204,6 +211,7 @@ class Runner:
             story_id=job.story_id,
             job_id=job.id,
             user_cancelled=lambda: self.user_cancelled(job.id),
+            budget_micros=self.db.budget_micros(job.story_id, cfg.defaults.budget_usd),
         )
         calls = Calls(self.db, story_id=job.story_id, job_id=job.id)
         if job.kind == "write":
