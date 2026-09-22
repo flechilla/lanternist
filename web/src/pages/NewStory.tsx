@@ -1,8 +1,10 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, errorMessage, STYLE_NAMES, type Brief, type WriterCatalog } from "../api";
+import LanguageSelect from "../components/LanguageSelect";
+import VoicePicker from "../components/VoicePicker";
 import WriterPicker from "../components/WriterPicker";
-import { useAction, useOptions } from "../hooks";
+import { useAction, useOptions, useVoiceCatalog } from "../hooks";
 
 const MODES: { id: Brief["mode"]; name: string; hint: string }[] = [
   {
@@ -51,9 +53,13 @@ export default function NewStory() {
   }, []);
   const writer = writers?.models.find((m) => m.id === (brief.writer || writers.default));
 
-  // The default narrator may not be installed: fall back to the first voice there is.
-  const voices = opts?.voices ?? [];
-  const voice = voices.some((v) => v.name === brief.voice) ? brief.voice : (voices[0]?.name ?? brief.voice);
+  // The default narrator's voices; the brief's may not be one of them: fall back to its first voice.
+  const narrator = useVoiceCatalog("", brief.language);
+  const voices = [
+    ...(narrator.catalog?.presets.map((v) => v.id) ?? []),
+    ...(narrator.catalog?.recordings.map((r) => r.name) ?? []),
+  ];
+  const voice = voices.includes(brief.voice) ? brief.voice : (voices[0] ?? brief.voice);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -165,13 +171,7 @@ export default function NewStory() {
           <label className="field">
             Language
             <small>Narration and subtitles use it. Picture prompts stay in English.</small>
-            <select value={brief.language} onChange={(e) => set("language", e.target.value)}>
-              {(opts?.languages ?? [{ id: "en", name: "English" }]).map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.name}
-                </option>
-              ))}
-            </select>
+            <LanguageSelect value={brief.language} onChange={(l) => set("language", l)} />
           </label>
           <label className="field">
             Length
@@ -198,16 +198,21 @@ export default function NewStory() {
             minutes={brief.minutes}
             onChange={(writer, effort) => setBrief((b) => ({ ...b, writer, effort }))}
           />
-          <label className="field">
-            Narrator
-            <select value={voice} onChange={(e) => set("voice", e.target.value)}>
-              {voices.map((v) => (
-                <option key={v.name} value={v.name}>
-                  {v.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="field">
+            <span>Narrator</span>
+            <small>
+              {narrator.catalog ? `${narrator.catalog.label}. ` : ""}Another narration model can be picked on
+              the Script step, or for every story in Settings.
+            </small>
+            <VoicePicker
+              catalog={narrator.catalog}
+              error={narrator.error}
+              language={brief.language}
+              onReload={() => void narrator.reload()}
+              value={voice}
+              onChange={(v) => set("voice", v)}
+            />
+          </div>
           {error && <p className="error">{error}</p>}
           <button className="primary wide" type="submit" disabled={busy || !brief.idea.trim()}>
             {busy ? "Starting…" : "Write my story"}

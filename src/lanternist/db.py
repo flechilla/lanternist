@@ -83,9 +83,10 @@ class StoryVersion(Base):
 class Job(Base):
     __tablename__ = "jobs"
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
-    story_id: Mapped[str] = mapped_column(ForeignKey("stories.id", ondelete="CASCADE"), index=True)
+    # None for a job that belongs to no story: a voice sample.
+    story_id: Mapped[str | None] = mapped_column(ForeignKey("stories.id", ondelete="CASCADE"), index=True)
     version: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    kind: Mapped[str] = mapped_column(String(16))  # write | rewrite | cast | board | render
+    kind: Mapped[str] = mapped_column(String(16))  # write | rewrite | cast | board | render | sample
     status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
     params: Mapped[dict] = mapped_column(JSON, default=dict)
     progress: Mapped[dict] = mapped_column(JSON, default=dict)
@@ -270,6 +271,12 @@ class Database:
             return row.version
 
     # jobs -------------------------------------------------------------------------------------
+    def next_job(self, fast_kinds: tuple[str, ...], fast: bool) -> Job | None:
+        """The oldest queued job of one lane: the fast kinds, or everything else."""
+        lane = Job.kind.in_(fast_kinds) if fast else Job.kind.not_in(fast_kinds)
+        with self.session() as s:
+            return s.scalars(select(Job).where(Job.status == "queued", lane).order_by(Job.created_at)).first()
+
     def update_job(self, job_id: str, **fields) -> Job | None:
         """Set fields on a job; None if it's gone, deleted with its story."""
         with self.session() as s:

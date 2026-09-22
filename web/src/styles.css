@@ -1263,3 +1263,26 @@ details > summary {
     order: 3;
   }
 }
+
+/* voices to choose from, each with a way to hear it */
+.voice-list {
+  display: grid;
+  gap: 4px;
+  max-height: 360px;
+  overflow: hidden auto;
+  padding-right: 2px;
+}
+.voice-item {
+  display: flex;
+  flex-wrap: wrap; /* in a narrow column the buttons go under the name */
+  gap: 2px 6px;
+  align-items: center;
+}
+.voice-item .pick-row {
+  flex: 1 1 140px;
+  min-width: 0;
+}
+.voice-item .pick-row:disabled {
+  opacity: 1;
+  cursor: default;
+}

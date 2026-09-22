@@ -53,6 +53,28 @@ def test_migration_keeps_mvp_rows(tmp_path):
     assert counts(tmp_path / "old.db") == before
 
 
+def test_migration_0003_keeps_jobs_and_allows_ones_without_a_story(tmp_path):
+    d = Database(tmp_path / "old.db")
+    command.upgrade(d.alembic_config(), "0002")
+    with sqlite3.connect(tmp_path / "old.db") as c:
+        c.execute(
+            "insert into stories (id, slug, title, language, version, created_at, updated_at) values ('s1','luna','Luna','es',1,'2026-09-01','2026-09-01')"
+        )
+        c.execute(
+            "insert into jobs (id, story_id, version, kind, status, params, progress, created_at) "
+            "values ('j1','s1',1,'render','done','{}','{}','2026-09-01')"
+        )
+    before = counts(tmp_path / "old.db")
+    d.migrate()
+    assert counts(tmp_path / "old.db") == before
+    with d.session() as s:
+        assert s.get(Job, "j1").story_id == "s1"
+        s.add(Job(id="j2", story_id=None, kind="sample", params={}, progress={}))
+        s.commit()
+    command.downgrade(d.alembic_config(), "0002")
+    assert counts(tmp_path / "old.db") == before  # the sample went; the story's job stayed
+
+
 def test_models_match_the_migrations(db):
     """A column added to db.py without a migration (or the other way round) fails here."""
     command.check(db.alembic_config())

@@ -49,6 +49,7 @@ LABELS = {
     "ambience": "Ambience",
     "clips": "Scene clips",
     "mix": "Final mix",
+    "sample": "Voice sample",
 }
 
 
@@ -153,7 +154,7 @@ class Pipeline:
 
     # ---------------------------------------------------------------- the models a story uses
     def tts(self, sb: Storyboard) -> TtsEngine:
-        return catalog.tts(self.cfg, self.db, self.cfg.defaults.tts, sb.voice, sb.language)
+        return catalog.tts(self.cfg, self.db, sb.models.tts or self.cfg.defaults.tts, sb.voice, sb.language)
 
     def image(self, sb: Storyboard) -> Engine:
         m = sb.models
@@ -285,6 +286,16 @@ class Pipeline:
         items = self.narration_items(sb, eng)
         records = await self._stage("narration", eng, items, "audio")
         return [_narration(records[it.id]) for it in items]
+
+    async def sample(self, model: str, voice: str, language: str) -> str:
+        """One line spoken by `voice`, to hear it before choosing it; made once, like any narration."""
+        eng = catalog.tts(self.cfg, self.db, model, voice, language)
+        if not eng.remote:
+            raise ValueError(
+                "a narrator on this machine clones your recording: listen to the recording itself"
+            )
+        item = catalog.sample_item(eng, language)
+        return (await self._stage("sample", eng, [item], "audio"))["sample"]["assets"]["audio"]
 
     # ---------------------------------------------------------------- pictures
     def _cast_key(self, eng: Engine, sb: Storyboard, prompt: str) -> str:
@@ -486,7 +497,7 @@ class Pipeline:
         out: dict = {"cast": None, "scenes": scenes, "total": None, "voice_ok": True}
         try:
             tts: TtsEngine | None = self.tts(sb)
-        except FileNotFoundError:
+        except (FileNotFoundError, ValueError):  # a recording that isn't there, or no such preset
             tts, out["voice_ok"] = None, False
         narration = []
         for it, row in zip(self.narration_items(sb, tts) if tts else [], scenes, strict=False):

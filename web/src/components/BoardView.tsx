@@ -1,4 +1,3 @@
-import { useEffect, useRef, useState } from "react";
 import {
   asset,
   chosenModel,
@@ -11,6 +10,7 @@ import {
   type Storyboard,
   withPrice,
 } from "../api";
+import { usePlayer } from "../hooks";
 import EstimateBox from "./EstimateBox";
 import ModelPicker from "./ModelPicker";
 import Slide from "./Slide";
@@ -20,6 +20,7 @@ export interface Catalogs {
   image: MediaCatalog;
   video: MediaCatalog;
   ambience: MediaCatalog;
+  tts: MediaCatalog;
 }
 
 interface Props {
@@ -45,33 +46,7 @@ interface Props {
 }
 
 export default function BoardView(p: Props) {
-  const audio = useRef<HTMLAudioElement>(null);
-  const [playing, setPlaying] = useState<number | null>(null);
-
-  useEffect(() => {
-    const a = audio.current;
-    if (!a) return;
-    const stop = () => setPlaying(null);
-    a.addEventListener("ended", stop);
-    a.addEventListener("pause", stop);
-    return () => {
-      a.removeEventListener("ended", stop);
-      a.removeEventListener("pause", stop);
-    };
-  }, []);
-
-  function play(n: number, src: string) {
-    const a = audio.current!;
-    if (playing === n) {
-      a.pause();
-      return;
-    }
-    a.src = src;
-    a.play().then(
-      () => setPlaying(n),
-      () => setPlaying(null),
-    );
-  }
+  const { audio, playing, play } = usePlayer<number>();
 
   const scenes = p.draft.scenes.map((s) => {
     const peek = p.board.scenes.find((b) => b.n === s.n);
@@ -119,8 +94,8 @@ export default function BoardView(p: Props) {
       </div>
       {!p.board.voice_ok && (
         <p className="error">
-          The narrator voice “{p.draft.voice}” isn't in your voices. Pick another on the Script step or add it
-          on Voices.
+          The narrator voice “{p.draft.voice}” can't be used by this narration model. Pick another on the
+          Script step, or add the recording on Voices.
         </p>
       )}
       <section className="panel models" aria-label="Models">

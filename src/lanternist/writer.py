@@ -77,6 +77,9 @@ WPM = {
 WORDS_PER_SCENE = 32  # ~13 s of narration: one picture, and within one LTX generation
 
 
+CHARS_PER_WORD = 6  # five letters and a space, about, in the alphabetic languages
+
+
 def wpm(language: str) -> int:
     return WPM.get(language, 140)
 

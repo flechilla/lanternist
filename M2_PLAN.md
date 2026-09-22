@@ -1,6 +1,6 @@
 # Lanternist M2: OpenRouter and fal.ai
 
-> **Status, 21 Sep 2026: Phases A and B are built and checked against the live APIs.** 91 tests pass offline, and your library is migrated to `0002` (backup in `~/Lanternist/backups/`). Both keys work. A first real video was made end to end: GPT Luna wrote the story and MiniMax H3 Max rendered the shot on fal, for $0.80 as estimated. Stories can now be written by any OpenRouter model with structured output, picked on New story; Claude Opus 5 wrote a Spanish story in the app for $0.21, as estimated. **22 Sep: Phases C, D and E are built offline**: the engine interface, pictures on fal with five models (Nano Banana Pro, Seedream 5.0 Pro and FLUX.2 [max] among them), an estimate and a budget before anything is spent, and video on fal with nine models, MiniMax H3 Max and its cheap Turbo among them. Their live checks are pending. Phase F is next.
+> **Status, 21 Sep 2026: Phases A and B are built and checked against the live APIs.** 91 tests pass offline, and your library is migrated to `0002` (backup in `~/Lanternist/backups/`). Both keys work. A first real video was made end to end: GPT Luna wrote the story and MiniMax H3 Max rendered the shot on fal, for $0.80 as estimated. Stories can now be written by any OpenRouter model with structured output, picked on New story; Claude Opus 5 wrote a Spanish story in the app for $0.21, as estimated. **22 Sep: Phases C–F are built and pass offline** (153 tests): the engine interface; pictures on fal with five models (Nano Banana Pro, Seedream 5.0 Pro and FLUX.2 [max] among them); an estimate and a budget before anything is spent; video on fal with nine models, MiniMax H3 Max and its cheap Turbo among them, with MMAudio ambience; and narration on fal with voices you can hear before choosing. What's left is the definition of done, run live on your keys.
 >
 > This is the blueprint's M2 ("fal, registry, estimator, your own key") with one change: the writer calls OpenRouter directly instead of going through fal's `openrouter/router`. Going direct gives the real cost of every request, the full list of models, and one hop fewer.
 > API facts below were read from the OpenRouter and fal docs, the per-model `llms.txt` pages and the fal-client 1.0.3 source on 21 Sep 2026. Anything marked **verify** was not confirmed and gets checked in Phase A.
@@ -283,12 +283,17 @@ Subtitle timing stays exact because nothing downstream changes:
 
 | Engine | Voice | Price | Notes |
 |---|---|---|---|
-| fal Qwen3-TTS 1.7B | Clone of `voices/<name>.wav` | $0.09 per 1k chars | Two calls. `qwen-3-tts/clone-voice/1.7b` turns the clip and its transcript into a speaker embedding. That's a cached step keyed by the voice's sha, with the `.safetensors` kept in the store. Each chunk then passes `speaker_voice_embedding_file_url`. **`max_new_tokens` defaults to 200: raise it**, or long chunks may be cut off. |
-| ElevenLabs v3 | Preset (`voice`, default "Rachel") | $0.10 per 1k chars | `language_code` (ISO 639-1). No cloning from a clip. |
-| MiniMax Speech 2.8 HD | Preset (`voice_setting.voice_id`) | $0.10 per 1k chars | Send `output_format: "url"` (the default is hex). Its $1.50 clone is left for M4. |
+| fal Qwen3-TTS 1.7B | Clone of `voices/<name>.wav`, or one of 9 presets | $0.09 per 1k chars | Two calls. `qwen-3-tts/clone-voice/1.7b` turns the clip and its transcript into a speaker embedding. That's a cached step keyed by the voice's sha, with the `.safetensors` kept in the store. Each chunk then passes `speaker_voice_embedding_file_url`. **`max_new_tokens` defaults to 200: raise it**, or long chunks may be cut off. |
+| ElevenLabs v3 | One of 21 presets (`voice`; the names in fal's schema, plus "Rachel") | $0.10 per 1k chars | `language_code` (ISO 639-1). No cloning from a clip. |
+| MiniMax Speech 2.8 HD | One of 17 presets (`voice_setting.voice_id`, from fal's schema) | $0.10 per 1k chars | Send `output_format: "url"` (the default is hex), and `language_boost`. Its $1.50 clone is left for M4. |
 | Chatterbox Multilingual | Clone: the reference clip's URL as `voice` | $0.025 per 1k chars | 300 characters per request, 23 languages. |
 
 The language check in `narrate()` (today "not supported by Qwen3-TTS") becomes each engine's `languages` list in the registry, and the pickers filter on it.
+
+**Hearing a voice before choosing it** (added to the plan, for value): every voice picker (New story, the Script step, the Voices page) has a Listen button on each voice.
+- A preset's sample is the language's sample line (`text.SAMPLES`), narrated like any scene and cached under the same kind of key, so each voice is made once per language, about a cent each; the button shows that price until it's made.
+- A recording plays itself, and for a model on fal that clones, "Listen" plays it as that model says it.
+- A sample is a job with no story (migration `0003` lets `jobs.story_id` be empty) in a fast lane of its own beside the queue: a few seconds on fal, never the GPU, so it never waits behind a render. Local narrators aren't sampled: they'd take the GPU, and their voice is the recording.
 
 ### 1.10 Estimate, budget and cost
 
@@ -555,18 +560,21 @@ This phase comes before video on purpose: video is where the money goes.
 - [x] A 23 s slot renders as two chained shots, with the waste reported.
 - [x] Killing the server mid-stage and restarting resumes without paying again. Cancel cancels at fal (offline; to check live).
 
-### Phase F: narration on fal (≈2 days)
+### Phase F: narration on fal (≈2 days) · built 22 Sep 2026
 
-- [ ] `fal_tts.py`:
+- [x] `fal_tts.py`:
   - Qwen3-TTS: the clone-embedding step, per-chunk requests, and `max_new_tokens` raised.
   - ElevenLabs v3, MiniMax Speech 2.8 HD, and Chatterbox with its 300-character chunks.
-- [ ] Voices follow the TTS engine (clips or presets). The Voices page lists presets per engine with a sample line. The languages come from the registry.
-- [ ] Run the definition of done at the top of this file.
+  - Each chunk is a cached step of its own, and a reference recording stays on fal for an hour (`fal.voice_ttl_hours`).
+- [x] Voices follow the TTS engine (clips or presets). The Voices page lists presets per engine with a sample line. The languages come from the registry.
+  - `Storyboard.models.tts` picks a story's narrator on the Script step; switching keeps the voice when the new model has it, else starts on its first. The default narrator is in Settings.
+  - Every voice can be heard before it's chosen (§1.9).
+- [ ] Run the definition of done at the top of this file. Needs live runs on your keys.
 
 **Exit:**
-- The same Spanish story narrated by fal Qwen3-TTS with the `demo` clone and by an ElevenLabs preset.
-- Subtitle cues line up.
-- Steps 1–7 of the definition of done pass.
+- [ ] The same Spanish story narrated by fal Qwen3-TTS with the `demo` clone and by an ElevenLabs preset (offline, both paths pass; live pending).
+- [x] Subtitle cues line up (`test_a_board_narrated_by_an_elevenlabs_preset`).
+- [ ] Steps 1–7 of the definition of done pass (live).
 
 **Total: about 13 working days.**
 

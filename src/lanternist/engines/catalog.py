@@ -6,20 +6,25 @@ come from each engine's own estimate, so the price on a picker is the price the 
 
 from decimal import Decimal
 
-from .. import registry
+from .. import registry, text
 from ..config import Settings
-from ..db import Database, to_usd
+from ..db import Database, to_micros, to_usd
 from ..keys import get_key
 from ..registry import ModelEntry
-from ..voices import find_voice
+from ..store import Store
+from ..voices import find_voice, list_voices
+from ..writer import CHARS_PER_WORD, narration_seconds, wpm
 from .base import Engine, Item, TtsEngine, VideoEngine, keyframe_size
 from .fal_audio import FalMmaudio
 from .fal_image import FalImage
+from .fal_tts import FalTts
 from .fal_video import FalVideo
 from .local import LocalKlein, LocalLtx, LocalQwenTts
 
 FAL_IMAGE = {"klein", "nano_banana", "seedream", "flux2"}
 FAL_VIDEO = {"kling", "veo", "wan", "wan3", "ltx", "h3"}
+FAL_TTS = {"qwen_tts", "elevenlabs", "minimax", "chatterbox"}
+SAMPLE_SEED = 7  # a sample is one take: the same line in the same voice is made once
 
 
 def entry(cfg: Settings, db: Database | None, model_id: str, capability: str) -> ModelEntry:
@@ -51,10 +56,55 @@ def _image(cfg: Settings, db: Database | None, e: ModelEntry, quality: str | Non
 
 
 def tts(cfg: Settings, db: Database | None, model_id: str, voice: str, language: str) -> TtsEngine:
+    """The narration engine speaking `voice`: FileNotFoundError when it's a recording that isn't
+    there, VoiceError when the model has no such voice."""
     e = entry(cfg, db, model_id, "tts.speak")
     if e.provider == "local":
         return LocalQwenTts(cfg, e, find_voice(cfg, voice), language)
+    if e.family in FAL_TTS:
+        return FalTts(cfg, e, db, voice, language)
     raise _no_adapter(e)
+
+
+def sample_item(eng: TtsEngine, language: str) -> Item:
+    """A voice sample: the language's sample line, keyed like any narration, so it's made once."""
+    line = text.SAMPLES.get(language, text.SAMPLES["en"])
+    chunks = eng.chunks(line)
+    return Item(
+        "sample",
+        eng.key("tts", chunks=chunks, seed=SAMPLE_SEED),
+        None,
+        {"chunks": chunks, "seed": SAMPLE_SEED, "seconds": narration_seconds(line, language)},
+    )
+
+
+def voices(cfg: Settings, db: Database | None, store: Store, model_id: str, language: str) -> dict:
+    """The voices a narration model offers: its presets and, if it clones, the recordings in voices/.
+    Each comes with its sample when one was made; `sample_usd` is what making one costs."""
+    e = entry(cfg, db, model_id, "tts.speak")
+
+    def sample(voice: str) -> str | None:
+        if e.provider == "local":
+            return None  # the recording itself is the sample
+        rec = store.get_step(sample_item(tts(cfg, db, e.id, voice, language), language).key or "")
+        return rec["assets"]["audio"] if rec else None
+
+    recordings = list_voices(cfg) if e.clone else []
+    price = None
+    if e.remote and (e.voices or recordings):
+        first = e.voices[0] if e.voices else recordings[0]["name"]
+        eng = tts(cfg, db, e.id, first, language)
+        price = to_usd(eng.estimate([sample_item(eng, language)]).micros)
+    return {
+        "model": e.id,
+        "label": e.label,
+        "local": e.provider == "local",
+        "clone": e.clone,
+        "speaks": not e.languages or language in e.languages,
+        "presets": [{"id": v, "label": v.replace("_", " "), "sample": sample(v)} for v in e.voices],
+        "recordings": [r | {"sample": sample(r["name"])} for r in recordings],
+        "sample_usd": price,
+    }
 
 
 def video(cfg: Settings, db: Database | None, model_id: str, quality: str | None = None) -> VideoEngine:
@@ -136,6 +186,23 @@ def _video_row(cfg: Settings, db: Database | None, e: ModelEntry) -> dict:
     }
 
 
+def _tts_row(e: ModelEntry) -> dict:
+    """Priced per minute of English narration: characters for remote models, GPU time for local ones."""
+    minute = e.price.on()
+    chars = wpm("en") * CHARS_PER_WORD
+    usd = to_usd(to_micros(minute.usd * chars / 1000)) if minute.usd is not None else None
+    gpu = 60 * minute.gpu_seconds if minute.gpu_seconds else None
+    return {
+        "per": "minute of narration",
+        "usd": usd,
+        "gpu_seconds": gpu,
+        "quality": None,
+        "clone": e.clone,
+        "presets": len(e.voices),
+        "languages": e.languages,
+    }
+
+
 def _ambience_row(cfg: Settings, db: Database | None, e: ModelEntry) -> dict:
     est = ambience(cfg, db, e.id).estimate([_second()])
     return {"per": "second of sound", "usd": to_usd(est.micros // 10), "gpu_seconds": None, "quality": None}
@@ -170,6 +237,8 @@ def catalog(cfg: Settings, db: Database | None, capability: str) -> dict:
             row |= _video_row(cfg, db, e)
         elif capability == "audio.ambience":
             row |= _ambience_row(cfg, db, e)
+        else:
+            row |= _tts_row(e)
         rows.append(row)
     rows.sort(key=lambda r: (not r["local"], Decimal(str(r.get("usd") or 0))))
     return {"default": defaults[capability], "models": rows}

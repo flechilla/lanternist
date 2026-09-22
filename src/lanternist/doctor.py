@@ -72,6 +72,7 @@ def needs(cfg: Settings) -> dict[str, bool]:
     return local | {
         "gpu": any(local.values()),
         "ram": local["klein"],
+        "voice": registry.get(d.tts, cfg.library).clone,  # a narrator with presets needs no recording
         "openrouter": d.writer.startswith("openrouter/"),
         "fal": any(m.startswith("fal/") for m in media),
     }

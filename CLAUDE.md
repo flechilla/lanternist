@@ -36,7 +36,7 @@ user's models and takes the GPU for minutes). Neither runs by default.
 | `store.py` | Content-addressed assets and the step cache (plain files) |
 | `timing.py`, `text.py` | Timeline, shot split, subtitle cues; sentence splitting and TTS chunks |
 | `engines/` | The engine interface (`base.py`), local and fal engines, which engine runs a model (`catalog.py`), ffmpeg, ComfyUI/LTX, the worker runner, the fake engines |
-| `voices.py` | The narrator's reference recordings |
+| `voices.py` | The narrator's reference recordings (a model's presets are in the registry) |
 | `workers/` | Scripts that run *inside other venvs* (Qwen3-TTS, klein) |
 | `gpu.py` | The GPU lease: evict other models, wait for free VRAM |
 | `providers/` | OpenRouter and fal clients, and in-process fakes of both |

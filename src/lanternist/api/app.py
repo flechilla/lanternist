@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field, ValidationError
 from .. import keys, llm, prefs
 from ..config import settings
 from ..db import Database, Job, Story, StoryVersion, to_micros, to_usd
-from ..engines.catalog import catalog as media_catalog
+from ..engines import catalog as engines
 from ..estimate import Kind, estimate
 from ..jobs import Runner, is_terminal
 from ..pipeline import Pipeline
@@ -193,7 +193,7 @@ async def models(capability: str = "writer.chat"):
     if capability == "writer.chat":
         return await llm.catalog(eff, db)
     try:
-        return media_catalog(eff, db, capability)
+        return engines.catalog(eff, db, capability)
     except ValueError as e:
         raise HTTPException(404, str(e)) from None
 
@@ -206,7 +206,6 @@ def options():
         "kinds": [{"id": k, "name": k.replace("_", " ")} for k in KINDS],
         "styles": [{"id": k, "name": k.replace("_", " "), "prompt": v} for k, v in STYLES.items()],
         "cameras": ["auto", "push_in", "pull_out", "pan_left", "pan_right", "static"],
-        "voices": list_voices(cfg),
         "fake_engines": cfg.fake_engines,
     }
 
@@ -524,6 +523,43 @@ def get_asset(asset: str, download: str | None = None):
 @app.get("/api/voices")
 def voices():
     return list_voices(cfg)
+
+
+@app.get("/api/voices/catalog")
+def voice_catalog(language: str = "en", tts: str = ""):
+    """The voices a narration model offers, each with its sample if one was made."""
+    eff = prefs.effective(cfg, db)
+    try:
+        return engines.voices(eff, db, _pipeline().store, tts or eff.defaults.tts, language)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from None
+
+
+class SampleBody(BaseModel):
+    voice: str
+    language: str = "en"
+    tts: str = Field("", description="the narration model; empty is the default")
+
+
+@app.post("/api/voices/sample")
+def voice_sample(body: SampleBody):
+    """A voice's sample line: at once when it was made before, else a job in the fast lane (seconds)."""
+    if body.language not in LANGUAGES:
+        raise HTTPException(422, f"no sample line in '{body.language}'")
+    eff = prefs.effective(cfg, db)
+    model = body.tts or eff.defaults.tts
+    try:
+        eng = engines.tts(eff, db, model, body.voice, body.language)
+    except (FileNotFoundError, ValueError) as e:
+        raise HTTPException(422, str(e)) from None
+    if not eng.remote:
+        raise HTTPException(
+            422, "a narrator on this machine clones your recording: listen to the recording itself"
+        )
+    if rec := _pipeline().cached(engines.sample_item(eng, body.language)):
+        return {"audio": rec["assets"]["audio"], "job": None}
+    params = {"tts": model, "voice": body.voice, "language": body.language}
+    return {"audio": None, "job": job_dict(runner.enqueue(None, "sample", None, params))}
 
 
 @app.get("/api/voices/{name}/audio")

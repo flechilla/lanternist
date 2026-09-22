@@ -21,7 +21,9 @@ def storyboard(n=3):
 def test_story_lifecycle(client, wait):
     assert client.get("/api/health").json()["fake_engines"] is True
     opts = client.get("/api/options").json()
-    assert any(v["name"] == "demo" for v in opts["voices"]) and opts["styles"]
+    assert opts["styles"] and opts["languages"]
+    voices = client.get("/api/voices/catalog", params={"language": "en"}).json()
+    assert [r["name"] for r in voices["recordings"]] == ["demo"]
 
     created = client.post("/api/stories", json={"storyboard": storyboard()}).json()
     sid = created["story"]["id"]

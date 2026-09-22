@@ -83,6 +83,7 @@ class Models(BaseModel):
     writer_effort: Effort | None = Field(
         None, description="the writer's reasoning effort; None is the model's default"
     )
+    tts: ModelId = Field("", description="narrates; `Storyboard.voice` is one of its voices")
     image: ModelId = Field("", description="draws the cast sheet and the pictures")
     image_quality: str | None = Field(None, description="the picture model's quality option, e.g. 2K")
     video: ModelId = Field("", description="animates the video scenes")
@@ -98,7 +99,9 @@ class Storyboard(BaseModel):
     audience: Audience = "kids_5_8"
     kind: str = "bedtime"
     style: str = Field("", description="English style suffix appended to every picture prompt")
-    voice: str = "demo"
+    voice: str = Field(
+        "demo", description="a preset of the narration model, or a recording in voices/ it clones"
+    )
     seed: int = 7
     subtitles: Subtitles = "sidecar"
     cast: list[CastMember] = Field(default_factory=list)

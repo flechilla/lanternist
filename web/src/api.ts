@@ -47,6 +47,7 @@ export interface Storyboard {
 export interface Models {
   writer: string;
   writer_effort: Effort | null;
+  tts: string;
   image: string;
   image_quality: string | null;
   video: string;
@@ -150,7 +151,14 @@ export interface Job {
   progress: Progress;
   result:
     | (Partial<FilmResult> &
-        WriterResult & { version?: number; cast?: string | null; keyframes?: string[]; budget?: BudgetStop })
+        WriterResult & {
+          version?: number;
+          cast?: string | null;
+          keyframes?: string[];
+          budget?: BudgetStop;
+          /** A voice sample job's line. */
+          audio?: string;
+        })
     | null;
   error: string | null;
   /** The estimate shown before the job ran. */
@@ -220,13 +228,33 @@ export interface Voice {
   has_transcript: boolean;
 }
 
+/** A voice a narration model offers, with its sample line once one was made. */
+export interface PresetVoice {
+  id: string;
+  label: string;
+  sample: string | null;
+}
+
+/** The voices of one narration model: its presets, and the recordings it clones. */
+export interface VoiceCatalog {
+  model: string;
+  label: string;
+  local: boolean;
+  clone: boolean;
+  /** It speaks the language asked about. */
+  speaks: boolean;
+  presets: PresetVoice[];
+  recordings: (Voice & { sample: string | null })[];
+  /** What making one sample costs; null for a model on this machine. */
+  sample_usd: number | null;
+}
+
 export interface Options {
   languages: { id: string; name: string }[];
   audiences: { id: string; name: string }[];
   kinds: { id: string; name: string }[];
   styles: { id: string; name: string; prompt: string }[];
   cameras: Camera[];
-  voices: Voice[];
   fake_engines: boolean;
 }
 
@@ -413,9 +441,18 @@ export const api = {
   saveSettings: (changes: Record<string, unknown>) => call<SettingRow[]>("PUT", "/api/settings", { changes }),
   writers: () => call<WriterCatalog>("GET", "/api/models?capability=writer.chat"),
   models: (capability: Capability) => call<MediaCatalog>("GET", `/api/models?capability=${capability}`),
-  voices: () => call<Voice[]>("GET", "/api/voices"),
+  voiceCatalog: (tts: string, language: string) =>
+    call<VoiceCatalog>(
+      "GET",
+      `/api/voices/catalog?tts=${encodeURIComponent(tts)}&language=${encodeURIComponent(language)}`,
+    ),
+  sample: (tts: string, voice: string, language: string) =>
+    call<{ audio: string | null; job: Job | null }>("POST", "/api/voices/sample", { tts, voice, language }),
   addVoice: (form: FormData) => call<Voice>("POST", "/api/voices", form),
 };
+
+/** Where a recording in the voices folder plays from. */
+export const recording = (name: string) => `/api/voices/${encodeURIComponent(name)}/audio`;
 
 export const asset = (id: string | null | undefined, download?: string) =>
   id ? `/api/assets/${id}${download ? `?download=${encodeURIComponent(download)}` : ""}` : undefined;

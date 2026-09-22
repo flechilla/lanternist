@@ -81,8 +81,9 @@ export default function Story() {
       api.models("image.keyframe"),
       api.models("video.image_to_video"),
       api.models("audio.ambience"),
+      api.models("tts.speak"),
     ]).then(
-      ([image, video, ambience]) => setCatalogs({ image, video, ambience }),
+      ([image, video, ambience, tts]) => setCatalogs({ image, video, ambience, tts }),
       (e: unknown) => setCatalogError(errorMessage(e)),
     );
   }, []);
@@ -330,6 +331,7 @@ export default function Story() {
           {step === "script" && draft && (
             <ScriptEditor
               draft={draft}
+              narrators={catalogs?.tts ?? null}
               edit={edit}
               opts={opts}
               dirty={dirty}

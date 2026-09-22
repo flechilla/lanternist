@@ -91,12 +91,19 @@ class Progress:
                 s.commit()
 
 
+# A few seconds on a remote model each: they run in a lane of their own, beside the queue, so a voice
+# sample never waits behind a render. They never take the GPU.
+FAST = ("sample",)
+
+
 class Runner:
     def __init__(self, cfg: Settings, db: Database):
         self.cfg, self.db = cfg, db
-        self.wake = asyncio.Event()
-        self.current: tuple[str, asyncio.Task] | None = None
-        self._loop: asyncio.Task | None = None
+        self.wakes = {False: asyncio.Event(), True: asyncio.Event()}  # by lane: fast or not
+        self.current: tuple[str, asyncio.Task] | None = None  # the queue's running job
+        self.current_fast: tuple[str, asyncio.Task] | None = None
+        self._loops: list[asyncio.Task] = []
+        self._event_loop: asyncio.AbstractEventLoop | None = None
         # Jobs the user cancelled, as opposed to a shutdown: only these cancel remote requests.
         self.cancel_requested: set[str] = set()
 
@@ -109,17 +116,26 @@ class Runner:
             for job in s.query(Job).filter(Job.status == "running"):
                 job.status = "queued"  # interrupted by a restart: run again, cached steps skip
             s.commit()
-        self._loop = asyncio.create_task(self.loop())
+        self._event_loop = asyncio.get_running_loop()
+        self._loops = [asyncio.create_task(self.loop(fast)) for fast in (False, True)]
 
     async def stop(self) -> None:
-        if self.current:
-            self.current[1].cancel()
-        if self._loop:
-            self._loop.cancel()
+        for running in (self.current, self.current_fast):
+            if running:
+                running[1].cancel()
+        for task in self._loops:
+            task.cancel()
+
+    def _wake(self, fast: bool) -> None:
+        # Routes enqueue from FastAPI's thread pool; the event belongs to the server's loop.
+        if self._event_loop and self._event_loop.is_running():
+            self._event_loop.call_soon_threadsafe(self.wakes[fast].set)
+        else:
+            self.wakes[fast].set()
 
     def enqueue(
         self,
-        story_id: str,
+        story_id: str | None,
         kind: str,
         version: int | None,
         params: dict | None = None,
@@ -136,14 +152,15 @@ class Runner:
             )
             s.add(job)
             s.commit()
-        self.wake.set()
+        self._wake(kind in FAST)
         return job
 
     def cancel(self, job_id: str) -> bool:
-        if self.current and self.current[0] == job_id:
-            self.cancel_requested.add(job_id)
-            self.current[1].cancel()
-            return True
+        for running in (self.current, self.current_fast):
+            if running and running[0] == job_id:
+                self.cancel_requested.add(job_id)
+                running[1].cancel()
+                return True
         with self.db.session() as s:
             job = s.get(Job, job_id)
             if job and job.status == "queued":
@@ -153,24 +170,28 @@ class Runner:
         return False
 
     # loop -------------------------------------------------------------------------------------
-    async def loop(self) -> None:
+    async def loop(self, fast: bool = False) -> None:
+        """Run one lane's queued jobs one at a time, oldest first."""
+        wake = self.wakes[fast]
         while True:
-            with self.db.session() as s:
-                job = s.query(Job).filter(Job.status == "queued").order_by(Job.created_at).first()
+            job = self.db.next_job(FAST, fast)
             if job is None:
-                self.wake.clear()
+                wake.clear()
                 with contextlib.suppress(TimeoutError):
-                    await asyncio.wait_for(self.wake.wait(), timeout=5)
+                    await asyncio.wait_for(wake.wait(), timeout=5)
                 continue
-            await self.run(job.id)
+            await self.run(job.id, fast)
 
-    async def run(self, job_id: str) -> None:
+    async def run(self, job_id: str, fast: bool = False) -> None:
         job = self.db.update_job(job_id, status="running", started_at=now(), error=None)
         if job is None:
             return  # deleted with its story since it was picked
         progress = Progress(self.db, job_id)
         task = asyncio.create_task(self.execute(job, progress))
-        self.current = (job_id, task)
+        if fast:
+            self.current_fast = (job_id, task)
+        else:
+            self.current = (job_id, task)
         status, result, error = "done", None, None
         try:
             result = await task
@@ -187,7 +208,10 @@ class Runner:
             status, error = "failed", redact(f"{e}\n\n{traceback.format_exc()[-3000:]}")
             progress.note(f"failed: {(redact(str(e)) or repr(e)).splitlines()[0][:200]}")
         finally:
-            self.current = None
+            if fast:
+                self.current_fast = None
+            else:
+                self.current = None
             self.cancel_requested.discard(job_id)
             if status == "done":
                 for st in progress.snap["stages"].values():
@@ -211,8 +235,15 @@ class Runner:
             story_id=job.story_id,
             job_id=job.id,
             user_cancelled=lambda: self.user_cancelled(job.id),
-            budget_micros=self.db.budget_micros(job.story_id, cfg.defaults.budget_usd),
+            budget_micros=self.db.budget_micros(job.story_id, cfg.defaults.budget_usd)
+            if job.story_id
+            else None,
         )
+        if job.kind == "sample":
+            p = job.params
+            return {"audio": await pipeline.sample(p["tts"], p["voice"], p["language"])}
+        if job.story_id is None:
+            raise ValueError(f"a {job.kind} job needs a story")
         calls = Calls(self.db, story_id=job.story_id, job_id=job.id)
         if job.kind == "write":
             from .writer import Brief, write_storyboard

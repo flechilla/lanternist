@@ -1,6 +1,17 @@
 import { useState } from "react";
-import { STYLE_NAMES, type Camera, type Options, type Scene, type Storyboard } from "../api";
+import {
+  api,
+  STYLE_NAMES,
+  type Camera,
+  type MediaCatalog,
+  type Options,
+  type Scene,
+  type Storyboard,
+} from "../api";
+import { useAction, useVoiceCatalog } from "../hooks";
+import ModelPicker from "./ModelPicker";
 import Slide from "./Slide";
+import VoicePicker from "./VoicePicker";
 
 const CAMERA_NAMES: Record<Camera, string> = {
   auto: "Auto",
@@ -21,6 +32,7 @@ const slug = (s: string) =>
 
 interface Props {
   draft: Storyboard;
+  narrators: MediaCatalog | null;
   edit: (fn: (sb: Storyboard) => void) => void;
   opts: Options | null;
   dirty: boolean;
@@ -37,6 +49,20 @@ interface Props {
 
 export default function ScriptEditor(p: Props) {
   const { draft, edit } = p;
+  const voices = useVoiceCatalog(draft.models.tts, draft.language);
+  const { busy: switching, error: narratorError, run } = useAction();
+
+  // A new narrator keeps the story's voice if it has it, else starts on its first one.
+  const switchNarrator = (tts: string) =>
+    run(async () => {
+      const cat = await api.voiceCatalog(tts, draft.language);
+      const fits =
+        cat.presets.some((v) => v.id === draft.voice) || cat.recordings.some((r) => r.name === draft.voice);
+      edit((sb) => {
+        sb.models.tts = tts;
+        if (!fits) sb.voice = cat.presets[0]?.id ?? cat.recordings[0]?.name ?? sb.voice;
+      });
+    });
   const scene = (n: number, fn: (s: Scene) => void) =>
     edit((sb) => {
       const s = sb.scenes.find((x) => x.n === n);
@@ -231,24 +257,29 @@ export default function ScriptEditor(p: Props) {
 
           <section className="panel stack">
             <h2>Look and voice</h2>
-            <label className="field">
-              Narrator
-              <select
+            <ModelPicker
+              label="Narration"
+              catalog={p.narrators}
+              error={narratorError}
+              value={draft.models.tts}
+              disabled={switching}
+              onChange={(tts) => void switchNarrator(tts)}
+            />
+            <div className="field">
+              <span>Narrator voice</span>
+              <VoicePicker
+                catalog={voices.catalog}
+                error={voices.error}
+                language={draft.language}
+                onReload={() => void voices.reload()}
                 value={draft.voice}
-                onChange={(e) =>
+                onChange={(voice) =>
                   edit((sb) => {
-                    sb.voice = e.target.value;
+                    sb.voice = voice;
                   })
                 }
-              >
-                {(p.opts?.voices ?? [{ name: draft.voice }]).map((v) => (
-                  <option key={v.name}>{v.name}</option>
-                ))}
-                {p.opts && !p.opts.voices.some((v) => v.name === draft.voice) && (
-                  <option>{draft.voice}</option>
-                )}
-              </select>
-            </label>
+              />
+            </div>
             <label className="field">
               Subtitles
               <select

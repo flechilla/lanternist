@@ -181,6 +181,11 @@ async def video_clip(src: Path, length: float, r: Render, out: Path) -> None:
     )
 
 
+async def to_wav(src: Path, out: Path, rate: int) -> None:
+    """Any speech file as mono 16-bit wav at `rate`, which the timeline measures to the sample."""
+    await run(["-i", str(src), "-ac", "1", "-ar", str(rate), "-c:a", "pcm_s16le", str(out)])
+
+
 async def last_frame(src: Path, out: Path) -> None:
     await run(["-sseof", "-0.25", "-i", str(src), "-update", "1", "-q:v", "2", str(out)])
 

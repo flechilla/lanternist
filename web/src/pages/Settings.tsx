@@ -125,6 +125,7 @@ function text(rows: SettingRow[] | null, key: string): string {
 
 /** The default model of each media stage, by its setting. */
 const STAGES: { key: string; capability: Capability; label: string; off?: string }[] = [
+  { key: "defaults.tts", capability: "tts.speak", label: "Narration" },
   { key: "defaults.image", capability: "image.keyframe", label: "Pictures" },
   { key: "defaults.video", capability: "video.image_to_video", label: "Video" },
   {
