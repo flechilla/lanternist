@@ -92,7 +92,7 @@ export default function Library() {
             {s.active_jobs > 0 ? (
               <span className="status-pill working">
                 {s.progress != null && <Ring fraction={s.progress} />}
-                {s.progress != null ? `${Math.round(s.progress * 100)}%` : "Working"}
+                Working{s.progress != null && ` · ${Math.round(s.progress * 100)}%`}
               </span>
             ) : s.film ? (
               <span className="status-pill ready">Film ready</span>

@@ -19,8 +19,17 @@ interface Props {
   onCancel: (job: Job) => void;
 }
 
-export default function FilmView(p: Props) {
-  const { detail, jobs, finished, busy, renderUsd, onRender, onCancel } = p;
+export default function FilmView({
+  detail,
+  jobs,
+  finished,
+  busy,
+  renderUsd,
+  onRender,
+  onCancel,
+  telling,
+  onTell,
+}: Props) {
   const player = useRef<HTMLVideoElement>(null);
   const renders = jobs.filter((j) => j.kind === "render");
   const running = renders.find(isActive);
@@ -50,8 +59,8 @@ export default function FilmView(p: Props) {
           sb={detail.storyboard}
           board={detail.board}
           job={reel}
-          telling={!!p.telling[reel.id]}
-          onTell={() => p.onTell(reel)}
+          telling={!!telling[reel.id]}
+          onTell={() => onTell(reel)}
           onCancel={() => onCancel(reel)}
           onWatch={watch}
         />

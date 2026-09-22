@@ -17,6 +17,7 @@ import {
   sceneStates,
   slideEvents,
   stageShare,
+  TELLING,
   timeLeft,
   type SceneState,
 } from "../reel";
@@ -293,9 +294,13 @@ export default function Reel({ sb, board, job, telling, onTell, onCancel, onWatc
                 <div className="since">{since.join(" · ")}</div>
               </div>
               <div className="reel-actions">
-                <button className={`hbtn${telling ? " rang" : ""}`} onClick={onTell} disabled={telling}>
+                <button
+                  className={`hbtn${telling ? " rang" : ""}`}
+                  onClick={() => !telling && onTell()}
+                  aria-disabled={telling}
+                >
                   <Bell />
-                  {telling ? "We'll tell you" : "Tell me when it's ready"}
+                  {telling ? TELLING : "Tell me when it's ready"}
                 </button>
                 <button className="hbtn" aria-pressed={still} onClick={() => setStill(!still)}>
                   Pause motion

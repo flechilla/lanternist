@@ -88,6 +88,8 @@ export interface StageState {
   secs?: number;
   /** How far through its one item it is, 0 to 1, when it says: the mix, from ffmpeg. */
   at?: number;
+  /** The passes a stage of one item goes through, in order (the writer's); `done` counts those ended. */
+  passes?: string[];
   /** What makes its items: a model's name, or ffmpeg; and whether that's on this machine. */
   model?: string;
   local?: boolean;

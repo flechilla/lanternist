@@ -148,9 +148,9 @@ async def test_openrouter_writer_end_to_end(cfg, db, world, leases):
         cfg,
         brief(writer="openrouter/fake/frontier", effort="high"),
         calls=calls,
-        drafted=lambda: passes.append(len(world.openrouter.chats)),
+        passed=lambda n: passes.append((n, len(world.openrouter.chats))),
     )
-    assert passes == [1]  # the story drafted, the storyboard not yet asked for
+    assert passes == [(1, 1)]  # the story drafted, the storyboard not yet asked for
     assert len(sb.scenes) == 4 and sb.cast and sb.models.writer == "openrouter/fake/frontier"
     assert sb.models.writer_effort == "high"
     assert leases == []  # nothing touched the GPU

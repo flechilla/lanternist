@@ -7,6 +7,7 @@ import {
   sceneWords,
   stageCount,
   stageShare,
+  TELLING,
   timeLeft,
   type SceneState,
 } from "../reel";
@@ -106,15 +107,20 @@ interface DockProps {
   onCancel: () => void;
 }
 
+// The jobs whose progress is told scene by scene; the others (writing, rewriting) say it in a line.
+const BY_SCENE: Job["kind"][] = ["cast", "board", "render"];
+
 /** The running job, docked at the bottom of the story page wherever the user is: what it's doing in
- * a sentence, and a mini reel of the scenes; the stage bars and log under Details. */
+ * a sentence, and a mini reel of the scenes. A render's reel opens from here; any other job's stage
+ * bars and log are under Details. `sb` is the storyboard of the version the job runs on, or null. */
 export function Dock({ job, queued, sb, board, reel, telling, onTell, onCancel }: DockProps) {
   const [open, setOpen] = useState(false);
-  const [tip, setTip] = useState<{ n: number; x: number; words: string } | null>(null);
-  const perScene = !!sb && !!job.progress?.scenes && Object.keys(job.progress.scenes).length > 0;
-  const scenes = perScene ? sceneStates(sb, board, job) : [];
+  const [tip, setTip] = useState<{ n: number; x: number } | null>(null);
+  const bySceneNow = !!sb && BY_SCENE.includes(job.kind) && job.status === "running";
+  const scenes = bySceneNow && job.progress?.scenes ? sceneStates(sb, board, job) : [];
   const names = Object.fromEntries((sb?.cast ?? []).map((c) => [c.id, c.name]));
-  const now = sb && job.status === "running" ? headline(job, scenes, names) : null;
+  const now = bySceneNow ? headline(job, scenes, names) : null;
+  const tipped = tip && scenes.find((s) => s.n === tip.n);
   const message =
     job.status === "queued"
       ? "Queued"
@@ -136,8 +142,8 @@ export function Dock({ job, queued, sb, board, reel, telling, onTell, onCancel }
           <span>{message}</span>
         </div>
         {job.progress?.eta_s && <span className="left">{timeLeft(job.progress.eta_s)}</span>}
-        <button className="small quiet" onClick={onTell} disabled={telling}>
-          {telling ? "We'll tell you" : "Tell me when it's ready"}
+        <button className="small quiet" onClick={() => !telling && onTell()} aria-disabled={telling}>
+          {telling ? TELLING : "Tell me when it's ready"}
         </button>
         {reel ? (
           <Link className="btn small primary" to={reel}>
@@ -164,17 +170,14 @@ export function Dock({ job, queued, sb, board, reel, telling, onTell, onCancel }
               data-f={s.again !== null || s.failing !== null || undefined}
               aria-label={`Scene ${s.n}: ${sceneWords(s)}`}
               onPointerEnter={(e) =>
-                setTip({
-                  n: s.n,
-                  x: e.currentTarget.offsetLeft + e.currentTarget.offsetWidth / 2,
-                  words: sceneWords(s),
-                })
+                e.pointerType !== "touch" &&
+                setTip({ n: s.n, x: e.currentTarget.offsetLeft + e.currentTarget.offsetWidth / 2 })
               }
             />
           ))}
-          {tip && (
+          {tip && tipped && (
             <span className="tip" style={{ left: tip.x }} aria-hidden="true">
-              Scene {tip.n} · {tip.words}
+              Scene {tip.n} · {sceneWords(tipped)}
             </span>
           )}
         </div>

@@ -68,7 +68,8 @@ def test_story_lifecycle(client, wait):
     r = client.get(f"/api/assets/{film}", headers={"Range": "bytes=0-99"})
     assert r.status_code == 206 and len(r.content) == 100
     assert client.get(f"/api/assets/{job['result']['vtt']}").headers["content-type"].startswith("text/vtt")
-    assert client.get("/api/stories").json()[0]["film"]["film"] == film
+    listed = client.get("/api/stories").json()[0]
+    assert listed["film"]["film"] == film and listed["progress"] is None  # nothing running
 
     assert client.delete(f"/api/stories/{sid}").status_code == 204
     assert client.get(f"/api/stories/{sid}").status_code == 404

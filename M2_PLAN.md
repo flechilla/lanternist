@@ -716,9 +716,10 @@ mini reel in the dock everywhere else; no sound; streaming the writer's prose co
   Transition from the reel to the film.
 - [x] **Progress everywhere** (`feat/progress-everywhere`). The dock on the other steps says what's
   happening in the same sentence, with time left and a mini reel of the scenes (hover one for its
-  state), and opens the reel for a render. The tab title reads "(62%) The Lantern of the Lake" while a
-  job runs; the percentage is by time and never goes back. "Tell me when it's ready" asks for
-  notification permission only when clicked, and notifies once the job ends if the page is in the
-  background. The Library shows a running story's percentage in a ring. Writing a story shows the
-  writer's two passes, "Drafting the story" then "Planning the scenes", with its log under Behind the
-  scenes.
+  state), and opens the reel for a render. The tab title reads "(62%) The Lantern of the Lake ·
+  Lanternist" while a job runs; the percentage is by time and never goes back. "Tell me when it's
+  ready" asks for notification permission only when clicked, and notifies once the job ends if the
+  page is in the background; the story's page does the telling, so the button says it does so while
+  that page is open. The Library shows a running story's percentage in a ring. Writing a story lists
+  the writer's passes as it names them (`writer.PASSES`), each done, now or to come, with the log
+  under Behind the scenes.

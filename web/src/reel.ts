@@ -227,3 +227,6 @@ export function reveal(el: Element, block: ScrollLogicalPosition = "nearest") {
     behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
   });
 }
+
+/** What "Tell me when it's ready" says once pressed: the page does the telling, so only while it's open. */
+export const TELLING = "We'll tell you while this page is open";

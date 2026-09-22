@@ -22,8 +22,11 @@ import ScriptEditor from "../components/ScriptEditor";
 import { useAction, useJobStreams, useOptions } from "../hooks";
 
 type Step = "script" | "board" | "film";
-// What the writer does, in order: its two passes (`writer.write_storyboard`).
-const WRITER_PASSES = ["Drafting the story", "Planning the scenes"];
+const STEPS: { id: Step; name: string }[] = [
+  { id: "script", name: "Script" },
+  { id: "board", name: "Board" },
+  { id: "film", name: "Film" },
+];
 
 /** A system notification that a job the viewer asked about has ended, when they've gone elsewhere. */
 function tell(job: Job, title: string) {
@@ -32,11 +35,6 @@ function tell(job: Job, title: string) {
   const heading = job.status === "done" ? `${what} is ready` : `${what} stopped`;
   new Notification(heading, { body: job.status === "done" ? title : (job.error?.split("\n")[0] ?? title) });
 }
-const STEPS: { id: Step; name: string }[] = [
-  { id: "script", name: "Script" },
-  { id: "board", name: "Board" },
-  { id: "film", name: "Film" },
-];
 
 export default function Story() {
   const { id = "", step: stepParam } = useParams();
@@ -290,6 +288,8 @@ export default function Story() {
     });
 
   const sb = draft ?? detail.storyboard;
+  // The dock draws a job's scenes over the story, so only when it runs on the version the page shows.
+  const onThisVersion = current?.version === detail.version;
   const writeJob = jobs.find((j) => j.kind === "write");
   const w = detail.writer;
   const writtenBy =
@@ -380,19 +380,7 @@ export default function Story() {
           {writeJob && writeJob.status !== "failed" && writeJob.status !== "cancelled" ? (
             <>
               <h2>Writing your story</h2>
-              <ol className="passes" aria-live="polite">
-                {WRITER_PASSES.map((name, i) => {
-                  const done = writeJob.progress?.stages?.write?.done ?? 0;
-                  const state =
-                    done > i ? "done" : done === i && writeJob.status === "running" ? "working" : "planned";
-                  return (
-                    <li key={name} data-state={state}>
-                      {name}
-                    </li>
-                  );
-                })}
-              </ol>
-              <p className="muted">{writeJob.progress?.message}</p>
+              <Passes job={writeJob} />
               <details>
                 <summary>Behind the scenes</summary>
                 <Stages job={writeJob} />
@@ -488,14 +476,42 @@ export default function Story() {
         <Dock
           job={current}
           queued={active.length - 1}
-          sb={sb}
-          board={detail.board}
-          reel={current.kind === "render" ? `/stories/${id}/film` : null}
+          sb={onThisVersion ? detail.storyboard : null}
+          board={onThisVersion ? detail.board : null}
+          reel={current.kind === "render" && onThisVersion ? `/stories/${id}/film` : null}
           telling={!!telling[current.id]}
           onTell={() => void askToTell(current)}
           onCancel={() => cancel(current)}
         />
       )}
+    </>
+  );
+}
+
+/** The writer's passes, as the job names them: each done, now, or to come. */
+function Passes({ job }: { job: Job }) {
+  const write = job.progress?.stages?.write;
+  const passes = write?.passes ?? [];
+  const done = write?.done ?? 0;
+  const running = job.status === "running";
+  return (
+    <>
+      <p className="sr-only" aria-live="polite">
+        {running ? passes[done] : ""}
+      </p>
+      <ol className="passes">
+        {passes.map((name, i) => {
+          const state = done > i ? "done" : done === i && running ? "working" : "planned";
+          return (
+            <li key={name} data-state={state} aria-current={state === "working" ? "step" : undefined}>
+              {name}
+              <span className="sr-only">
+                {state === "done" ? ", done" : state === "working" ? ", now" : ", to come"}
+              </span>
+            </li>
+          );
+        })}
+      </ol>
     </>
   );
 }

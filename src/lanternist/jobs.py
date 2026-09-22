@@ -11,6 +11,7 @@ import logging
 import shutil
 import time
 import traceback
+from collections.abc import Sequence
 from typing import Any, cast
 
 from . import pace, prefs
@@ -144,6 +145,12 @@ class Progress:
             step["tries"] = step.get("tries", 0) + 1
             if (began := self._began.pop((e.stage, whose), None)) is not None:
                 step["secs"] = round(time.time() - began, 1)
+
+    def passes(self, stage: str, names: Sequence[str]) -> None:
+        """Name the passes a stage of one item goes through, in order, for the page to list; its row's
+        `done` counts the ones ended."""
+        self.snap["stages"][stage]["passes"] = list(names)
+        self.flush()
 
     def plan_cast(self, sheet: bool, portraits: list[str]) -> None:
         """What a board or render will draw of its cast, so the page shows it from the start: whether
@@ -360,19 +367,20 @@ class Runner:
             raise ValueError(f"a {job.kind} job needs a story")
         calls = Calls(self.db, story_id=job.story_id, job_id=job.id)
         if job.kind == "write":
-            from .writer import Brief, write_storyboard
+            from .writer import PASSES, Brief, write_storyboard
 
-            # Two passes, counted on the row once the first is done, so the page can say which is on.
+            # The writer's passes, named on its row and counted as each ends, so the page lists them.
             progress.stage(Event("write", "start"))
+            progress.passes("write", PASSES)
             sb = await write_storyboard(
                 cfg,
                 Brief(**job.params),
                 emit=progress.note,
                 calls=calls,
-                drafted=lambda: progress.stage(Event("write", "progress", done=1, total=2)),
+                passed=lambda n: progress.stage(Event("write", "progress", done=n, total=len(PASSES))),
             )
             version = self.db.add_version(job.story_id, sb.model_dump(), note="written")
-            progress.stage(Event("write", "finish", done=2, total=2))
+            progress.stage(Event("write", "finish", done=len(PASSES), total=len(PASSES)))
             return {"version": version, **calls.summary()}
 
         with self.db.session() as s:

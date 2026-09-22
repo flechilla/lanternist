@@ -206,7 +206,7 @@ def test_the_library_says_how_far_a_running_job_is(db):
     assert (row.active, row.progress) == (0, None)
 
 
-async def test_how_far_a_job_is_never_goes_back(db, monkeypatch):
+async def test_how_far_a_job_is_never_goes_back_when_an_estimate_grows(db, monkeypatch):
     clock = Clock()
     monkeypatch.setattr(jobs, "time", clock)
     progress = Progress(db, db.add_job(None, "render", None, {}, None).id)
