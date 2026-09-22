@@ -75,15 +75,42 @@ export interface Models {
 export interface StageState {
   /** What the progress row is called; the backend names every stage. */
   label?: string;
+  /** What the stage is doing, in plain words: "Painting the scenes". */
+  doing?: string;
   status: "running" | "done";
   done: number;
   total: number;
-  assets?: Record<string, string>;
+  /** What a row of one item made: the cast sheet, or the film. */
   asset?: string;
+  /** What the stage has paid for so far, when it runs on a paid model. */
+  spent_usd?: number;
+}
+
+/** Where one scene's step in a stage, or one character's portrait, has got to in a job. */
+export interface Step {
+  /** `failed`: the picture check failed its picture, and says why in `note`. */
+  state: "queued" | "cached" | "waiting" | "working" | "done" | "failed";
+  /** Kept while it's made again, until the new one lands. */
+  asset?: string;
+  /** How long it took, from starting on it to its output landing. */
+  secs?: number;
+  /** How many times the job made it: 2 once the picture check had it drawn again. */
+  tries?: number;
+  /** Waiting: how many requests are ahead of it in the provider's queue. */
+  ahead?: number;
+  note?: string;
+  /** What the provider billed for it, when it bills by scene: a portrait's and a check's count only in their stage. */
+  cost_usd?: number;
 }
 
 export interface Progress {
   stages?: Record<string, StageState>;
+  /** By scene number, then by stage. */
+  scenes?: Record<string, Record<string, Step>>;
+  /** Each character's portrait, by character id. */
+  cast?: Record<string, Step>;
+  /** What the job has paid for so far. */
+  spent_usd?: number;
   log?: string[];
   message?: string;
 }

@@ -54,7 +54,7 @@ def job_dict(j: Job) -> dict:
         "kind": j.kind,
         "status": j.status,
         "params": j.params,
-        "progress": j.progress,
+        "progress": dollars(j.progress),
         "result": dollars(j.result),
         "error": j.error,
         "estimate": dollars(j.estimate),

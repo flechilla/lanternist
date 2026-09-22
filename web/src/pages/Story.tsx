@@ -109,7 +109,8 @@ export default function Story() {
     let cast: string | undefined;
     for (const j of [...jobs].reverse()) {
       if (!detail || j.version !== detail.version || j.status === "failed") continue;
-      Object.assign(keyframes, j.progress?.stages?.keyframes?.assets ?? {});
+      for (const [n, steps] of Object.entries(j.progress?.scenes ?? {}))
+        if (steps.keyframes?.asset) keyframes[n] = steps.keyframes.asset;
       cast = j.progress?.stages?.cast?.asset ?? cast;
     }
     return { keyframes, cast };

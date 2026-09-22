@@ -56,6 +56,20 @@ LABELS = {
     "mix": "Final mix",
     "sample": "Voice sample",
 }
+# What each stage is doing, in the words the progress shows people who don't care what a stage is.
+ACTIONS = {
+    "write": "Writing the story",
+    "narration": "Recording the narrator",
+    "cast": "Drawing the cast",
+    "portraits": "Drawing the cast",
+    "keyframes": "Painting the scenes",
+    "check": "Checking the pictures",
+    "motion": "Bringing the scenes to life",
+    "ambience": "Adding the sound of each scene",
+    "clips": "Cutting the scenes",
+    "mix": "Mixing the film",
+    "sample": "Recording a voice sample",
+}
 
 
 class BudgetExceeded(RuntimeError):
@@ -87,15 +101,26 @@ def usd(micros: int) -> str:
     return f"${dollars:.3f}" if 0 < dollars < 0.01 else f"${dollars:.2f}"
 
 
+# What one item of a stage goes through, from listed to made: queued (or cached, when the cache
+# holds it), then waiting in a provider's queue or working, then done.
+ITEM = ("queued", "cached", "waiting", "working", "done")
+
+
 @dataclass
 class Event:
+    """A stage starting, noting something or finishing (start | progress | finish), or one of its
+    items moving along (a status of ITEM)."""
+
     stage: str  # a key of LABELS
-    status: str  # start | cached | done | finish | progress
+    status: str
     scene: int | None = None
     done: int = 0
     total: int = 0
     message: str = ""
     asset: str | None = None
+    who: str | None = None  # the character whose portrait it is
+    ahead: int | None = None  # waiting: the requests ahead of it in the provider's queue
+    failed: str | None = None  # a verdict: why the picture check failed the item's picture
 
     def dict(self) -> dict:
         return asdict(self)
@@ -219,9 +244,11 @@ class Pipeline:
         items: list[Item],
         asset: str,
         bind: Callable[[Item, dict[str, dict]], None] | None = None,
+        failing: Callable[[dict], str | None] | None = None,
     ) -> dict[str, dict]:
         """Serve what the cache holds, make the rest as one batch, and store each output as it lands.
-        Returns every item's step record, by item id."""
+        Returns every item's step record, by item id. `failing` reads a verdict from a record: why
+        it fails, or None, so the progress shows a failed picture as soon as its verdict is in."""
         records: dict[str, dict] = {}
         for it in items:
             if rec := self.cached(it):
@@ -233,6 +260,18 @@ class Pipeline:
         done = {row: sum((it.stage or stage) == row for it in items if it.id in records) for row in rows}
         for row in sorted(rows, key=lambda r: r == stage):  # the stage's own row last, as it was
             self.emit(row, "start", done=done[row], total=total[row])
+
+        def told(it: Item, status: str, **kw) -> None:
+            self.emit(it.stage or stage, status, scene=it.scene, who=it.who, **kw)
+
+        def verdict(rec: dict) -> str | None:
+            return failing(rec) if failing else None
+
+        for it in items:
+            if it.id in records:
+                told(it, "cached", asset=records[it.id]["assets"][asset], failed=verdict(records[it.id]))
+            else:
+                told(it, "queued")
         if pending:
             work = self.store.tmp()
             waited_on = {a for it in pending for a in it.after}
@@ -250,7 +289,7 @@ class Pipeline:
                 row = it.stage or stage
                 self._log_local(maker, row, it, out)
                 done[row] += 1
-                self.emit(row, "done", scene=it.scene, done=done[row], total=total[row], asset=main)
+                told(it, "done", done=done[row], total=total[row], asset=main, failed=verdict(records[it.id]))
 
             ctx = StepContext(
                 self.cfg,
@@ -269,6 +308,7 @@ class Pipeline:
                     done=done.get(stage, 0),
                     total=total.get(stage, 0),
                 ),
+                phase=lambda it, phase, ahead: told(it, phase, ahead=ahead),
             )
             if bind:
                 ctx.bind = lambda it: bind(it, records)
@@ -390,7 +430,7 @@ class Pipeline:
             params = {"prompt": prompt, "seed": sb.seed, "width": w, "height": h, "refs": [cast or "cast"]}
             key = self._portrait_key(eng, prompt, sb.seed, cast) if cast else None
             after = () if cast else ("cast",)
-            items.append(Item(_pid(c.id), key, None, params, after=after, stage="portraits"))
+            items.append(Item(_pid(c.id), key, None, params, after=after, stage="portraits", who=c.id))
         return items
 
     def faces(self, sb: Storyboard, cast: str | None, records: dict[str, dict]) -> dict[str, str]:
@@ -525,22 +565,26 @@ class Pipeline:
         if any(not self.cached(it) for it in items):
             await checker.price()  # a board all cached asks nothing, so it needs no prices, nor the network
         try:
-            records = await self._stage("check", checker, items, "verdict")
+            records = await self._stage("check", checker, items, "verdict", failing=check.failing)
         except BaseException:
             # The verdicts given before it failed are cached, and a cached "fail" only flags: give those
             # pictures their new seeds now, so the next board draws them again rather than keeping them.
             if not last:
                 given = [
-                    (it.scene, rec["meta"])
+                    (it.scene, why)
                     for it in items
-                    if it.scene in checker.asked and (rec := self.cached(it))
+                    if it.scene in checker.asked
+                    and (rec := self.cached(it))
+                    and (why := check.failing(rec)) is not None
                 ]
-                self._redraw(
-                    sb, {n: v["reason"] for n, v in given if n is not None and v["verdict"] == "fail"}
-                )
+                self._redraw(sb, {n: why for n, why in given if n is not None})
             raise
-        verdicts = {it.scene: records[it.id]["meta"] for it in items if it.scene is not None}
-        return Checked({n: v["reason"] for n, v in verdicts.items() if v["verdict"] == "fail"}, checker.asked)
+        failed = {
+            it.scene: why
+            for it in items
+            if it.scene is not None and (why := check.failing(records[it.id])) is not None
+        }
+        return Checked(failed, checker.asked)
 
     # ---------------------------------------------------------------- motion
     def motion_items(

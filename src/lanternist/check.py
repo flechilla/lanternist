@@ -86,6 +86,12 @@ def question(sb: Storyboard, scene: Scene) -> str:
     )
 
 
+def failing(record: dict) -> str | None:
+    """Why a check's step record fails its picture, or None when the picture passed."""
+    verdict = record["meta"]
+    return verdict["reason"] if verdict["verdict"] == "fail" else None
+
+
 class Checker(Maker):
     """Asks the checker about each picture; a picture's verdict is its output, kept as JSON. `asked`
     holds the scenes it gave a verdict on in this run, as against verdicts the cache already held."""
@@ -122,6 +128,7 @@ class Checker(Maker):
 
         async def one(it: Item) -> None:
             async with sem:
+                ctx.phase(it, "working", None)
                 picture = ctx.work / f"{it.id}.jpg"
                 await ffmpeg.thumbnail(ctx.store.path(it.params["image"]), picture, PICTURE_WIDTH)
                 why = f"The picture check with {self.model} couldn't judge scene {it.scene}'s picture"

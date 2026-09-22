@@ -18,10 +18,12 @@ from .config import Settings
 from .db import TERMINAL, Database, Job, now
 from .keys import redact
 from .llm import Calls
-from .pipeline import LABELS, Board, BudgetExceeded, Event, Pipeline
+from .pipeline import ACTIONS, ITEM, LABELS, Board, BudgetExceeded, Event, Pipeline
 from .storyboard import Storyboard
 
 log = logging.getLogger(__name__)
+
+THROTTLE = 0.25  # seconds between two writes of a snapshot while items land
 
 
 def describe(e: Event) -> str:
@@ -36,44 +38,92 @@ def describe(e: Event) -> str:
     if e.status == "finish":
         return f"{label}: finished"
     if e.status == "done" and e.scene is not None:
-        return f"{label}: scene {e.scene} ready ({e.done} of {e.total})"
+        what = f"fails: {e.failed}" if e.failed is not None else "ready"
+        return f"{label}: scene {e.scene} {what} ({e.done} of {e.total})"
+    if e.status == "done" and e.who is not None:
+        return f"{label}: {e.who} ready ({e.done} of {e.total})"
     if e.status == "done":
         return f"{label}: ready"
     return f"{label}: {e.status}"
 
 
 class Progress:
-    """Folds pipeline events into the snapshot the UI shows: one row per stage, plus a short log."""
+    """Folds pipeline events into the snapshot the UI shows: one row per stage; each scene's step in
+    each stage, and each character's portrait, as they move from queued to done; what the job has
+    spent, in all and by stage; and a short log.
+
+    A step is {state, asset, secs, tries, ahead, note, cost_micros}: its state is an item status, or
+    "failed" when the picture check failed its picture, with why in `note`. A step made again keeps
+    its last asset until the new one lands, so the page can show the old picture meanwhile. Its cost
+    is what the provider billed for that scene in that stage; a portrait's and a check's are counted
+    in their stage's spend only, since their runs aren't logged by scene."""
 
     def __init__(self, db: Database, job_id: str):
         self.db, self.job_id = db, job_id
-        self.snap: dict[str, Any] = {"stages": {}, "log": [], "message": ""}
+        self.snap: dict[str, Any] = {"stages": {}, "scenes": {}, "cast": {}, "log": [], "message": ""}
         self.t0 = time.time()
         self._last_write = 0.0
+        self._later: asyncio.TimerHandle | None = None
+        self._began: dict[tuple[str, str], float] = {}  # when work on each step began, by row and whose
 
     def stage(self, e: Event) -> None:
         st = self.snap["stages"].setdefault(
-            e.stage, {"label": LABELS.get(e.stage, e.stage), "status": "running", "done": 0, "total": 0}
+            e.stage,
+            {
+                "label": LABELS.get(e.stage, e.stage),
+                "doing": ACTIONS.get(e.stage, ""),
+                "status": "running",
+                "done": 0,
+                "total": 0,
+            },
         )
         if e.total:
             st["done"], st["total"] = e.done, e.total
-        if e.status == "finish":
+        # A row is done once all its items are: the cast sheet's before the pictures of its batch.
+        if e.status == "finish" or (e.status == "done" and e.done == e.total):
             st["status"] = "done"
-        elif e.status == "cached" and e.scene is None:
+        elif e.status == "cached" and e.scene is None and e.who is None:
             st.update(status="done", done=1, total=1)
         else:
             st["status"] = "running"
-        if e.asset and e.scene is not None:
-            st.setdefault("assets", {})[str(e.scene)] = e.asset
-        elif e.asset:
+        if e.asset and e.scene is None and e.who is None:
             st["asset"] = e.asset
+        if e.status in ITEM:
+            self._move(e)
         if e.message or e.status in ("start", "done", "finish"):
             self.note(
                 f"{LABELS.get(e.stage, e.stage)}: {e.message}" if e.message else describe(e),
                 flush=e.status != "done",
             )
         else:
-            self.flush()
+            self.flush(force=False)
+
+    def _move(self, e: Event) -> None:
+        """Move one item's step along: a scene's, in its stage's row, or a character's portrait."""
+        if e.scene is not None:
+            whose = str(e.scene)
+            step = self.snap["scenes"].setdefault(whose, {}).setdefault(e.stage, {})
+        elif e.who is not None:
+            whose, step = e.who, self.snap["cast"].setdefault(e.who, {})
+        else:
+            return
+        if e.status == "cached" and step.get("asset") == e.asset:
+            return  # made earlier in this job, and served from the cache now
+        step["state"] = "failed" if e.failed is not None else e.status
+        step.pop("ahead", None)
+        if e.ahead is not None:
+            step["ahead"] = e.ahead
+        if e.status == "working":
+            self._began.setdefault((e.stage, whose), time.time())
+        if e.status in ("cached", "done"):
+            step["asset"] = e.asset
+            step.pop("note", None)
+            if e.failed is not None:
+                step["note"] = e.failed
+        if e.status == "done":
+            step["tries"] = step.get("tries", 0) + 1
+            if (began := self._began.pop((e.stage, whose), None)) is not None:
+                step["secs"] = round(time.time() - began, 1)
 
     def note(self, message: str, flush: bool = True) -> None:
         self.snap["message"] = message
@@ -81,10 +131,33 @@ class Progress:
         self.flush(force=flush)
 
     def flush(self, force: bool = True) -> None:
-        if not force and time.time() - self._last_write < 0.25:
-            return
+        wait = self._last_write + THROTTLE - time.time()
+        if force or wait <= 0:
+            self._write()
+        elif self._later is None:
+            # A moment later, so the last of a burst of events isn't held back until the next one.
+            self._later = asyncio.get_running_loop().call_later(wait, self._write)
+
+    def _write(self) -> None:
+        if self._later is not None:
+            self._later.cancel()
+            self._later = None
         self._last_write = time.time()
+        self._spend()
         self.db.update_job(self.job_id, progress=dict(self.snap))
+
+    def _spend(self) -> None:
+        """What the job has paid for so far: in all, by stage, and for each scene's step."""
+        spend = self.db.spend_by_step(self.job_id)
+        self.snap["spent_micros"] = sum(spend.values())
+        by_stage: dict[str, int] = {}
+        for (stage, scene), micros in spend.items():
+            by_stage[stage] = by_stage.get(stage, 0) + micros
+            if scene is not None and (step := self.snap["scenes"].get(str(scene), {}).get(stage)):
+                step["cost_micros"] = micros
+        for stage, micros in by_stage.items():
+            if stage in self.snap["stages"]:
+                self.snap["stages"][stage]["spent_micros"] = micros
 
 
 # A few seconds on a remote model each: they run in a lane of their own, beside the queue, so a voice

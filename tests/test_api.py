@@ -55,6 +55,12 @@ def test_story_lifecycle(client, wait):
     film = job["result"]["film"]
     stages = job["progress"]["stages"]
     assert {"narration", "keyframes", "motion", "clips", "mix"} <= set(stages)
+    # Every scene's steps, as the page reads them: made in this render, or served from the board's cache.
+    scenes = job["progress"]["scenes"]
+    assert scenes["2"]["motion"]["state"] == "done" and scenes["2"]["motion"]["asset"]
+    assert all(steps["clips"]["state"] == "done" for steps in scenes.values())
+    assert scenes["1"]["narration"]["state"] == "cached" and "motion" not in scenes["1"]  # a still
+    assert job["progress"]["spent_usd"] == 0 and stages["keyframes"]["doing"] == "Painting the scenes"
     r = client.get(f"/api/assets/{film}", headers={"Range": "bytes=0-99"})
     assert r.status_code == 206 and len(r.content) == 100
     assert client.get(f"/api/assets/{job['result']['vtt']}").headers["content-type"].startswith("text/vtt")

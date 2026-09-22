@@ -421,6 +421,16 @@ class Database:
         with self.session() as s:
             return int(s.scalar(q))
 
+    def spend_by_step(self, job_id: str) -> dict[tuple[str, int | None], int]:
+        """What a job has paid for, by stage and scene: only steps with a cost, so no local ones."""
+        q = (
+            select(StepRun.stage, StepRun.scene, func.sum(StepRun.cost_micros))
+            .where(StepRun.job_id == job_id, StepRun.cost_micros.is_not(None))
+            .group_by(StepRun.stage, StepRun.scene)
+        )
+        with self.session() as s:
+            return {(stage, scene): int(micros) for stage, scene, micros in s.execute(q)}
+
     def spend_by_story(self) -> dict[str, int]:
         """What each story has cost so far, in one query, for the library."""
         q = (

@@ -53,6 +53,7 @@ class Item:
     params: dict = field(default_factory=dict)  # prompt, seed, size, refs, chunks, shots, …
     after: tuple[str, ...] = ()  # the items earlier in the same batch whose outputs this one needs
     stage: str | None = None  # the progress row it reports under, when not its stage's own
+    who: str | None = None  # the character a portrait is of: what the progress shows it under
 
 
 @dataclass
@@ -109,6 +110,9 @@ class StepContext:
     job_id: str | None = None
     user_cancelled: Callable[[], bool] = lambda: False
     note: Callable[[str, int | None], None] = lambda message, scene: None  # a progress line
+    # Where an item is while it's made: "working" on it, or "waiting" in a provider's queue with a
+    # number of requests ahead of it.
+    phase: Callable[[Item, str, int | None], None] = lambda item, phase, ahead: None
     bind: Callable[[Item], None] = _unbound
 
 
@@ -207,8 +211,10 @@ class FalEngine(Engine):
             seen["last"] = now
             if status == "IN_QUEUE":
                 pos = d.get("queue_position")
+                ctx.phase(item, "waiting", pos)
                 ctx.note(f"{where}: waiting at fal" + (f", {pos} ahead" if pos else ""), item.scene)
             elif status == "IN_PROGRESS":
+                ctx.phase(item, "working", None)
                 ctx.note(f"{where}: generating at fal", item.scene)
 
         spec = RunSpec(

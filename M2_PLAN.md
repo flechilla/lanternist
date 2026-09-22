@@ -1,6 +1,6 @@
 # Lanternist M2: OpenRouter and fal.ai
 
-> **Status, 21 Sep 2026: Phases A and B are built and checked against the live APIs.** 91 tests pass offline, and your library is migrated to `0002` (backup in `~/Lanternist/backups/`). Both keys work. A first real video was made end to end: GPT Luna wrote the story and MiniMax H3 Max rendered the shot on fal, for $0.80 as estimated. Stories can now be written by any OpenRouter model with structured output, picked on New story; Claude Opus 5 wrote a Spanish story in the app for $0.21, as estimated. **22 Sep: Phases C–F are built and pass offline** (162 tests): the engine interface; pictures on fal with five models (Nano Banana Pro, Seedream 5.0 Pro and FLUX.2 [max] among them); an estimate and a budget before anything is spent; video on fal with nine models, MiniMax H3 Max and its cheap Turbo among them, with MMAudio ambience; and narration on fal with voices you can hear before choosing. **A first live run through the app** (22 Sep, a throwaway library, $0.43 in all): GPT-5.6 Luna wrote a 1-minute Spanish story, two ElevenLabs voices were heard before Aria was chosen, ElevenLabs narrated it, klein drew the cast sheet and pictures, and MiniMax H3 Max Turbo animated one 15 s scene at 480P in 3 s of inference. Every fal charge matched its estimate within 3% (narration and video exactly), and the cast held between the pictures and the clip. What's left is the rest of the definition of done, live: Kling with MMAudio, a restart and a cancel mid-video, and a clone on fal Qwen3-TTS. **22 Sep, a film quality review (§6)** changed how pictures are referenced, how a paragraph is shot and how a film is mixed, and added a picture check.
+> **Status, 21 Sep 2026: Phases A and B are built and checked against the live APIs.** 91 tests pass offline, and your library is migrated to `0002` (backup in `~/Lanternist/backups/`). Both keys work. A first real video was made end to end: GPT Luna wrote the story and MiniMax H3 Max rendered the shot on fal, for $0.80 as estimated. Stories can now be written by any OpenRouter model with structured output, picked on New story; Claude Opus 5 wrote a Spanish story in the app for $0.21, as estimated. **22 Sep: Phases C–F are built and pass offline** (162 tests): the engine interface; pictures on fal with five models (Nano Banana Pro, Seedream 5.0 Pro and FLUX.2 [max] among them); an estimate and a budget before anything is spent; video on fal with nine models, MiniMax H3 Max and its cheap Turbo among them, with MMAudio ambience; and narration on fal with voices you can hear before choosing. **A first live run through the app** (22 Sep, a throwaway library, $0.43 in all): GPT-5.6 Luna wrote a 1-minute Spanish story, two ElevenLabs voices were heard before Aria was chosen, ElevenLabs narrated it, klein drew the cast sheet and pictures, and MiniMax H3 Max Turbo animated one 15 s scene at 480P in 3 s of inference. Every fal charge matched its estimate within 3% (narration and video exactly), and the cast held between the pictures and the clip. What's left is the rest of the definition of done, live: Kling with MMAudio, a restart and a cancel mid-video, and a clone on fal Qwen3-TTS. **22 Sep, a film quality review (§6)** changed how pictures are referenced, how a paragraph is shot and how a film is mixed, and added a picture check. **22 Sep, render progress for everyone (§7)**: every scene reports its own progress; the reel that shows it is being built.
 >
 > This is the blueprint's M2 ("fal, registry, estimator, your own key") with one change: the writer calls OpenRouter directly instead of going through fal's `openrouter/router`. Going direct gives the real cost of every request, the full list of models, and one hop fewer.
 > API facts below were read from the OpenRouter and fal docs, the per-model `llms.txt` pages and the fal-client 1.0.3 source on 21 Sep 2026. Anything marked **verify** was not confirmed and gets checked in Phase A.
@@ -665,3 +665,32 @@ together and merged a jug into a mug. It made 4¼ minutes of video in 90 s.
   run 10% short. Measuring each narrator's pace would fix the length.
 - Next, from similar products: a music bed ducked under the voice (ACE-Step, locally or on fal), and
   checking clips as well as pictures.
+
+## 7. Render progress for everyone (22 Sep 2026)
+
+Outside the plan above. The progress spoke to engineers: stage bars, counts and a log. A render of a
+37-scene story takes 20 minutes, and what someone waiting wants to see is their story arriving. The
+design, the research behind it and a replay of a real run are in the sketch
+(https://claude.ai/artifact/A5ZWEADBPhP8eDR5LRkJn4). In short: every scene is a lantern slide on a
+reel from the first second, and fills in where it sits (voice, picture, motion); one plain sentence
+says what's happening; time left is a range; hovering a slide shows its details; and the stage bars,
+models, spend and log move behind a "Behind the scenes" switch.
+
+Decisions, as the sketch recommended: spend is one quiet line in the friendly view; Behind the
+scenes is closed by default and remembered per browser; the reel lives on the Film step, with a
+mini reel in the dock everywhere else; no sound; streaming the writer's prose comes later.
+
+- [x] **Per-scene progress in the snapshot** (`feat/scene-progress`). Every item of a stage reports
+  queued or cached, then waiting (with its place in fal's queue) or working, then done: each scene's
+  step in each stage and each character's portrait, under `scenes` and `cast`, with its asset and how
+  long it took. A scene's step on fal says what it cost, and each stage what it has spent. The picture
+  check's verdicts show as they land, and a picture drawn again keeps its old one up until the new
+  one lands. `pipeline.ACTIONS` says what each stage is
+  doing in plain words. `LANTERNIST_FAKE_PACE` makes each fake item take that many seconds. No step
+  key changes.
+- [ ] **Time left and the phase bar** (`feat/progress-time`): a range from the job's estimate and
+  the pace so far; each stage's share of the time; the mix's position from ffmpeg.
+- [ ] **Thumbnails** (`feat/thumbnails`): `/api/assets/{id}?w=` serves a small JPEG of a picture.
+- [ ] **The reel** (`feat/reel`) on the Film step, with hover cards and Behind the scenes.
+- [ ] **Progress everywhere** (`feat/progress-everywhere`): the dock's mini reel, the tab title, a
+  notification when asked for, and the Library.

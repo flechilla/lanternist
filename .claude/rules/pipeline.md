@@ -36,12 +36,18 @@ Each stage builds one `Item` per output and hands them to `Pipeline._stage`, whi
 things in the same order for every stage (don't write the loop again):
 
 1. Serve the items whose key `store.get_step` holds.
-2. `emit(stage, "start", done=hits, total=all)`.
+2. `emit(stage, "start", done=hits, total=all)`, then `cached` (with its asset) or `queued` for each
+   item, so the page shows every scene from the start.
 3. Run all misses as **one batch** on the stage's engine (`engines/base.py`): one model load, under
-   `lease()`, for a local engine; concurrent requests, no lease, for a remote one.
+   `lease()`, for a local engine; concurrent requests, no lease, for a remote one. The engine says
+   when it starts on an item with `ctx.phase(item, "working", None)`, or that it's queued at a
+   provider with `ctx.phase(item, "waiting", ahead)`. A new engine does too.
 4. For each output as it lands: `store.put` the file, `store.put_step` its record, then
    `emit(stage, "done", scene=n, …, asset=…)`.
 5. `emit(stage, "finish")`, and remove the `store.tmp()` work dir.
+
+An item reports under its scene, or under the character it portrays (`Item.who`). `jobs.Progress`
+folds these events into the snapshot's `scenes` and `cast`.
 
 `peek()` shows what the cache holds without running anything. It must compute the same keys as the
 stages, so build keys only through the `_…_key` helpers and never inline a second copy.

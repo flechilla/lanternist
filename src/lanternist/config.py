@@ -157,6 +157,8 @@ class Settings(BaseModel):
     openrouter: OpenRouter = OpenRouter()
     fal: Fal = Fal()
     fake_engines: bool = Field(default_factory=lambda: os.environ.get("LANTERNIST_FAKE_ENGINES") == "1")
+    # Seconds each fake model item takes, so the progress can be watched without a GPU or keys.
+    fake_pace: float = Field(default_factory=lambda: float(os.environ.get("LANTERNIST_FAKE_PACE") or 0))
 
     @property
     def library(self) -> Path:
