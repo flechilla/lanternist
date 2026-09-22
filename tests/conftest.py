@@ -1,18 +1,78 @@
 """Shared fixtures. Every test runs away from the real keychain, the real key file and any keys in the
-environment, and gets its own library folder."""
+environment, and gets its own library folder and database.
+
+The database is a SQLite file in the library. With LANTERNIST_TEST_DATABASE_URL set to an admin URL
+of a Postgres server (`scripts/check postgres`), each test gets a Postgres database of its own
+instead, cloned from one migrated once per session, and dropped after the test."""
 
 import asyncio
 import importlib
+import os
 import time
+import uuid
+from collections.abc import Iterator
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import Engine, create_engine, event, make_url, text
 
 from lanternist import config, providers
 from lanternist.config import Paths, Settings
 from lanternist.db import Database, Story
 from lanternist.providers.fake import FakeWorld
 from lanternist.storyboard import CastMember, Line, Scene, Storyboard
+
+TEST_DATABASE_URL = os.environ.get("LANTERNIST_TEST_DATABASE_URL")
+
+
+def pytest_collection_modifyitems(items):
+    if TEST_DATABASE_URL:
+        for item in items:
+            if item.get_closest_marker("sqlite_only"):
+                item.add_marker(pytest.mark.skip(reason="checks a local SQLite library file"))
+
+
+@pytest.fixture(autouse=True)
+def _isolated_database(monkeypatch):
+    """A LANTERNIST_DATABASE_URL in the shell would point the app under test at that database."""
+    monkeypatch.delenv("LANTERNIST_DATABASE_URL", raising=False)
+
+
+def _on(database: str) -> str:
+    """The test server's URL, on another of its databases."""
+    return make_url(TEST_DATABASE_URL).set(database=database).render_as_string(hide_password=False)
+
+
+@pytest.fixture(scope="session")
+def _postgres() -> Iterator[tuple[Engine, str]]:
+    """The test server, and a database on it at head that each test's database is a copy of."""
+    # CREATE DATABASE can't run in a transaction.
+    admin = create_engine(TEST_DATABASE_URL, isolation_level="AUTOCOMMIT")
+    template = f"lanternist_template_{uuid.uuid4().hex[:8]}"
+    with admin.connect() as c:
+        c.execute(text(f'CREATE DATABASE "{template}"'))
+    migrated = Database(_on(template))
+    migrated.migrate()
+    migrated.engine.dispose()  # a template is copied only while nothing is connected to it
+    yield admin, template
+    with admin.connect() as c:
+        c.execute(text(f'DROP DATABASE "{template}"'))
+    admin.dispose()
+
+
+@pytest.fixture
+def database_url(request, tmp_path) -> Iterator[str]:
+    """This test's database: lanternist.db in its library, or a fresh copy of the Postgres template."""
+    if not TEST_DATABASE_URL:
+        yield f"sqlite:///{tmp_path / 'lib' / 'lanternist.db'}"
+        return
+    admin, template = request.getfixturevalue("_postgres")
+    name = f"t_{uuid.uuid4().hex}"
+    with admin.connect() as c:
+        c.execute(text(f'CREATE DATABASE "{name}" TEMPLATE "{template}"'))
+    yield _on(name)
+    with admin.connect() as c:
+        c.execute(text(f'DROP DATABASE "{name}" WITH (FORCE)'))
 
 
 @pytest.fixture(autouse=True)
@@ -97,17 +157,44 @@ def story_row(db) -> str:
 
 
 @pytest.fixture
-def db(cfg) -> Database:
-    d = Database(cfg.library / "lanternist.db")
+def db(database_url) -> Iterator[Database]:
+    d = Database(database_url)
     d.migrate()
-    return d
+    yield d
+    d.engine.dispose()
 
 
 @pytest.fixture
-def client(tmp_path, voices, monkeypatch):
-    """The app in fake mode on its own library, as `lanternist serve` would run it."""
+def lands_first():
+    """Arranges another save to land at the same moment as the one under test: `save` runs once, on a
+    connection of its own, just as the database is about to update a story, after the save under test
+    has read the version it builds on."""
+    listening = []
+
+    def arrange(db: Database, save) -> None:
+        landed: list[bool] = []
+
+        def hook(_conn, _cursor, statement, *_) -> None:
+            if statement.startswith("UPDATE stories") and not landed:
+                landed.append(True)
+                save()
+
+        event.listen(db.engine, "before_cursor_execute", hook)
+        listening.append((db, hook))
+
+    yield arrange
+    for db, hook in listening:
+        event.remove(db.engine, "before_cursor_execute", hook)
+
+
+@pytest.fixture
+def client(tmp_path, voices, database_url, monkeypatch):
+    """The app in fake mode on its own library and database, as `lanternist serve` would run it."""
     toml = tmp_path / "lanternist.toml"
-    toml.write_text(f'[paths]\nlibrary = "{tmp_path / "lib"}"\nvoices = ["{voices}"]\n', encoding="utf-8")
+    toml.write_text(
+        f'[paths]\nlibrary = "{tmp_path / "lib"}"\nvoices = ["{voices}"]\n\n[database]\nurl = "{database_url}"\n',
+        encoding="utf-8",
+    )
     monkeypatch.setenv("LANTERNIST_CONFIG", str(toml))
     monkeypatch.setenv("LANTERNIST_FAKE_ENGINES", "1")
     config.settings.cache_clear()
@@ -116,6 +203,7 @@ def client(tmp_path, voices, monkeypatch):
     appmod = importlib.reload(appmod)
     with TestClient(appmod.app) as c:
         yield c
+    appmod.db.engine.dispose()
     config.settings.cache_clear()
 
 

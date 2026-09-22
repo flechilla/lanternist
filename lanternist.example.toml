@@ -5,6 +5,12 @@
 library = "~/Lanternist"                                      # database, assets, step cache, films
 voices = ["~/Lanternist/voices", "~/ai/bedtime-stories/voices"] # <name>.wav + optional <name>.txt
 
+[database]
+url = ""                                          # empty: lanternist.db in the library. Or Postgres, with the
+                                                  # postgres extra: postgresql+psycopg://user:password@host/name
+                                                  # (LANTERNIST_DATABASE_URL wins over this)
+pool_size = 5                                     # connections each process keeps open to Postgres
+
 [ollama]
 url = "http://127.0.0.1:11434"
 model = "qwen3.8:latest"

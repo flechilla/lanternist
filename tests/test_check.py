@@ -281,7 +281,10 @@ def job_row(db, story_id: str, version: int, kind: str = "board") -> Job:
         return job
 
 
-async def test_the_new_seeds_keep_an_edit_saved_while_the_job_ran(fake_cfg, db, story_row, make_story):
+@pytest.mark.parametrize("edit_lands", ["while the job ran", "as the seeds are saved"])
+async def test_the_new_seeds_keep_an_edit_saved_while_the_job_ran(
+    fake_cfg, db, story_row, make_story, lands_first, edit_lands
+):
     before = make_story(("still", "still"))
     started = db.add_version(story_row, before.model_dump(), note="the version the board runs")
     p = Pipeline(fake_cfg, db=db, story_id=story_row)
@@ -289,15 +292,21 @@ async def test_the_new_seeds_keep_an_edit_saved_while_the_job_ran(fake_cfg, db, 
     # While the board runs, the user retitles the story and changes scene 2's picture.
     edited = before.model_copy(deep=True)
     edited.title, edited.scenes[1].visual = "Retitled", "a different picture"
-    db.add_version(story_row, edited.model_dump(), note="saved while it ran")
+
+    def save_the_edit() -> None:
+        db.add_version(story_row, edited.model_dump(), note="saved while it ran")
+
+    if edit_lands == "while the job ran":
+        save_the_edit()
+    else:  # at the same moment as the seeds: they're applied once more, to the edit
+        lands_first(db, save_the_edit)
     after = before.model_copy(deep=True)
     after.scenes[0].seed, after.scenes[1].seed = 111, 222
     p.redrawn = {1: "twice", 2: "twice"}
     runner = Runner(fake_cfg, db)
     assert runner.keep_redraws(p, job_row(db, story_row, started), before, after) == (started + 2, [1])
-    with db.session() as s:
-        _, row = db.storyboard(s, story_row)
-        latest, note = Storyboard.model_validate(row.storyboard), row.note
+    _, row = db.storyboard(story_row)
+    latest, note = Storyboard.model_validate(row.storyboard), row.note
     assert latest.title == "Retitled" and latest.scenes[1].visual == "a different picture"
     # Scene 1's picture is still the one checked, so it takes its new seed; scene 2 was redrawn by
     # the edit, so its check no longer applies, and the note doesn't claim it.
@@ -352,11 +361,10 @@ async def test_a_board_stopped_after_a_redraw_keeps_its_new_seed(
             runner.cancel_requested.add(job.id)
     with pytest.raises((CheckError, asyncio.CancelledError)):
         await runner.checked_board(p, job, sb)
-    with db.session() as s:
-        story, row = db.storyboard(s, story_row)
-        assert story.version == started + 1
-        assert Storyboard.model_validate(row.storyboard).scenes[0].seed == next_seed(first)
-        assert s.get(Job, job.id).version == (started + 1 if job_takes_it else started)
+    story, row = db.storyboard(story_row)
+    assert story.version == started + 1
+    assert Storyboard.model_validate(row.storyboard).scenes[0].seed == next_seed(first)
+    assert db.get_job(job.id).version == (started + 1 if job_takes_it else started)
 
 
 def job_with_a_redraw(client, wait, fakes, story: Storyboard, kind: str) -> tuple[str, dict]:

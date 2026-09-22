@@ -168,6 +168,7 @@ async def test_a_language_the_app_doesnt_write_is_refused(fake_cfg, db, make_sto
 
 
 async def test_a_language_the_model_doesnt_speak_is_refused(fake_cfg, db, make_story):
+    fake_cfg.library.mkdir(exist_ok=True)  # on SQLite, the database made it
     registry.user_file(fake_cfg.library).write_text(
         '[[model]]\nid = "fal/elevenlabs-v3"\nlanguages = ["en"]\n', encoding="utf-8"
     )

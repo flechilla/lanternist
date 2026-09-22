@@ -147,8 +147,22 @@ class Fal(BaseModel):
     voice_ttl_hours: float = 1  # reference voice clips we upload
 
 
+class DatabaseConfig(BaseModel):
+    model_config = ConfigDict(validate_default=True)
+    # Empty: the SQLite file in the library. The hosted edition's Postgres, as
+    # postgresql+psycopg://user:password@host/name, comes from LANTERNIST_DATABASE_URL, which wins.
+    url: str = ""
+    pool_size: int = 5  # connections each process keeps open to Postgres
+
+    @field_validator("url", mode="after")
+    @classmethod
+    def _url(cls, v):
+        return os.environ.get("LANTERNIST_DATABASE_URL") or v
+
+
 class Settings(BaseModel):
     paths: Paths = Paths()
+    database: DatabaseConfig = Field(default_factory=DatabaseConfig)  # reads the environment when made
     ollama: Ollama = Ollama()
     comfyui: ComfyUI = ComfyUI()
     engines: Engines = Engines()
@@ -163,6 +177,10 @@ class Settings(BaseModel):
     @property
     def library(self) -> Path:
         return self.paths.library
+
+    @property
+    def database_url(self) -> str:
+        return self.database.url or f"sqlite:///{self.library / 'lanternist.db'}"
 
 
 def config_path() -> Path | None:

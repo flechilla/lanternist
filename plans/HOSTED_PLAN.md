@@ -1,6 +1,6 @@
 # Lanternist Hosted: the SaaS edition
 
-> **Status, 22 Sep 2026: planned, nothing built.** The product direction changed on 22 Sep: Lanternist is to be a hosted service. People buy credits and spend them on films, and a plan (tier) decides which models they may use. Running on your own GPU stays, as the way we develop the app. Phase A, the database, has its own plan: `DB_PLAN.md`. §5 lists the decisions only you can make; Phases A–D need none of them.
+> **Status, 22 Sep 2026: Phase A built (`DB_PLAN.md`); the rest planned.** The product direction changed on 22 Sep: Lanternist is to be a hosted service. People buy credits and spend them on films, and a plan (tier) decides which models they may use. Running on your own GPU stays, as the way we develop the app. Phase A, the database, has its own plan: `DB_PLAN.md`. §5 lists the decisions only you can make; Phases A–D need none of them.
 >
 > Facts about Stripe, Paddle, Polar, Clerk, R2, Neon, Hetzner, fal, OpenRouter, moderation models and the law were read from their own pages on 22 Sep 2026 (sources in §6). Anything marked **verify** wasn't confirmed. The legal points are research, not legal advice: §1.10 needs a lawyer before the public launch.
 
@@ -45,7 +45,7 @@ The MVP made films on the 5090. M2 made every stage able to run remotely: the wr
 What's missing, in the order the phases take it:
 
 - **Accounts.** There are no users: stories, jobs, settings and files belong to whoever reaches port 8420.
-- **Postgres and one home for queries.** The database is SQLite, and `api/app.py` builds queries of its own (`DB_PLAN.md`).
+- **Postgres and one home for queries.** Done in Phase A: every query is in `db.py`, and the tests run on SQLite and Postgres (`DB_PLAN.md`).
 - **Storage.** Files live in `~/Lanternist`, and the step cache is JSON files beside them.
 - **Workers.** One runner, inside the API process, runs one job at a time.
 - **Money.** A budget caps the user's own spend on their own keys; there are no credits, plans or payments.

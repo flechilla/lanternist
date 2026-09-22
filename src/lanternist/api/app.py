@@ -9,13 +9,13 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Body, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 
 from .. import keys, llm, prefs
 from ..config import settings
-from ..db import Database, Job, Story, StoryVersion, to_micros, to_usd
+from ..db import Database, Job, StaleVersion, Story, StoryVersion, to_micros, to_usd
 from ..engines import catalog as engines
 from ..engines.ffmpeg import FfmpegError
 from ..estimate import Kind, estimate
@@ -31,7 +31,7 @@ STATIC = Path(__file__).parent / "static"
 ASSET = re.compile(r"^[0-9a-f]{64}\.[a-z0-9]{1,5}$")
 
 cfg = settings()
-db = Database(cfg.library / "lanternist.db")
+db = Database(cfg.database_url, cfg.database.pool_size)
 runner = Runner(cfg, db)
 
 
@@ -44,6 +44,12 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Lanternist", lifespan=lifespan)
+
+
+@app.exception_handler(StaleVersion)
+async def stale_version(_: Request, e: StaleVersion) -> JSONResponse:
+    """A save, re-roll or new take made from a version another save has since replaced."""
+    return JSONResponse({"detail": str(e)}, status_code=409)
 
 
 # ---------------------------------------------------------------------------------- helpers
@@ -92,11 +98,10 @@ def story_dict(st: Story) -> dict:
 
 
 def _get(story_id: str, version: int | None = None) -> tuple[Story, StoryVersion]:
-    with db.session() as s:
-        try:
-            return db.storyboard(s, story_id, version)
-        except KeyError:
-            raise HTTPException(404, "story or version not found") from None
+    try:
+        return db.storyboard(story_id, version)
+    except KeyError:
+        raise HTTPException(404, "story or version not found") from None
 
 
 def _pipeline(story_id: str | None = None) -> Pipeline:
@@ -132,7 +137,7 @@ def health():
 async def doctor():
     from ..doctor import run_checks
 
-    return [c.dict() for c in await run_checks(prefs.effective(cfg, db))]
+    return [c.dict() for c in await run_checks(prefs.effective(cfg, db), db)]
 
 
 # ---------------------------------------------------------------------------------- providers & settings
@@ -329,33 +334,20 @@ class SaveStory(BaseModel):
 
 @app.put("/api/stories/{story_id}")
 def save_story(story_id: str, body: SaveStory):
-    with db.session() as s:
-        st = s.get(Story, story_id)
-        if st is None:
-            raise HTTPException(404, "story not found")
-        if body.base_version != st.version:
-            raise HTTPException(
-                409, f"the story changed since version {body.base_version} (now {st.version})"
-            )
-        body.storyboard.renumber()
-        row = db.save_version(s, st, body.storyboard.model_dump(), note=body.note)
-        s.commit()
-        return {"story": story_dict(st), "version": row.version}
+    body.storyboard.renumber()
+    try:
+        st, row = db.save_edit(story_id, body.storyboard.model_dump(), body.base_version, body.note)
+    except KeyError:
+        raise HTTPException(404, "story not found") from None
+    return {"story": story_dict(st), "version": row.version}
 
 
 @app.delete("/api/stories/{story_id}", status_code=204)
 def delete_story(story_id: str):
-    with db.session() as s:
-        st = s.get(Story, story_id)
-        if st is None:
-            raise HTTPException(404, "story not found")
-        for j in s.query(Job).filter_by(story_id=story_id):
-            if not is_terminal(j.status):
-                runner.cancel(j.id)
-        s.query(Job).filter_by(story_id=story_id).delete()
-        s.query(StoryVersion).filter_by(story_id=story_id).delete()
-        s.delete(st)
-        s.commit()
+    for job_id in db.active_jobs(story_id):
+        runner.cancel(job_id)
+    if not db.delete_story(story_id):
+        raise HTTPException(404, "story not found")
 
 
 @app.post("/api/stories/{story_id}/scenes/{n}/rewrite")
@@ -415,20 +407,15 @@ def run_stage(story_id: str, kind: str, version: int | None = None):
 # ---------------------------------------------------------------------------------- jobs
 @app.get("/api/jobs")
 def list_jobs(active: bool = False):
-    with db.session() as s:
-        q = s.query(Job)
-        if active:
-            q = q.filter(Job.status.in_(("queued", "running")))
-        return [job_dict(j) for j in q.order_by(Job.created_at.desc()).limit(50)]
+    return [job_dict(j) for j in db.jobs(active, limit=50)]
 
 
 @app.get("/api/jobs/{job_id}")
 def get_job(job_id: str):
-    with db.session() as s:
-        j = s.get(Job, job_id)
-        if j is None:
-            raise HTTPException(404, "job not found")
-        return job_dict(j)
+    j = db.get_job(job_id)
+    if j is None:
+        raise HTTPException(404, "job not found")
+    return job_dict(j)
 
 
 @app.post("/api/jobs/{job_id}/cancel")
@@ -443,9 +430,9 @@ async def job_events(job_id: str, request: Request):
         while True:
             if await request.is_disconnected():
                 return
-            with db.session() as s:
-                j = s.get(Job, job_id)
-                snap = job_dict(j) if j else None
+            # Off the event loop: over the network to Postgres, a query would hold up every request.
+            j = await asyncio.to_thread(db.get_job, job_id)
+            snap = job_dict(j) if j else None
             if snap is None:
                 yield "event: gone\ndata: {}\n\n"
                 return

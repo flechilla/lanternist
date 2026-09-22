@@ -1,6 +1,6 @@
 """The render queue: one in-process worker that runs jobs one at a time, in order.
 
-Job state lives in SQLite, so a restart re-queues whatever was running; its finished steps are
+Job state lives in the database, so a restart re-queues whatever was running; its finished steps are
 served from the cache and it carries on where it stopped. Progress is a snapshot on the job row
 that the SSE endpoint streams to the browser.
 """
@@ -298,18 +298,17 @@ class Runner:
         """Run one lane's queued jobs one at a time, oldest first."""
         wake = self.wakes[fast]
         while True:
-            job = self.db.next_job(FAST, fast)
+            job = self.db.claim_job(FAST, fast)
             if job is None:
                 wake.clear()
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(wake.wait(), timeout=5)
                 continue
-            await self.run(job.id, fast)
+            await self.run(job, fast)
 
-    async def run(self, job_id: str, fast: bool = False) -> None:
-        job = self.db.update_job(job_id, status="running", started_at=now(), error=None)
-        if job is None:
-            return  # deleted with its story since it was picked
+    async def run(self, job: Job, fast: bool = False) -> None:
+        """Run a job the queue has claimed (marked running) to its end."""
+        job_id = job.id
         progress = Progress(self.db, job_id)
         task = asyncio.create_task(self.execute(job, progress))
         if fast:
@@ -386,8 +385,7 @@ class Runner:
             progress.stage(Event("write", "finish", done=len(PASSES), total=len(PASSES)))
             return {"version": version, **calls.summary()}
 
-        with self.db.session() as s:
-            story, row = self.db.storyboard(s, job.story_id, job.version)
+        story, row = self.db.storyboard(job.story_id, job.version)
         sb = Storyboard.model_validate(row.storyboard)
         if job.kind in ("board", "render"):
             progress.expect = pace.plan(cfg, self.db, job.estimate, job.kind, len(sb.scenes))
@@ -482,6 +480,7 @@ class Runner:
         kept: list[int] = []
 
         def change(latest: Storyboard) -> str:
+            kept.clear()  # a second run, on a version saved meanwhile, starts over
             keys = pipeline.keyframe_keys(latest)
             for sc in latest.scenes:
                 if sc.n in seeds and keys.get(sc.n) is not None and keys.get(sc.n) == checked.get(sc.n):

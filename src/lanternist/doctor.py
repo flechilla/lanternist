@@ -11,6 +11,7 @@ import httpx
 
 from . import registry
 from .config import Settings
+from .db import Database, DatabaseError
 from .gpu import vram
 from .keys import LABELS, get_key
 from .voices import find_voice
@@ -133,7 +134,14 @@ def _ram() -> tuple[str, str]:
     return "ok", f"{avail:.0f} GB available"
 
 
-async def run_checks(cfg: Settings) -> list[Check]:
+async def _database(db: Database) -> tuple[str, str]:
+    try:
+        return "ok", f"{db.shown}, at revision {await asyncio.to_thread(db.revision)}"
+    except DatabaseError as e:
+        return "fail", str(e)
+
+
+async def run_checks(cfg: Settings, db: Database) -> list[Check]:
     checks: list[Check] = []
 
     def add(name: str, status: str, detail: str) -> None:
@@ -270,6 +278,7 @@ async def run_checks(cfg: Settings) -> list[Check]:
     cfg.library.mkdir(parents=True, exist_ok=True)
     free = shutil.disk_usage(cfg.library).free / 1e9
     add("library", "ok" if free > 20 else "warn", f"{cfg.library}, {free:.0f} GB free")
+    add("database", *await _database(db))
 
     # Remote providers
     for row in await provider_rows(cfg):
