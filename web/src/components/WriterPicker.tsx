@@ -31,7 +31,7 @@ function Row({
   onPick: () => void;
 }) {
   return (
-    <button type="button" className="writer-row" aria-pressed={chosen} disabled={disabled} onClick={onPick}>
+    <button type="button" className="pick-row" aria-pressed={chosen} disabled={disabled} onClick={onPick}>
       <b>{m.label}</b>
       <small>
         {m.label !== m.model && `${m.model} · `}
@@ -96,7 +96,7 @@ export default function WriterPicker({
   return (
     <div className="field">
       <span>Writer</span>
-      <div className="writer-pick">
+      <div className="pick">
         <div className="what">
           <b>{chosen?.label ?? "…"}</b>
           <small>
@@ -127,7 +127,7 @@ export default function WriterPicker({
       )}
 
       {open && catalog && (
-        <div className="writer-menu">
+        <div className="pick-menu">
           <input
             autoFocus
             type="text"
@@ -136,7 +136,7 @@ export default function WriterPicker({
             aria-label="Search writer models"
             onChange={(e) => setQuery(e.target.value)}
           />
-          <div className="writer-list">
+          <div className="pick-list">
             {local.length > 0 && <p className="group">On this machine</p>}
             {local.map(row)}
             {catalog.providers.ollama.error && !query && (

@@ -1117,8 +1117,8 @@ details > summary {
   flex: 1 1 220px;
 }
 
-/* writer picker */
-.writer-pick {
+/* model pickers: the writer, pictures, video, narration */
+.pick {
   display: flex;
   gap: 10px;
   align-items: center;
@@ -1128,18 +1128,18 @@ details > summary {
   padding: 9px 10px 9px 12px;
   background: var(--surface);
 }
-.writer-pick .what {
+.pick .what {
   display: grid;
   gap: 2px;
   min-width: 0;
 }
-.writer-pick b {
+.pick b {
   color: var(--ink);
   font-weight: 650;
   overflow-wrap: anywhere;
 }
-.writer-pick small,
-.writer-row small {
+.pick small,
+.pick-row small {
   font-weight: 400;
   color: var(--ink-3);
   overflow-wrap: anywhere;
@@ -1155,7 +1155,7 @@ details > summary {
   padding: 5px 8px;
   font-size: 0.9rem;
 }
-.writer-menu {
+.pick-menu {
   display: grid;
   gap: 8px;
   border: 1px solid var(--rule);
@@ -1163,14 +1163,14 @@ details > summary {
   padding: 10px;
   background: var(--surface-2);
 }
-.writer-list {
+.pick-list {
   display: grid;
   gap: 4px;
   max-height: 320px;
   overflow-y: auto;
   padding-right: 2px;
 }
-.writer-list .group {
+.pick-list .group {
   margin: 6px 0 0;
   font-size: 0.78rem;
   font-weight: 650;
@@ -1178,7 +1178,7 @@ details > summary {
   text-transform: uppercase;
   color: var(--ink-3);
 }
-.writer-row {
+.pick-row {
   display: grid;
   gap: 1px;
   justify-items: start;
@@ -1187,11 +1187,11 @@ details > summary {
   padding: 7px 10px;
   background: var(--surface);
 }
-.writer-row b {
+.pick-row b {
   font-weight: 600;
   color: var(--ink);
 }
-.writer-row[aria-pressed="true"] {
+.pick-row[aria-pressed="true"] {
   border-color: var(--lamp);
   background: var(--lamp-soft);
 }
