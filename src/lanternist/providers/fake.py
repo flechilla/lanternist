@@ -69,6 +69,7 @@ class FakeFal:
     bad_keys: set[str] = field(default_factory=lambda: {"bad"})
     deprecated: set[str] = field(default_factory=set)
     prices: dict[str, tuple[str, str]] = field(default_factory=dict)   # endpoint -> (unit_price, unit)
+    unpriced: set[str] = field(default_factory=set)    # asking for any of these 404s the whole batch, as fal does
     fail_submit: list[tuple[int, dict]] = field(default_factory=list)  # next submits answer these
     fail_result: dict[str, str] = field(default_factory=dict)          # endpoint -> error on completion
     requests: dict[str, FakeRequest] = field(default_factory=dict)
@@ -100,7 +101,10 @@ class FakeFal:
             return _json({"upload_url": f"https://storage.googleapis.com/fake/{name}",
                           "file_url": f"https://v3.fal.media/files/gcs/{name}"})
         if host == "api.fal.ai" and path == "/v1/models/pricing":
-            return _json({"prices": [self._price(e) for e in request.url.params.get_list("endpoint_id")]})
+            wanted = request.url.params.get_list("endpoint_id")
+            if self.unpriced & set(wanted):
+                return _json({"error": {"type": "not_found", "message": "Endpoint(s) not found"}}, 404)
+            return _json({"prices": [self._price(e) for e in wanted]})
         if host == "api.fal.ai" and path == "/v1/models":
             return _json({"models": [{"endpoint_id": e, "metadata": {
                 "status": "deprecated" if e in self.deprecated else "active", "display_name": e}}

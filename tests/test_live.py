@@ -6,6 +6,7 @@ details the docs left open: fal's unit names, which response carries the billabl
 whether OpenRouter accepts `data_collection`.
 """
 
+import os
 from decimal import Decimal
 
 import pytest
@@ -59,8 +60,8 @@ async def test_fal_prices_units_and_catalog(cfg, db):
     lines = await registry.sync_prices(cfg, db)
     print()
     for x in lines:
-        flag = "" if x["matches"] else "  <- unit differs from the registry"
-        print(f"{x['model']:<40} {x['price']} per {x['api_unit']!r} -> {x['unit']} [{x['status']}]{flag}")
+        flag = f"  <- {x['drift']}" if x["drift"] else ""
+        print(f"{x['model']:<40} {x['price']} per {x['api_unit']!r} [{x['status']}]{flag}")
     assert all(x["price"] is not None for x in lines)
 
 
@@ -81,3 +82,31 @@ async def test_fal_small_picture_upload_and_billing(cfg, db, tmp_path):
     url = await fal.upload(image, asset="live-test.png", ttl_hours=1)
     print("uploaded to", url.split("/")[2])
     assert url.startswith("https://")
+
+
+@pytest.mark.skipif(os.environ.get("LANTERNIST_LIVE_VIDEO") != "1",
+                    reason="spends about $0.13: set LANTERNIST_LIVE_VIDEO=1")
+async def test_fal_video_billing_units(cfg, db, tmp_path):
+    """How fal bills an option that lowers the price: fewer billable units at the base price, or not.
+
+    Wan 2.6 flash lists $0.05/s at 720p with audio, half that without. A 5 s silent clip should cost
+    $0.125: 2.5 billable units at the $0.05 base price if options scale the units."""
+    need("fal")
+    fal = Fal(cfg, db)
+    await registry.sync_prices(cfg, db, fal)
+    entry = registry.get("fal/wan-2.6-flash", db=db)
+    base = entry.billing[""]
+    image = tmp_path / "frame.png"
+    from lanternist.engines import fake
+
+    await fake.image({"id": "f", "seed": 3, "width": 1280, "height": 720, "out": str(image)})
+    url = await fal.upload(image, asset="live-frame.png", ttl_hours=1)
+    res = await fal.run(entry.endpoint, {"prompt": "slow drift over a calm sea at dusk", "image_url": url,
+                                         "duration": "5", **entry.defaults},
+                        RunSpec(stage="motion", model_id=entry.id, step_key="live-video", unit=base.unit,
+                                unit_price=base.unit_price), ttl_hours=1)
+    cost = Decimal(res.cost_micros or 0) / 1_000_000
+    print(f"\nWan 5 s, 720p, audio off: {res.billable_units} billable {base.unit} at ${base.unit_price} "
+          f"= ${cost} (list price says $0.125)")
+    video = await fal.download(res.data["video"]["url"], tmp_path / "wan.mp4")
+    assert video.stat().st_size > 10_000 and res.billable_units is not None

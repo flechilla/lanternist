@@ -5,8 +5,16 @@ estimator, the doctor and the engines all read them. On top of the shipped files
 
 - `<library>/models.toml` can re-price or disable an entry (`disabled = true`), or add one that
   points a known adapter family at a new endpoint;
-- the `model_prices` table, filled by `lanternist models --sync`, overrides the base price and
-  status of fal endpoints with what fal's pricing API and catalog say today.
+- the `model_prices` table, filled by `lanternist models --sync`, adds what fal bills today and
+  whether each endpoint is still active.
+
+Two prices, on purpose. `price` is the list price per our unit (second of video, image, 1k
+characters) with its tiers (audio on, resolution), read from each model page: estimates use it.
+`billing` is fal's base price per *billing unit* from its pricing API. fal quotes one base price per
+endpoint and bills options such as audio off or a lower resolution as fewer billable units, so
+the actual cost of a request is its X-Fal-Billable-Units header times `billing`, never times the
+list price. The two can differ (Veo's billing price is its audio-on list price; LTX bills in
+cent-sized "units").
 
 Writer models aren't listed here: they are whatever Ollama has pulled and OpenRouter offers.
 """
@@ -38,6 +46,13 @@ class Price(BaseModel):
     tiers: dict[str, Decimal] = {}         # named alternatives: resolutions, audio on, a second endpoint
     synced: date | None = None
     source: str = "registry"               # registry | fal_pricing_api
+
+
+class Billing(BaseModel):
+    """fal's base price per billing unit for one endpoint, from its pricing API."""
+    unit_price: Decimal
+    unit: str                              # fal's own unit name: seconds, megapixels, units, …
+    synced: date
 
 
 class Durations(BaseModel):
@@ -85,8 +100,9 @@ class ModelEntry(BaseModel):
     commercial_use: bool | Literal["below_10m_revenue"] = True
     licence: str = ""
     notes: str = ""
-    status: str = "active"                 # active | deprecated, from fal's catalog
+    status: str = "active"                 # active | deprecated | unlisted, from fal's catalog
     price: Price
+    billing: dict[str, Billing] = {}       # by endpoint role ("" for the main one), after a sync
 
     @property
     def remote(self) -> bool:
@@ -150,14 +166,10 @@ def load(library: Path | None = None, db=None) -> dict[str, ModelEntry]:
             e = entries.get(mid)
             if e is None:
                 continue
-            e.status = row.status
-            if row.unit != e.price.unit:
-                continue   # the pricing API's unit doesn't match ours: keep the list price
-            if role:
-                e.price.tiers[role] = Decimal(row.unit_price)
-            else:
-                e.price.usd, e.price.source = Decimal(row.unit_price), row.source
-                e.price.synced = row.synced_at.date()
+            if not role:
+                e.status = row.status
+            e.billing[role] = Billing(unit_price=Decimal(row.unit_price), unit=row.unit,
+                                      synced=row.synced_at.date())
     return entries
 
 
@@ -209,9 +221,24 @@ async def sync_prices(cfg, db, fal=None) -> list[dict]:
             lines.append({"model": key, "endpoint": ep, "status": status, "price": None, "unit": None,
                           "api_unit": None, "changed": False, "matches": False})
             continue
-        unit = normalise_unit(str(p.get("unit", "")))
-        changed = db.record_price(key, unit, str(p["unit_price"]), "fal_pricing_api", endpoint=ep,
+        api_unit = str(p.get("unit", ""))
+        changed = db.record_price(key, api_unit, str(p["unit_price"]), "fal_pricing_api", endpoint=ep,
                                   currency=p.get("currency") or "USD", status=status)
-        lines.append({"model": key, "endpoint": ep, "status": status, "price": p["unit_price"], "unit": unit,
-                      "api_unit": p.get("unit"), "changed": changed, "matches": unit == e.price.unit})
+        lines.append({"model": key, "endpoint": ep, "status": status, "price": p["unit_price"],
+                      "api_unit": api_unit, "changed": changed, "drift": _drift(e, role, api_unit, p["unit_price"])})
     return lines
+
+
+def _drift(e: ModelEntry, role: str | None, api_unit: str, api_price) -> str | None:
+    """Why fal's billing price doesn't line up with any list price, if it doesn't; None when it does.
+
+    Only comparable when fal bills in our unit. A base price that matches no list tier usually means
+    the model page changed: re-read it and update the registry."""
+    if normalise_unit(api_unit) != e.price.unit:
+        return None
+    listed = {e.price.usd, *e.price.tiers.values()} if role is None else {e.price.tiers.get(role)}
+    price = Decimal(str(api_price))
+    if any(v is not None and abs(v - price) < Decimal("0.0000005") for v in listed):
+        return None
+    shown = ", ".join(f"${v.normalize()}" for v in sorted(v for v in listed if v is not None))
+    return f"fal bills ${price.normalize()} per {api_unit}, which matches no list price ({shown})"

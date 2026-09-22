@@ -197,17 +197,28 @@ async def test_upload_falls_back_when_the_cdn_refuses(fal, world, tmp_path, monk
 # ------------------------------------------------------------------------------------ prices
 async def test_price_sync_records_changes_only(cfg, db, fal, world):
     world.fal.deprecated.add("fal-ai/veo3.1/fast/image-to-video")
-    world.fal.prices[KLING] = ("0.09", "seconds")
+    world.fal.prices[KLING] = ("0.14", "seconds")                          # matches no list tier
+    world.fal.prices["fal-ai/veo3.1/fast/image-to-video"] = ("0.15", "seconds")   # the audio-on tier
+    world.fal.prices["lightricks/ltx-2.5/image-to-video/fast"] = ("0.01", "units")
     lines = await registry.sync_prices(cfg, db, fal)
     by_model = {x["model"]: x for x in lines}
-    assert by_model["fal/kling-v3-standard"]["changed"] and by_model["fal/kling-v3-standard"]["matches"]
-    assert by_model["fal/veo-3.1-fast"]["status"] == "deprecated"
+    assert by_model["fal/kling-v3-standard"]["changed"]
+    assert "matches no list price" in by_model["fal/kling-v3-standard"]["drift"]
+    assert by_model["fal/veo-3.1-fast"]["drift"] is None and by_model["fal/veo-3.1-fast"]["status"] == "deprecated"
+    assert by_model["fal/ltx-2.5-fast"]["drift"] is None      # billed in its own units: not comparable
     assert "fal/flux-2-klein-9b#text_to_image" in by_model
     entries = registry.load(cfg.library, db)
-    assert str(entries["fal/kling-v3-standard"].price.usd) == "0.09"
+    kling = entries["fal/kling-v3-standard"]
+    assert str(kling.price.usd) == "0.084" and str(kling.billing[""].unit_price) == "0.14"
     assert entries["fal/veo-3.1-fast"].status == "deprecated"
     again = await registry.sync_prices(cfg, db, fal)
     assert not any(x["changed"] for x in again)
+
+
+async def test_one_unpriced_endpoint_doesnt_sink_the_batch(fal, world):
+    world.fal.unpriced.add("minimax/h3-max/styles/vhs")
+    prices = await fal.pricing([KLING, "minimax/h3-max/styles/vhs", "fal-ai/mmaudio-v2"])
+    assert set(prices) == {KLING, "fal-ai/mmaudio-v2"}
 
 
 # ------------------------------------------------------------------------------------ OpenRouter

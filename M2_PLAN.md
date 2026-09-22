@@ -1,6 +1,6 @@
 # Lanternist M2: OpenRouter and fal.ai
 
-> **Status, 21 Sep 2026: Phase A is built.** 62 tests pass offline, and your library is migrated to `0002` (backup in `~/Lanternist/backups/`). One step is left: running the live checks (`uv run pytest -m live -s`) once your OpenRouter and fal keys are set. Phases B–F are next.
+> **Status, 21 Sep 2026: Phase A is built and checked against the live APIs.** 63 tests pass offline, and your library is migrated to `0002` (backup in `~/Lanternist/backups/`). Both keys work. A first real video was made end to end: GPT Luna wrote the story and MiniMax H3 Max rendered the shot on fal, for $0.80 as estimated. Phases B–F are next.
 >
 > This is the blueprint's M2 ("fal, registry, estimator, your own key") with one change: the writer calls OpenRouter directly instead of going through fal's `openrouter/router`. Going direct gives the real cost of every request, the full list of models, and one hop fewer.
 > API facts below were read from the OpenRouter and fal docs, the per-model `llms.txt` pages and the fal-client 1.0.3 source on 21 Sep 2026. Anything marked **verify** was not confirmed and gets checked in Phase A.
@@ -120,7 +120,12 @@ The same entries drive the model pickers, the estimator and the doctor.
 
 OpenRouter models are not hard-coded. The writer's list is the live `GET /api/v1/models?supported_parameters=structured_outputs`, which is public and needs no key. It is cached in memory for 24 h, and a short `recommended` list from Settings is pinned to the top.
 
-`lanternist models sync` reads fal's `GET /v1/models/pricing` (needs the key) and `GET /v1/models` (status, to hide deprecated endpoints) into the `model_prices` table. It adds a row only when a price changes, so past estimates can still be explained. The app runs it at start when the newest row is more than a day old. The pricing API has one `unit_price` per endpoint. Tiers such as resolution, and "audio on costs more", stay as formulas in the registry.
+`lanternist models sync` reads fal's `GET /v1/models/pricing` (needs the key) and `GET /v1/models` (status, to hide deprecated endpoints) into the `model_prices` table. It adds a row only when a price changes, so past estimates can still be explained. The app runs it at start when the newest row is more than a day old.
+
+**Two prices per model** (learned from the live API):
+- **List price** (`price`, with tiers such as audio on or 1080p) comes from each model page, per our unit: a second of video, an image, 1,000 characters. **Estimates use it.**
+- **Billing price** (`billing`) is what the pricing API returns: one *base* price per endpoint, per fal's own billing unit. Veo's is its audio-on price. LTX fast is billed at $0.01 per "unit". Kling's is $0.14, which matches none of its listed prices. The **actual cost** of a request is its billable units × the billing price.
+- **Drift:** the sync never overwrites a list price. When fal bills in our unit but its price matches no list tier, `models --sync` flags it, so the model page can be re-read.
 
 ### 1.3 Choosing models per story
 
@@ -210,7 +215,7 @@ Around those calls:
   - 422 → a step error naming the field and fal's `type`. `content_policy_violation` is shown and never retried.
   - 429 `concurrent_requests_limit` and 5xx → back off and retry. 5xx and queue time aren't billed.
 - **Cost:**
-  - Read `X-Fal-Billable-Units` from the result response (**verify** which response carries it), then multiply by the synced unit price.
+  - Read `X-Fal-Billable-Units` from the result response (confirmed live), then multiply by the endpoint's billing price (§1.2), not its list price.
   - This lands close to the real cost without the admin-only billing APIs, which stay out of scope.
 - **Privacy:**
   - Every submit and upload carries an expiry (`media_ttl_hours`), because fal CDN media is otherwise public and kept forever.
@@ -278,7 +283,7 @@ The language check in `narrate()` (today "not supported by Qwen3-TTS") becomes e
 
 - **Every step that runs** writes a `step_runs` row (§1.13) with its units, cost and time. That includes local steps, whose GPU-seconds calibrate the local estimates, and each writer call.
   - OpenRouter costs are `reported`.
-  - fal costs are `computed` as billable units × unit price.
+  - fal costs are `computed` as billable units × the endpoint's billing price from the pricing API.
   - Local steps cost nothing but record GPU-seconds.
 - **Spend** is a sum over `step_runs`: per job, per story, or per month. A cache hit adds no row, so re-renders cost exactly what they actually ran.
 - **`jobs.estimate`** (JSON) keeps the estimate shown before the job, stamped with its price date, so estimate and actual can be compared per stage.
@@ -401,27 +406,39 @@ Each phase ends with something that runs end to end. Sizes assume one developer 
 - [x] Alembic `0002_runs_and_costs` and the models in `db.py` (§1.13). It was tested on a copy of the library first, then applied: 2 stories, 7 versions and 9 jobs kept. `model_prices` gained a `status` column.
 - [x] `providers/openrouter.py` and `providers/fal.py`, with retries, the semaphore, `step_runs` rows written before polling, the `uploads` cache and lifecycle headers.
   - A user's cancel cancels at fal; a shutdown leaves requests running to be resumed. `Runner.cancel_requested` tells the two apart.
-- [ ] Settle the **verify** items against the live APIs: `uv run pytest -m live -s`, about a cent, once both keys are set. It prints:
-  - fal's unit names, and whether each matches the registry
-  - which response carries `X-Fal-Billable-Units`
-  - that the upload flow works
-  - that OpenRouter accepts `data_collection`
-
-  Payload deletion for voice clips waits for Phase F.
+- [x] Settle the **verify** items against the live APIs (`uv run pytest -m live -s`, 21 Sep, under a cent):
+  - **OpenRouter:** a strict-schema request with `data_collection: deny` is accepted, and `usage.cost` comes back. The cheapest structured-output model (Mistral Nemo) answered through DeepInfra.
+  - **fal pictures:** `X-Fal-Billable-Units` is on the **result** response. A 512×288 klein picture billed 0.453 megapixels, so fal's own unit count is what to trust. Results also carry `has_nsfw_concepts`.
+  - **fal uploads:** the two-step upload works. Files land on `v3b.fal.media`.
+  - **fal's pricing API:** it returns one base price per endpoint, which isn't always the list price. That led to the two-price design in §1.2.
+  - **Wan 2.6 flash:** the page's $0.05/s is *with* audio. We send audio off, at $0.025/s, now in the registry.
+  - **Billing and usage APIs:** they need an admin key, as expected. A normal key gets 403.
+- [x] **How fal bills options, settled by a real clip** (MiniMax H3 Max text-to-video, 10 s at 1080P):
+  - fal's base price for the endpoint is $0.025 per "seconds", which is the 480p rate.
+  - The clip billed **32 billable units**, so 32 × $0.025 = **$0.80**. That's exactly the listed 1080p price ($0.08/s × 10 s) and exactly our estimate.
+  - Options scale the *units*, not the price. Actual cost = billable units × base price, as §1.2 now does. Kling's $0.14 base fits the same rule, so its drift flag is expected.
+- [x] **First end-to-end generation**, run as a one-off script through the new clients and logged in `step_runs` (`~/Lanternist/films/tests/luna-h3-max*.mp4`):
+  - **Writer:** GPT Luna (`openai/gpt-5.6-luna`) at reasoning effort `high` wrote the story and the shot prompt. 295 tokens in, 786 out (351 of them reasoning), $0.001, 7 s.
+  - **Video:** H3 Max rendered 10 s of 1080p in 14 s of wall time.
+  - **Clip format:** H.264 (Constrained Baseline), 24 fps, 1920×1080, with the index at the end of the file. Store fal clips with `-movflags +faststart` so they play in the browser straight away.
+- [x] **fal's pricing API** 404s a whole batch when one endpoint in it has no price. `Fal.pricing` now asks one at a time after a 404.
+- Payload deletion for voice clips waits for Phase F.
 - [x] `GET /api/providers` and `PUT/DELETE /api/providers/{name}/key`. `GET/PUT /api/settings`, backed by the `settings` table. A Settings page with the keys only. Provider rows in the doctor. `lanternist keys set|clear|status`.
   - The doctor turns a local engine's failure into a warning when no default model uses that engine.
 - [x] `providers/fake.py`, wired into tests and fake mode.
 
 **Exit:**
 - [x] `lanternist doctor` shows a row for each provider: "no key (optional)" until a key is set.
-- [ ] OpenRouter ✓ with its usage and limit, and fal ✓, once keys are set.
-- [ ] `lanternist models --sync` needs the fal key. Without it, `lanternist models` lists every entry with its list price and date.
+- [x] OpenRouter ✓ with its usage and limit ($250 limit on the key), and fal ✓.
+- [x] `lanternist models --sync` recorded 13 fal endpoints in `model_prices`. `lanternist models` shows each list price beside what fal bills.
 - [x] The existing stories, versions and jobs are all still there after the migration.
 - [x] `uv run pytest` passes with no network: 62 tests (was 15).
 
 ### Phase B: the writer on OpenRouter (≈1.5 days)
 
 - [ ] `llm.py`, with `Ollama` moved there and `OpenRouter` added: strict schema, reasoning control, empty-content handling, typed errors and reported cost.
+  - Only send the parameters a model lists in `supported_parameters`. GPT Luna takes no `temperature`.
+  - Reasoning effort per story, checked against the model's `supported_efforts`. GPT Luna offers `none` through `max`, with `medium` as its default. A story at `high` cost $0.001.
 - [ ] `Brief.writer`. The lease only when the writer is Ollama. Rewrites use the story's writer.
 - [ ] `GET /api/models?capability=writer.chat`: Ollama models (free) first, then the recommended OpenRouter models, then the rest, searchable, each with a price per story from measured token counts.
 - [ ] A writer picker on New story, and the cost on the finished job. `lanternist write --writer openrouter/<id>`.
@@ -457,6 +474,10 @@ This phase comes before video on purpose: video is where the money goes.
 ### Phase E: video on fal (≈3 days)
 
 - [ ] `timing.plan_shots` with golden tests. `motion` uses it for every engine, and local LTX gives the same frames as today.
+- [ ] Add MiniMax H3 Max (`minimax/h3-max/image-to-video`, plus the cheaper `h3-max-turbo`) to the registry:
+  - Durations are 5–15 s.
+  - It has no audio switch, yet it returns an audible track (−27 dB mean in our test), so treat it as ambience or strip it.
+  - Its launch price ($0.08/s at 1080p) doubles after 30 Sep.
 - [ ] `fal_video.py` with the Kling, LTX-fast, Veo and Wan builders: audio off, prompt expansion off, 720p or 1080p. Shots chain on last frames.
 - [ ] The `audio.ambience` stage with `fal_audio.py` (MMAudio v2), skipped for models that make their own sound.
 - [ ] Cancel versus shutdown on in-flight requests, and resume after a restart.

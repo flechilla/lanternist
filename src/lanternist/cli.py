@@ -225,9 +225,8 @@ def models(
         for x in lines:
             if x["price"] is None:
                 print(f"  ! {x['model']}: fal returned no price for {x['endpoint']}")
-            elif not x["matches"]:
-                print(f"  ! {x['model']}: fal prices it per '{x['api_unit']}', the registry per another unit; "
-                      "kept the list price")
+            elif x["drift"]:
+                print(f"  ! {x['model']}: {x['drift']}; check the model page")
             if x["status"] != "active":
                 print(f"  ! {x['model']}: {x['endpoint']} is {x['status']}")
         print()
@@ -242,7 +241,9 @@ def models(
         for e in registry.by_capability(cap, cfg.library, db):
             p = e.price
             price = (f"${p.usd}/{p.unit}" if p.usd is not None else f"{p.gpu_seconds} GPU-s/{p.unit}")
-            when = f" · {p.source} {p.synced}" if p.synced else ""
+            when = f" · list {p.synced}" if p.synced else ""
+            if b := e.billing.get(""):
+                when += f" · fal bills ${b.unit_price} per {b.unit} ({b.synced})"
             flags = " ".join(f for f in ("default" if e.id in defaults else "",
                                          "" if e.status == "active" else e.status,
                                          "personal use" if e.commercial_use is False else "") if f)

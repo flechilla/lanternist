@@ -307,15 +307,32 @@ class Fal:
 
     # platform ---------------------------------------------------------------------------------
     async def pricing(self, endpoints: list[str]) -> dict[str, dict]:
-        """Today's unit price per endpoint: {endpoint: {unit_price, unit, currency}}."""
+        """Today's base price per endpoint: {endpoint: {unit_price, unit, currency}}.
+
+        fal answers 404 for a whole batch when any endpoint in it has no price, so a failed batch
+        is asked again one endpoint at a time and the unpriced ones are left out."""
         out: dict[str, dict] = {}
+
+        async def ask(client, chunk: list[str]) -> None:
+            r = await self._call(client, "GET", f"{self.cfg.fal.api_url}/v1/models/pricing", "pricing",
+                                 params=[("endpoint_id", e) for e in chunk], headers=self._auth())
+            for p in r.json().get("prices", []):
+                out[p["endpoint_id"]] = p
+
         async with self.client() as client:
             for i in range(0, len(endpoints), 20):
                 chunk = endpoints[i:i + 20]
-                r = await self._call(client, "GET", f"{self.cfg.fal.api_url}/v1/models/pricing", "pricing",
-                                     params=[("endpoint_id", e) for e in chunk], headers=self._auth())
-                for p in r.json().get("prices", []):
-                    out[p["endpoint_id"]] = p
+                try:
+                    await ask(client, chunk)
+                except FalError as e:
+                    if e.status != 404:
+                        raise
+                    for one in chunk if len(chunk) > 1 else []:
+                        try:
+                            await ask(client, [one])
+                        except FalError as e1:
+                            if e1.status != 404:
+                                raise
         return out
 
     async def catalog(self, endpoints: list[str]) -> dict[str, dict]:

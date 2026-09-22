@@ -68,5 +68,5 @@ commercial_use = true
 licence = "fal commercial terms; confirm on the endpoint page"
 durations = { values = [5, 10, 15] }
 defaults = { resolution = "720p", enable_prompt_expansion = false, generate_audio = false }
-notes = "Cheapest. Prompt expansion is off so the character lock isn't rewritten. Verify whether the list price includes audio."
-price = { unit = "output_second", usd = "0.05", tiers = { "1080p" = "0.075" }, synced = "2026-09-21" }
+notes = "Cheapest. Prompt expansion is off so the character lock isn't rewritten. Audio off halves the listed price."
+price = { unit = "output_second", usd = "0.025", tiers = { "1080p" = "0.0375", audio_on = "0.05", "1080p_audio_on" = "0.075" }, synced = "2026-09-21" }

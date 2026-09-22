@@ -217,15 +217,17 @@ def test_registry_user_file_and_synced_prices(tmp_path, db):
     kling = entries["fal/kling-v3-standard"]
     assert str(kling.price.usd) == "0.07" and kling.price.unit == "output_second"
 
-    db.record_price("fal/kling-v3-standard", "output_second", "0.09", "fal_pricing_api")
-    db.record_price("fal/flux-2-klein-9b#text_to_image", "megapixel", "0.007", "fal_pricing_api")
-    db.record_price("fal/nano-banana-2", "megapixel", "0.5", "fal_pricing_api", status="deprecated")
+    db.record_price("fal/kling-v3-standard", "seconds", "0.14", "fal_pricing_api")
+    db.record_price("fal/flux-2-klein-9b#text_to_image", "megapixels", "0.007", "fal_pricing_api")
+    db.record_price("fal/nano-banana-2", "images", "0.08", "fal_pricing_api", status="deprecated")
     entries = registry.load(lib, db)
-    assert str(entries["fal/kling-v3-standard"].price.usd) == "0.09"
-    assert entries["fal/kling-v3-standard"].price.source == "fal_pricing_api"
-    assert str(entries["fal/flux-2-klein-9b"].price.tiers["text_to_image"]) == "0.007"
-    banana = entries["fal/nano-banana-2"]   # a unit that doesn't match keeps the list price
-    assert str(banana.price.usd) == "0.08" and banana.status == "deprecated"
+    kling = entries["fal/kling-v3-standard"]
+    # What fal bills per unit sits beside the list price; it never replaces it.
+    assert str(kling.price.usd) == "0.07" and str(kling.billing[""].unit_price) == "0.14"
+    assert kling.billing[""].unit == "seconds"
+    klein = entries["fal/flux-2-klein-9b"]
+    assert str(klein.billing["text_to_image"].unit_price) == "0.007" and str(klein.price.tiers["text_to_image"]) == "0.006"
+    assert entries["fal/nano-banana-2"].status == "deprecated"
 
 
 def test_unit_names_from_fal():
