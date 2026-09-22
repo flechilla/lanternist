@@ -46,6 +46,7 @@ LABELS = {
     "write": "Writing",
     "narration": "Narration",
     "cast": "Cast sheet",
+    "portraits": "Portraits",
     "keyframes": "Pictures",
     "motion": "Animation",
     "ambience": "Ambience",
@@ -210,14 +211,14 @@ class Pipeline:
                 records[it.id] = rec
         pending = [it for it in items if it.id not in records]
         # Each progress row counts its own items: the cast sheet reports apart from the pictures.
-        rows = {it.stage or stage for it in items}
+        rows = list(dict.fromkeys(it.stage or stage for it in items))
         total = {row: sum((it.stage or stage) == row for it in items) for row in rows}
         done = {row: sum((it.stage or stage) == row for it in items if it.id in records) for row in rows}
         for row in sorted(rows, key=lambda r: r == stage):  # the stage's own row last, as it was
             self.emit(row, "start", done=done[row], total=total[row])
         if pending:
             work = self.store.tmp()
-            waited_on = {it.after for it in pending if it.after}
+            waited_on = {a for it in pending for a in it.after}
 
             def on_item(out: Output) -> None:
                 it = out.item
@@ -341,10 +342,10 @@ class Pipeline:
         return eng.key("keyframe", prompt=prompt, seed=seed, size=list(keyframe_size(self.cfg)), refs=refs)
 
     def keyframe_item(
-        self, eng: Engine, sb: Storyboard, sc: Scene, refs: list[str], after: str | None = None
+        self, eng: Engine, sb: Storyboard, sc: Scene, refs: list[str], after: tuple[str, ...] = ()
     ) -> Item:
-        """A scene's picture, drawn from `refs`: stored assets, or, while it waits on `after` in the
-        same batch (or on pictures not drawn yet, for the estimate), the ids of the items it's drawn from."""
+        """A scene's picture, drawn from `refs`: stored assets, and the ids of the items in `after`,
+        drawn in the same batch, that it waits on."""
         p, seed = prompts.keyframe(sb, sc, numbered=_numbered(sb, sc)), sb.scene_seed(sc)
         w, h = keyframe_size(self.cfg)
         params = {"prompt": p, "seed": seed, "width": w, "height": h, "refs": refs}
@@ -371,7 +372,8 @@ class Pipeline:
             prompt = prompts.portrait(sb, c)
             params = {"prompt": prompt, "seed": sb.seed, "width": w, "height": h, "refs": [cast or "cast"]}
             key = self._portrait_key(eng, prompt, sb.seed, cast) if cast else None
-            items.append(Item(_pid(c.id), key, None, params, after=None if cast else "cast", stage="cast"))
+            after = () if cast else ("cast",)
+            items.append(Item(_pid(c.id), key, None, params, after=after, stage="portraits"))
         return items
 
     def faces(self, sb: Storyboard, cast: str | None, records: dict[str, dict]) -> dict[str, str]:
@@ -405,10 +407,11 @@ class Pipeline:
             keyframes = []
             for sc in sb.scenes:
                 refs = self.scene_refs(sb, sc, cast, faces)
-                waits = next((r for r in refs if r in pending), None)
-                keyframes.append(self.keyframe_item(eng, sb, sc, refs, after=waits))
+                keyframes.append(
+                    self.keyframe_item(eng, sb, sc, refs, tuple(r for r in refs if r in pending))
+                )
         elif cast_item and not cast:
-            keyframes = [self.keyframe_item(eng, sb, sc, ["cast"], after="cast") for sc in sb.scenes]
+            keyframes = [self.keyframe_item(eng, sb, sc, ["cast"], ("cast",)) for sc in sb.scenes]
         else:
             keyframes = [self.keyframe_item(eng, sb, sc, [cast] if cast else []) for sc in sb.scenes]
         return sheet, portraits, keyframes
@@ -417,53 +420,27 @@ class Pipeline:
         """The item's step record if the cache holds it; an item without a key yet is never cached."""
         return self.store.get_step(it.key) if it.key else None
 
-    def _cast(self, eng: Engine, sb: Storyboard) -> tuple[str | None, list[Item]]:
-        """The cast sheet if the cache holds it, else the item that draws it."""
-        cast_item = self.cast_item(eng, sb)
-        if cast_item is None:
-            return None, []
-        if rec := self.cached(cast_item):
-            self.emit("cast", "cached", asset=rec["assets"]["image"])
-            return rec["assets"]["image"], []
-        return None, [cast_item]
-
     async def draw(self, sb: Storyboard, cast_only: bool = False) -> tuple[str | None, list[str]]:
-        """Cast sheet, then one keyframe per scene with the cast sheet as reference, as one batch;
-        with portraits, the sheet and portraits first, then the keyframes, each drawn from the
-        portraits of who is in it."""
+        """The cast sheet, the portraits and one keyframe per scene, as one batch. An item drawn from a
+        picture made in the same batch waits on it, and is keyed once it's stored."""
         eng = self.image(sb)
-        cast, items = self._cast(eng, sb)
+        sheet, portraits, keyframes = self.picture_items(eng, sb)
+        cast = None
+        if sheet and (rec := self.cached(sheet[0])):
+            cast, sheet = rec["assets"]["image"], []
+            self.emit("cast", "cached", asset=cast)
+        portrait_ids = {it.id for it in portraits}
 
         def bind(it: Item, records: dict[str, dict]) -> None:
-            new_cast = records["cast"]["assets"]["image"]
             p = it.params
-            p["refs"] = [new_cast]
+            p["refs"] = [records[r]["assets"]["image"] if r in it.after else r for r in p["refs"]]
             it.key = (
-                self._portrait_key(eng, p["prompt"], p["seed"], new_cast)
-                if it.stage == "cast"
-                else self._keyframe_key(eng, p["prompt"], p["seed"], [new_cast])
+                self._portrait_key(eng, p["prompt"], p["seed"], p["refs"][0])
+                if it.id in portrait_ids
+                else self._keyframe_key(eng, p["prompt"], p["seed"], p["refs"])
             )
 
-        if _portraits(sb):
-            records = await self._stage(
-                "keyframes", eng, items + self.portrait_items(eng, sb, cast), "image", bind
-            )
-            cast = records["cast"]["assets"]["image"] if "cast" in records else cast
-            if cast_only:
-                return cast, []
-            faces = self.faces(sb, cast, records)
-            items = [
-                self.keyframe_item(eng, sb, sc, self.scene_refs(sb, sc, cast, faces)) for sc in sb.scenes
-            ]
-        elif not cast_only:
-            # Keyframes drawn after a new cast sheet key on it, so none of them can be a cache hit yet.
-            redraw = bool(items)
-            items += [
-                self.keyframe_item(eng, sb, sc, ["cast"], after="cast")
-                if redraw
-                else self.keyframe_item(eng, sb, sc, [cast] if cast else [])
-                for sc in sb.scenes
-            ]
+        items = sheet + portraits + ([] if cast_only else keyframes)
         records = await self._stage("keyframes", eng, items, "image", bind)
         if "cast" in records:
             cast = records["cast"]["assets"]["image"]
@@ -592,7 +569,7 @@ class Pipeline:
             speech_starts=tl.speech_starts,
             bounds=tl.bounds,
             xfade=tl.xfade,
-            **({"cuts": tl.cuts} if tl.cuts else {}),
+            cuts=tl.cuts,
             ambience=r.ambience,
             loudness=r.loudness,
             encoder=r.encoder,

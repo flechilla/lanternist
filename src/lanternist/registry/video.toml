@@ -55,7 +55,7 @@ durations = { min = 5, max = 15, step = 1 }
 quality = { param = "resolution", options = ["480P", "768P", "1080P"], default = "768P" }
 commercial_use = true
 licence = "fal commercial terms; confirm on the endpoint page"
-defaults = { prompt_expansion_mode = "balanced", enable_safety_checker = true }
+defaults = { prompt_expansion_mode = "disabled", enable_safety_checker = true }
 notes = "fal's post-trained MiniMax H3: strong prompt following and looks, at a fraction of the premium models' price."
 
 [model.price]

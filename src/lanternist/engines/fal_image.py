@@ -1,5 +1,6 @@
-"""Cast sheets and keyframes on fal, in two waves: the cast sheet first, from text, then every
-keyframe at once on the model's edit endpoint with the cast sheet as its reference.
+"""Cast sheets, portraits and keyframes on fal, in waves: the cast sheet first, from text, then
+everything drawn from it at once on the model's edit endpoint, then everything drawn from those
+(keyframes from portraits).
 
 The families differ in how a request names its size (a width and height, or an aspect ratio and a
 resolution), whether it takes a seed, and how it is priced:
@@ -80,12 +81,17 @@ class FalImage(FalEngine):
         return est
 
     async def run(self, items: list[Item], ctx: StepContext, on_item: OnItem) -> None:
-        first = [it for it in items if not it.after]
-        later = [it for it in items if it.after]
-        await gather_all([self.draw(it, ctx, on_item) for it in first])
-        for it in later:
-            ctx.bind(it)
-        await gather_all([self.draw(it, ctx, on_item) for it in later])
+        drawn: set[str] = set()
+        while items:
+            wave = [it for it in items if drawn.issuperset(it.after)]
+            if not wave:
+                raise RuntimeError(f"{items[0].id} waits on a picture that isn't in its batch")
+            for it in wave:
+                if it.after:
+                    ctx.bind(it)
+            await gather_all([self.draw(it, ctx, on_item) for it in wave])
+            drawn |= {it.id for it in wave}
+            items = [it for it in items if it.id not in drawn]
 
     async def draw(self, item: Item, ctx: StepContext, on_item: OnItem) -> None:
         refs = [await self.upload(ctx, a) for a in item.params["refs"]]

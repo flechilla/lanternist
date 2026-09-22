@@ -254,13 +254,16 @@ async def test_rewrites_use_the_storys_writer(cfg, db, world, leases):
                 "motion": "waves",
                 "sound": "wind",
                 "cast": [sb.cast[0].id, "nobody"],
+                "place": "the moon",
                 "camera": "push_in",
             }
         )
     )
+    assert sb.scenes[1].place  # the fake writer sets every shot in its one place
     scene = await rewrite_scene(cfg, sb, 2, "make it windier")
     assert [c["model"] for c in world.openrouter.chats] == ["fake/cheap"]
     assert scene.text == "A new line." and scene.cast == [sb.cast[0].id] and scene.camera == "push_in"
+    assert scene.place == ""  # moved somewhere the story has no place for: its visual describes it
     assert "writer_effort" not in world.openrouter.chats[0]["messages"][1]["content"]  # not shown to the LLM
 
 

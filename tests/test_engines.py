@@ -73,6 +73,16 @@ def test_local_step_keys_are_unchanged(tmp_path):
     assert p._keyframe_key(img, prompts.keyframe(sb, sb.scenes[0]), 8, []) == (
         "4f6e92a861c3f8be5f135ec9fb2a453024064af47748bc3210d6889f26fddf56"
     )
+    # Pinned since portraits came (22 Sep): a character alone, and a picture drawn from two of them.
+    ps = portrait_story()
+    assert p._portrait_key(img, prompts.portrait(ps, ps.characters[1]), ps.seed, cast) == (
+        "4d1f2c8f1e8aec4d8586aa973357f9cca080603eae4bc8e9b71af5194336c290"
+    )
+    two = ["a" * 64 + ".png", "b" * 64 + ".png"]
+    both = ps.scenes[0]
+    assert p._keyframe_key(img, prompts.keyframe(ps, both, numbered=True), ps.scene_seed(both), two) == (
+        "dd2e77bef1f9d2e793a3d79df60c95a945894ca264d916f7dc941f41d34f2d27"
+    )
     tl = timing.timeline([12.0, 30.0], 0.45, 0.5, 1.5, 0.8)
     board = Board(
         [Narration("a.wav", 12.0, [], []), Narration("b.wav", 30.0, [], [])],
@@ -300,6 +310,9 @@ def test_fal_step_keys_are_pinned(tmp_path):
     assert p._keyframe_key(img, "a picture", 8, ["c" * 64 + ".png"]) == (
         "6c9ba2fa0266073eb676203c111e706d27f1e7833df294b13444cb4b8f5180bb"
     )
+    assert p._portrait_key(img, "a portrait", 7, "c" * 64 + ".png") == (
+        "f5497ef39a7bc9dcebcc810201775efd3afba2b5ee8d9329657017e90c8b8b45"
+    )
     assert p.narration_items(sb, p.tts(sb))[0].key == (
         "03aad02697fdca5a853d873e6cee22891f6a7c589475d592de91ac31f005ef48"
     )
@@ -341,10 +354,21 @@ async def test_each_picture_is_drawn_from_the_portraits_of_who_is_in_it(fake_cfg
     assert (
         estimate(p, sb, "board")["lines"][1]["steps"] == 1 + 2 + 3
     )  # the sheet, two portraits, three pictures
+    # klein bills each megapixel in and out: a portrait reads the sheet; a picture reads its portraits.
+    img = p.image(sb)
+    _, portrait_items, keyframe_items = p.picture_items(img, sb)
+    assert [img.estimate([it]).micros for it in (portrait_items[0], *keyframe_items)] == [
+        19_651,
+        44_979,
+        33_979,
+        12_534,
+    ]
 
     cast, keyframes = await p.draw(sb)
     reqs = [fakes.fal.requests[r] for r in fakes.fal.submits]
-    sheet, portraits, pictures = reqs[0], reqs[1:3], reqs[3:]
+    sheet = next(r for r in reqs if "character sheet" in r.arguments["prompt"])
+    portraits = [r for r in reqs if "show only the" in r.arguments["prompt"]]
+    pictures = [r for r in reqs if r is not sheet and r not in portraits]
     assert "2 characters" in sheet.arguments["prompt"] and "kite" not in sheet.arguments["prompt"]
     assert [r.endpoint for r in portraits] == ["fal-ai/flux-2/klein/9b/edit"] * 2
     assert "show only the first from the left: small grey cat" in portraits[0].arguments["prompt"]
@@ -362,8 +386,11 @@ async def test_each_picture_is_drawn_from_the_portraits_of_who_is_in_it(fake_cfg
         len(sol.arguments["image_urls"]) == 1
         and "Objects: Poppy, red diamond kite" in sol.arguments["prompt"]
     )
-    # Nobody in it: drawn from the prompt alone, so no one from the cast sheet wanders in.
+    # Nobody in it: drawn from the prompt alone, so no one from the cast sheet wanders in. It waits on
+    # nothing, so it goes in the first wave with the sheet; a picture waits on its portraits.
     assert empty.endpoint == "fal-ai/flux-2/klein/9b" and "image_urls" not in empty.arguments
+    assert reqs.index(empty) < 2 and reqs.index(sheet) < 2
+    assert max(map(reqs.index, portraits)) < min(reqs.index(both), reqs.index(sol))
 
     # Everything drawn is found again: the board, the estimate and a second draw are all cache hits.
     assert [row["keyframe"] for row in p.peek(sb)["scenes"]] == keyframes
@@ -372,14 +399,17 @@ async def test_each_picture_is_drawn_from_the_portraits_of_who_is_in_it(fake_cfg
     assert await p.draw(sb) == (cast, keyframes) and not fakes.fal.submits
 
 
-async def test_portraits_are_drawn_locally_in_the_same_order(fake_cfg, db):
+async def test_portraits_are_drawn_locally_in_one_batch_on_a_row_of_their_own(fake_cfg, db):
     sb = portrait_story()
     events = []
     cast, keyframes = await Pipeline(fake_cfg, events.append, db=db).draw(sb)
     assert cast and len(keyframes) == 3
-    assert [(e.done, e.total) for e in events if e.stage == "cast" and e.status == "done"] == [
-        (1, 3),
-        (2, 3),
-        (3, 3),
-    ]
+    # One batch, so one klein load: every row starts before anything is drawn.
+    first = next(i for i, e in enumerate(events) if e.status == "done")
+    assert [e.stage for e in events[:first] if e.status == "start"] == ["cast", "portraits", "keyframes"]
+    assert not [e for e in events[first:] if e.status == "start"]
+    done = [(e.stage, e.done, e.total) for e in events if e.status == "done"]
+    assert done[:3] == [("cast", 1, 1), ("portraits", 1, 2), ("portraits", 2, 2)]
+    # The cast sheet's row shows the sheet, never a portrait.
+    assert [e.asset for e in events if e.stage == "cast" and e.asset] == [cast]
     assert Pipeline(fake_cfg, db=db).peek(sb)["cast"] == cast

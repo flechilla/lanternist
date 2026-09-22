@@ -13,6 +13,7 @@ from lanternist.engines.ffmpeg import probe
 from lanternist.estimate import estimate
 from lanternist.pipeline import BudgetExceeded, Pipeline
 from lanternist.prompts import VIDEO_NEGATIVE
+from lanternist.store import step_key
 
 KLING = [float(s) for s in range(3, 16)]
 
@@ -196,6 +197,20 @@ async def test_a_new_take_animates_one_scene_again(fake_cfg, db, fakes, make_sto
     await p.render(sb)
     assert endpoints(fakes) == ["minimax/h3-max-turbo/image-to-video"]
     assert fakes.fal.requests[fakes.fal.submits[0]].arguments["seed"] == 12345
+
+
+async def test_the_prompt_h3_rewrote_is_kept_without_keys(fake_cfg, db, fakes, make_story, monkeypatch):
+    monkeypatch.setenv("FAL_KEY", "fal-secret-5678")
+    sb = make_story(("video",))
+    sb.models.video, sb.models.ambience = "fal/h3-max-turbo", "none"
+    sb.scenes[0].visual = "a note reading fal-secret-5678"
+    p = Pipeline(fake_cfg, db=db)
+    board = await p.board(sb)
+    await p.motion(sb, board)
+    [item] = p.motion_items(sb, board.timeline, list(board.keyframes), p.video(sb))
+    rec = p.store.get_step(step_key("shot", motion=item.key, index=0))
+    assert rec is not None
+    assert rec["meta"]["expanded_prompt"].startswith("Shot: a note reading <fal key …5678>")
 
 
 async def test_a_full_video_story_stops_before_the_video_stage_over_budget(

@@ -118,6 +118,23 @@ def test_objects_and_places_are_locked_like_characters():
     assert "show only the second from the left: big old white gull" in prompts.portrait(sb, sb.cast[1])
 
 
+def test_a_picture_drawn_from_portraits_says_who_is_in_it_and_how_many():
+    sb = board()
+    one = sb.scenes[0].model_copy(update={"cast": ["luna"]})
+    assert prompts.keyframe(sb, one, numbered=True) == (
+        "Wide shot of a lighthouse. Characters: Luna (image 1), small grey cat, white patch on nose. "
+        "Luna is the only character in the picture, shown once. Take only who they are from the "
+        "reference picture, not the pose or plain background, watercolour, no text"
+    )
+    two = sb.scenes[0].model_copy(update={"cast": ["luna", "tomas"]})
+    assert prompts.keyframe(sb, two, numbered=True) == (
+        "Wide shot of a lighthouse. Characters: Luna (image 1), small grey cat, white patch on nose; "
+        "Tomás (image 2), big old white gull. Luna and Tomás are the only characters in the picture, "
+        "each shown once. Take only who they are from the reference pictures, not their poses or plain "
+        "backgrounds, watercolour, no text"
+    )
+
+
 def test_step_key_changes_with_inputs():
     assert step_key("a", x=1) == step_key("a", x=1)
     assert step_key("a", x=1) != step_key("a", x=2)
@@ -169,6 +186,17 @@ def test_every_scene_sound_sits_the_same_distance_under_the_voice():
     assert (
         "loudnorm=I=-16.0:TP=-1.5:LRA=11:print_format=json" in g
     )  # measuring, until it's told what it measured
+    measured = {
+        "input_i": "-24.31",
+        "input_tp": "-6.02",
+        "input_lra": "7.40",
+        "input_thresh": "-34.58",
+        "target_offset": "0.12",
+    }
+    assert ffmpeg.loudnorm(Render(), measured) == (
+        "loudnorm=I=-16.0:TP=-1.5:LRA=11:measured_I=-24.31:measured_TP=-6.02:measured_LRA=7.40"
+        ":measured_thresh=-34.58:offset=0.12:linear=true,aresample=48000"
+    )
 
 
 def test_mix_graph_offsets():

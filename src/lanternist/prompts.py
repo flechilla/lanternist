@@ -50,11 +50,17 @@ def keyframe(sb: Storyboard, scene: Scene, numbered: bool = False) -> str:
     if numbered:
         # Given a portrait per character, klein tends to draw one of them twice unless told the count.
         names = [m.name for m in _members(sb, scene, "character")]
-        who = names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
-        prompt += (
-            f". {who} {'is' if len(names) == 1 else 'are'} the only characters in the picture, each shown once. "
-            "Take only who they are from the reference pictures, not their poses or plain backgrounds"
-        )
+        if len(names) == 1:
+            prompt += (
+                f". {names[0]} is the only character in the picture, shown once. Take only who they are "
+                "from the reference picture, not the pose or plain background"
+            )
+        else:
+            prompt += (
+                f". {', '.join(names[:-1])} and {names[-1]} are the only characters in the picture, each "
+                "shown once. Take only who they are from the reference pictures, not their poses or plain "
+                "backgrounds"
+            )
     return f"{prompt}, {sb.style.strip()}" if sb.style else prompt
 
 

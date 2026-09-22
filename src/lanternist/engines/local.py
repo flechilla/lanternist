@@ -122,7 +122,8 @@ class LocalQwenTts(TtsEngine):
 
 
 class LocalKlein(Engine):
-    """FLUX.2 [klein] 9B: the cast sheet and every keyframe in one load, the cast sheet first."""
+    """FLUX.2 [klein] 9B: the cast sheet, portraits and every keyframe in one load, each after the
+    pictures it's drawn from."""
 
     def key(self, kind: str, **inputs) -> str:
         return step_key(kind, engine=KLEIN, steps=KLEIN_STEPS, guidance=KLEIN_GUIDANCE, **inputs)
@@ -134,12 +135,10 @@ class LocalKlein(Engine):
         jobs = []
         for it in items:
             p = it.params
-            # A cast sheet drawn in this batch is read from the work dir, where the worker puts it.
-            refs = (
-                [str(ctx.work / f"{r}.png") for r in p["refs"]]
-                if it.after
-                else [str(ctx.store.path(a)) for a in p["refs"]]
-            )
+            # A picture drawn earlier in this batch is read from the work dir, where the worker puts it.
+            refs = [
+                str(ctx.work / f"{r}.png") if r in it.after else str(ctx.store.path(r)) for r in p["refs"]
+            ]
             jobs.append(
                 {
                     "id": it.id,

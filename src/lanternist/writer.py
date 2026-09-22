@@ -76,7 +76,10 @@ WPM = {
     "ja": 240,
     "ko": 170,
 }
-WORDS_PER_SCENE = 32  # ~13 s of narration: one picture, and within one LTX generation
+WORDS_PER_SCENE = 32  # ~13 s of narration: one paragraph, which the storyboard cuts into shots
+MAX_SHOTS = 3  # a paragraph's shots, at most
+SHOT_WORDS = 12  # the fewest words the writer is asked to give a shot: about five seconds read aloud
+MIN_SHOT_WORDS = 8  # the fewest a shot keeps (about three seconds): less can't hold a picture
 
 
 CHARS_PER_WORD = 6  # five letters and a space, about, in the alphabetic languages
@@ -164,7 +167,7 @@ class WriterShot(BaseModel):
 class WriterScene(BaseModel):
     n: int
     shots: list[WriterShot] = Field(
-        description="one to three shots, covering the paragraph's sentences in order"
+        description=f"1 to {MAX_SHOTS} shots, covering the paragraph's sentences in order"
     )
 
 
@@ -181,6 +184,7 @@ class RewrittenScene(BaseModel):
     motion: str
     sound: str
     cast: list[str]
+    place: str
     camera: Camera
 
 
@@ -284,10 +288,10 @@ def board_prompt(b: Brief, title: str | None, paras: list[str]) -> tuple[str, st
         "prompts name characters and objects by name only.\n"
         "Places: every setting seen in more than one shot, with a look that fixes it. A shot names its "
         "place's id, or '' for a place seen once, which its visual describes.\n\n"
-        "Shots: split each paragraph into one to three shots. A shot covers whole sentences, in order: "
+        f"Shots: split each paragraph into 1 to {MAX_SHOTS} shots. A shot covers whole sentences, in order: "
         "'sentences' counts them, and a paragraph's counts add up to its number of sentences. A shot lasts "
-        "as long as its sentences take to read aloud, so every shot needs at least 12 words: never give a "
-        "short sentence a shot of its own. Most paragraphs get two shots; a short or quiet one stays one. "
+        f"as long as its sentences take to read aloud, so every shot needs at least {SHOT_WORDS} words: never "
+        "give a short sentence a shot of its own. Most paragraphs get two shots; a short or quiet one stays one. "
         "The shots of a paragraph are one continuous scene, "
         "cut like a film: change the shot size or angle between them (a wide shot, then a close-up on a face "
         f"or hands), and keep the place, light and objects the same.{slow}\n"
@@ -414,9 +418,6 @@ def ambience_only(sound: str) -> str:
     return ", ".join(keep) or "soft room tone"
 
 
-MIN_SHOT_WORDS = 8  # about three seconds read aloud: less can't hold a picture, so it joins the shot before
-
-
 def split_shots(paragraph: str, shots: list[WriterShot]) -> list[tuple[str, WriterShot]]:
     """Each shot's narration: the sentences it covers, in order. Counts that don't add up are mended,
     not refused: the last shot takes what's left, a shot left with nothing is dropped, and a shot too
@@ -455,12 +456,12 @@ def assemble(b: Brief, title: str, paras: list[str], wb: WriterBoard) -> Storybo
             places.append(Place(id=pid, name=pl.name.strip(), look=pl.look.strip()))
     place_ids = {p.id for p in places}
     shots = [
-        (i, j, words, ws)
-        for i, (p, scene) in enumerate(zip(paras, wb.scenes, strict=True))
+        (j, words, ws)
+        for p, scene in zip(paras, wb.scenes, strict=True)
         for j, (words, ws) in enumerate(split_shots(p, scene.shots))
     ]
     # Hybrid animates only the peaks: about 30% of shots, spread across the story's key moments.
-    marked = [k for k, (*_, ws) in enumerate(shots) if ws.key_moment]
+    marked = [k for k, (_, _, ws) in enumerate(shots) if ws.key_moment]
     k = max(1, round(len(shots) * 0.3))
     if not marked:
         marked = [len(shots) * 2 // 3]
@@ -468,7 +469,7 @@ def assemble(b: Brief, title: str, paras: list[str], wb: WriterBoard) -> Storybo
         marked = [marked[round(j * (len(marked) - 1) / (k - 1))] for j in range(k)] if k > 1 else [marked[-1]]
     video = set(marked)
     scenes = []
-    for n, (_, j, words, ws) in enumerate(shots, 1):
+    for n, (j, words, ws) in enumerate(shots, 1):
         members = []
         for ref in ws.cast:
             found = slugify(ref) if slugify(ref) in ids else by_name.get(ref.lower())
@@ -518,7 +519,9 @@ async def rewrite_scene(
     lang = _language_name(sb.language)
     system = (
         f"You edit one scene of an illustrated, narrated story. Narration stays in {lang}; visual, motion "
-        f"and sound prompts stay in English and refer to characters by name only. {ALWAYS}"
+        "and sound prompts stay in English and name characters, objects and places by name only: their "
+        "looks are added to every prompt. 'cast' lists the ids of the characters and objects in the "
+        f"picture, and 'place' the id of the place it's set in, or '' for a place seen only once. {ALWAYS}"
     )
     user = (
         f"The whole storyboard, for context:\n{sb.model_dump_json(exclude={'cast_sheet_prompt', 'models'})}\n\n"
@@ -532,6 +535,7 @@ async def rewrite_scene(
         )
     r = RewrittenScene.model_validate_json(_json_text(reply.text))
     ids = {c.id for c in sb.cast}
+    place = slugify(r.place)
     return scene.model_copy(
         update={
             "narration": [Line(text=" ".join(r.narration.split()))],
@@ -539,6 +543,7 @@ async def rewrite_scene(
             "motion": r.motion.strip(),
             "sound": r.sound.strip(),
             "cast": [c for c in r.cast if c in ids],
+            "place": place if place in {p.id for p in sb.places} else "",
             "camera": r.camera,
         }
     )

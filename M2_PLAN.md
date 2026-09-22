@@ -251,7 +251,7 @@ Every fal picture model draws the cast sheet from text (`endpoints.text_to_image
 | Model | Billable lengths | Price (list, 22 Sep) | Notes |
 |---|---|---|---|
 | **MiniMax H3 Max Turbo** (`minimax/h3-max-turbo/image-to-video`) | 5–15 s, any whole second | $0.0125/s at 480P, $0.02 at 768P, $0.04 at 1080P until 30 Sep; then double | **The cheapest good video: a whole film for cents at 480P, for trying the flow.** A seed. `prompt_expansion_mode` defaults to "balanced", MiniMax's rewrite of the prompt into H3's own shot format: kept on since the quality review (§6). No audio switch, but its quiet sound bed serves as ambience. |
-| **MiniMax H3 Max** (`minimax/h3-max/image-to-video`) | 5–15 s | $0.025/s at 480P, $0.04 at 768P, $0.08 at 1080P until 30 Sep; then double | fal's post-trained H3: strong prompt following. Same inputs as Turbo. |
+| **MiniMax H3 Max** (`minimax/h3-max/image-to-video`) | 5–15 s | $0.025/s at 480P, $0.04 at 768P, $0.08 at 1080P until 30 Sep; then double | fal's post-trained H3: strong prompt following. Same inputs as Turbo, but its prompt is sent as is: only Turbo was compared with MiniMax's rewrite (§6). |
 | Kling v3 Standard | "3"–"15" s, any whole second | $0.084/s with audio off | `start_image_url`. No seed or size input: it follows the image. **`generate_audio` defaults to true: send false.** |
 | **Kling v3 Pro** | "3"–"15" s | $0.112/s with audio off | Kling's best motion; same inputs as Standard. |
 | **Veo 3.1** | "4s", "6s", "8s" | $0.20/s without audio at 720p or 1080p, $0.40 at 4k | Google's best. Long slots need 2 shots. |
@@ -638,8 +638,8 @@ narration transcribed back by Whisper and the loudness measured (`~/Lanternist-l
 | "The red kite" came out as the bird in 8 of 11 pictures; "the sail" as a ship's | Objects the story turns on join the cast (`CastMember.kind`), places get looks (`Storyboard.places`), each restated in every prompt |
 | One 13 s shot per paragraph: slow, and video drifts off its subject that long | The writer cuts each paragraph into one to three shots on sentence boundaries; they cut to each other (`Scene.continues`), paragraphs crossfade |
 | The writer's "the children" drew extra children | Every character in a shot is named, every time |
-| The film played at −25 LUFS; LTX's sound bed swung 31 dB between clips | Each clip's sound is levelled against the narration; the film is set to −16 LUFS in two passes (`mix@2`) |
-| H3 ignored a "holds still" camera with our prompt sent as is | H3 rewrites its prompt (`prompt_expansion_mode = "balanced"`), and the clip's record keeps what it wrote |
+| The film played at −25 LUFS; LTX's sound bed swung 31 dB between clips | Each clip's sound is levelled against the narration; the film is set to −16 LUFS in two passes (`mix@3`) |
+| H3 ignored a "holds still" camera with our prompt sent as is | H3 Max Turbo rewrites its prompt (`prompt_expansion_mode = "balanced"`), and the clip's record keeps what it wrote |
 
 **Measured after:** the kite, the cast and the places held across all 39 and 34 pictures; films
 at −16.1 LUFS; narration word-perfect (one spelling in 600 words). H3 Max Turbo beat local LTX on

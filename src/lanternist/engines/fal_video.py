@@ -19,6 +19,7 @@ from collections.abc import Callable
 from decimal import Decimal
 
 from .. import timing
+from ..keys import redact
 from ..prompts import VIDEO_NEGATIVE
 from ..store import step_key
 from . import ffmpeg
@@ -97,7 +98,7 @@ class FalVideo(FalEngine, VideoEngine):
                 clip = await self.fetch(res.data["video"]["url"], ctx.work / f"{shot.id}.mp4")
                 # A model that rewrites its prompt (H3's prompt expansion) says what it made the clip from.
                 meta = {"seconds": seconds} | (
-                    {"expanded_prompt": res.data["expanded_prompt"]}
+                    {"expanded_prompt": redact(res.data["expanded_prompt"])}
                     if res.data.get("expanded_prompt")
                     else {}
                 )
