@@ -6,9 +6,11 @@ ffmpeg mixes the film. Every stage runs locally on one 32 GB GPU, or remotely (O
 writer, fal.ai for media) with the user's own keys.
 
 - `README.md`: what it does and how to run it.
-- `plans/`: `MVP_PLAN.md` (done) and `M2_PLAN.md` (in progress): the design, the decisions and why, and
-  the phase checklists. Read the relevant section before changing a subsystem. When a PR finishes a
-  plan item, tick its box and update the status line at the top. New plans go in `plans/` too.
+- `plans/`: `MVP_PLAN.md` (done), `M2_PLAN.md` (in progress: its live checks), `HOSTED_PLAN.md`
+  (next: the SaaS edition, with credits and plans) and `DB_PLAN.md` (the hosted plan's Phase A): the
+  design, the decisions and why, and the phase checklists. Read the relevant section before changing a
+  subsystem. When a PR finishes a plan item, tick its box and update the status line at the top. New
+  plans go in `plans/` too.
 
 ## Commands
 
