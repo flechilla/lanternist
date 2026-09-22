@@ -31,6 +31,7 @@ type Card = Target & { pinned: boolean; x: number; y: number };
 const OPEN_MS = 90; // a pointer only passing over the reel opens nothing
 const CLOSE_MS = 160; // time to move the pointer onto the card
 const CARD_WIDTH = 300;
+const NAMED = 0.08; // the share of the phase bar a stage needs for its name to fit; the rest say it on hover
 const ARROWS: Record<string, number> = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
 
 interface Props {
@@ -214,6 +215,7 @@ export default function Reel({ sb, board, job, telling, onTell, onCancel, onWatc
   const started = job.started_at ? Date.parse(`${job.started_at}Z`) : null;
   const took = started && job.finished_at ? (Date.parse(`${job.finished_at}Z`) - started) / 1000 : null;
   const flagged = Object.entries(job.result?.flagged ?? {});
+  const redrawn = Object.keys(job.result?.redrawn ?? {}).length;
   const since = [
     started && `started ${duration(Math.max(0, (now - started) / 1000))} ago`,
     spent > 0 && `${fmtUsd(spent)} spent so far`,
@@ -254,6 +256,11 @@ export default function Reel({ sb, board, job, telling, onTell, onCancel, onWatc
               {spent > 0 && (
                 <span>
                   <b>{fmtUsd(spent)}</b> spent
+                </span>
+              )}
+              {redrawn > 0 && (
+                <span>
+                  <b>{redrawn}</b> {redrawn === 1 ? "picture" : "pictures"} drawn again after the check
                 </span>
               )}
             </p>
@@ -338,7 +345,7 @@ export default function Reel({ sb, board, job, telling, onTell, onCancel, onWatc
                 <div className="track">
                   <div className="fill" style={{ width: `${fill * 100}%` }} />
                 </div>
-                <div className="name">{label}</div>
+                <div className="name">{share >= NAMED || st?.status === "running" ? label : ""}</div>
               </div>
             );
           })}

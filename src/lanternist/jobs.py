@@ -60,7 +60,9 @@ class Progress:
     (`fraction`, by time). A stage row says how long it has worked (`secs`), and the mix how far
     through the film it is (`at`).
 
-    A step is {state, asset, secs, tries, ahead, note, cost_micros}: its state is an item status, or
+    A step is {state, asset, secs, tries, ahead, note, cost_micros}; `tries` counts the outputs it
+    has had in this job, so a verdict with fewer than its picture judged an older one. Its state is an
+    item status, or
     "failed" when the picture check failed its picture, with why in `note`. A step made again keeps
     its last asset until the new one lands, so the page can show the old picture meanwhile. Its cost
     is what the provider billed for that scene in that stage; a portrait's and a check's are counted
@@ -91,12 +93,13 @@ class Progress:
         )
         if e.total:
             st["done"], st["total"] = e.done, e.total
-        # A row is done once all its items are: the cast sheet's before the pictures of its batch.
-        if e.status == "finish" or (e.status == "done" and e.done == e.total):
+        # A row is done once all its items are: the cast sheet's before the pictures of its batch, and
+        # one the cache holds all of from its start (the portraits, while pictures are drawn again).
+        if e.status == "finish" or (e.status in ("start", "done") and e.total and e.done == e.total):
             st["status"] = "done"
         elif e.status == "cached" and e.scene is None and e.who is None:
             st.update(status="done", done=1, total=1)
-        else:
+        elif e.status != "cached":
             st["status"] = "running"
         # A stage's time runs from starting on its first item, so a batch's rows don't count each other's.
         if e.status in ("waiting", "working"):
@@ -141,10 +144,10 @@ class Progress:
             step.pop("note", None)
             if e.failed is not None:
                 step["note"] = e.failed
-        if e.status == "done":
+        if e.status in ("cached", "done"):  # a new output: made, or served from the cache
             step["tries"] = step.get("tries", 0) + 1
-            if (began := self._began.pop((e.stage, whose), None)) is not None:
-                step["secs"] = round(time.time() - began, 1)
+        if e.status == "done" and (began := self._began.pop((e.stage, whose), None)) is not None:
+            step["secs"] = round(time.time() - began, 1)
 
     def passes(self, stage: str, names: Sequence[str]) -> None:
         """Name the passes a stage of one item goes through, in order, for the page to list; its row's

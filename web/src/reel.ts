@@ -50,11 +50,16 @@ const pending = (step: Step | undefined) =>
 /** Every scene's state: what the job says of it, over what the story had made before it ran. */
 export function sceneStates(sb: Storyboard, board: BoardPeek | null, job: Job | undefined): SceneState[] {
   const flagged = job?.status === "done" ? (job.result?.flagged ?? {}) : {};
+  // While the check runs, a picture it fails is drawn again, unless it's the last try; once it's done,
+  // a fail stands.
+  const checking = job?.progress?.stages?.check?.status === "running";
   return sb.scenes.map((sc) => {
     const steps = job?.progress?.scenes?.[String(sc.n)] ?? {};
     const peek = board?.scenes.find((b) => b.n === sc.n);
-    const failed = steps.check?.state === "failed" ? (steps.check.note ?? "") : null;
-    const redrawing = pending(steps.keyframes);
+    // A verdict with fewer tries than its picture judged an older picture: this one waits for its own.
+    const current = (steps.check?.tries ?? 0) >= (steps.keyframes?.tries ?? 0);
+    const failed = steps.check?.state === "failed" && current ? (steps.check.note ?? "") : null;
+    const redrawing = pending(steps.keyframes) || checking;
     const image = steps.keyframes?.asset ?? peek?.keyframe ?? null;
     return {
       n: sc.n,
@@ -170,6 +175,8 @@ export function headline(
       doing,
       detail: `Scene ${working[0].n} of ${scenes.length}${working[0].line ? ` · “${working[0].line}”` : ""}`,
     };
+  if (!working.length && !waiting.length && st.local && st.model && st.done < st.total)
+    return { doing, detail: `Loading ${st.model} on this machine.` };
   const parts = [
     working.length > 1 && `${working.length} being made`,
     waiting.length > 0 && `${waiting.length} waiting their turn`,

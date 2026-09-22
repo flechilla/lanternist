@@ -71,7 +71,10 @@ async def test_the_snapshot_follows_every_scene_and_portrait_to_done(fake_cfg, d
     assert again.snap["scenes"]["2"]["keyframes"] == {
         "state": "cached",
         "asset": snap["scenes"]["2"]["keyframes"]["asset"],
+        "tries": 1,
     }
+    # A row the cache holds all of is done from its start, not running until its batch ends.
+    assert again.snap["stages"]["portraits"]["status"] == "done"
     assert {step["state"] for step in again.snap["cast"].values()} == {"cached"}
 
 

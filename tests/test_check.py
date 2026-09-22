@@ -107,8 +107,10 @@ async def test_the_progress_shows_a_failed_picture_until_its_redraw_lands(fake_c
         ("done", "failed", False),
     ]
     steps = progress.snap["scenes"]["1"]
-    assert steps["keyframes"]["tries"] == 2
+    # Two pictures and two verdicts: the page tells a verdict on the old picture by its fewer tries.
+    assert steps["keyframes"]["tries"] == steps["check"]["tries"] == 2
     assert steps["check"]["state"] == "done" and "note" not in steps["check"]
+    assert progress.snap["stages"]["check"]["model"] == "Fake Cheap"  # the checker by its name
 
 
 async def test_a_fail_with_no_reason_is_still_a_fail(fake_cfg, db, fakes, make_story):

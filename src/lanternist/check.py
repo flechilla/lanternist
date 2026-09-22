@@ -108,7 +108,7 @@ class Checker(Maker):
         if not isinstance(self.llm, llms.OpenRouterLLM):
             return
         try:
-            pricing = (await self.llm.info()).get("pricing") or {}
+            info = await self.llm.info()
         except llms.LLMError as e:  # not in OpenRouter's list of models with structured output
             raise CheckError(
                 f"The picture check can't use {self.model}: OpenRouter doesn't list it with structured "
@@ -117,7 +117,8 @@ class Checker(Maker):
         except (OpenRouterError, httpx.HTTPError) as e:
             why = str(e).rstrip(".") or type(e).__name__
             raise CheckError(f"The picture check couldn't read {self.model}'s prices: {why}.") from e
-        self.per_check = to_micros(llms.token_price(pricing, TOKENS))
+        self.per_check = to_micros(llms.token_price(info.get("pricing") or {}, TOKENS))
+        self.label = info.get("name") or self.model  # "OpenAI: GPT-5.6 Luna", for the progress
 
     def estimate(self, items: list[Item]) -> Estimate:
         return Estimate(items=len(items), micros=self.per_check * len(items))

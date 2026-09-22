@@ -140,13 +140,15 @@ export default function Story() {
   // The tab says how far a job has got, so a render can run in a background tab.
   const title = draft?.title ?? detail?.story.title;
   const fraction = current?.status === "running" ? current.progress?.fraction : undefined;
+  const ready = !current && ended?.kind === "render" && ended.status === "done";
   useEffect(() => {
     if (!title) return;
-    document.title = `${fraction != null ? `(${Math.round(fraction * 100)}%) ` : ""}${title} · Lanternist`;
+    const mark = fraction != null ? `(${Math.round(fraction * 100)}%) ` : ready ? "✓ " : "";
+    document.title = `${mark}${title} · Lanternist`;
     return () => {
       document.title = "Lanternist";
     };
-  }, [title, fraction]);
+  }, [title, fraction, ready]);
 
   if (error && !detail)
     return (
@@ -353,7 +355,7 @@ export default function Story() {
         </div>
       )}
 
-      {(flagged.length > 0 || redrawn.length > 0) && (
+      {(flagged.length > 0 || redrawn.length > 0) && !(step === "film" && ready) && (
         <div className="panel stack" role="status">
           {redrawn.length > 0 && (
             <p>
