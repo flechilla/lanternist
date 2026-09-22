@@ -143,7 +143,14 @@ def test_a_story_without_a_title_is_storyboarded_as_untitled():
 
 async def test_openrouter_writer_end_to_end(cfg, db, world, leases):
     calls = Calls(db)
-    sb = await write_storyboard(cfg, brief(writer="openrouter/fake/frontier", effort="high"), calls=calls)
+    passes: list[int] = []
+    sb = await write_storyboard(
+        cfg,
+        brief(writer="openrouter/fake/frontier", effort="high"),
+        calls=calls,
+        passed=lambda n: passes.append((n, len(world.openrouter.chats))),
+    )
+    assert passes == [(1, 1)]  # the story drafted, the storyboard not yet asked for
     assert len(sb.scenes) == 4 and sb.cast and sb.models.writer == "openrouter/fake/frontier"
     assert sb.models.writer_effort == "high"
     assert leases == []  # nothing touched the GPU

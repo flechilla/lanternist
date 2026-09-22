@@ -76,6 +76,8 @@ WPM = {
     "ja": 240,
     "ko": 170,
 }
+# What the writer does, in order, as the page lists it while a story is written.
+PASSES = ("Drafting the story", "Planning the scenes")
 WORDS_PER_SCENE = 32  # ~13 s of narration: one paragraph, which the storyboard cuts into shots
 MAX_SHOTS = 3  # a paragraph's shots, at most
 SHOT_WORDS = 12  # the fewest words the writer is asked to give a shot: about five seconds read aloud
@@ -319,7 +321,10 @@ async def write_storyboard(
     b: Brief,
     emit: Callable[[str], None] | None = None,
     calls: llms.Calls | None = None,
+    passed: Callable[[int], None] = lambda done: None,
 ) -> Storyboard:
+    """The story in two PASSES: its prose, then its storyboard. `passed` hears how many are done as each
+    one ends but the last."""
     emit = emit or (lambda m: None)
     llm = llms.make(cfg, b.writer, b.effort, calls)
     async with llm.session():
@@ -359,6 +364,7 @@ async def write_storyboard(
                 raw, title, paras, words = raw2, t2 or title, p2, w2
                 emit(f"revised: {len(paras)} paragraphs, {words} words{_spent(reply)}")
 
+        passed(1)
         emit("storyboarding: cast, pictures, motion and sound")
         schema = inline_schema(WriterBoard)
         system, user = board_prompt(b, title, paras)

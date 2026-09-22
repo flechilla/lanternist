@@ -1,9 +1,17 @@
+import { useRef } from "react";
 import { asset, fmtSeconds, isActive, withPrice, type Job, type StoryDetail } from "../api";
+import { reveal } from "../reel";
 import { Log, Stages } from "./JobProgress";
+import Reel from "./Reel";
 
 interface Props {
   detail: StoryDetail;
   jobs: Job[];
+  /** A render that finished while the page was open: its reel stays up, finished, above the film. */
+  finished: Job | undefined;
+  /** The jobs the viewer asked to be told about when they end. */
+  telling: Record<string, boolean>;
+  onTell: (job: Job) => void;
   busy: boolean;
   /** What rendering again would cost now. */
   renderUsd: number | undefined;
@@ -11,19 +19,53 @@ interface Props {
   onCancel: (job: Job) => void;
 }
 
-export default function FilmView({ detail, jobs, busy, renderUsd, onRender, onCancel }: Props) {
+export default function FilmView({
+  detail,
+  jobs,
+  finished,
+  busy,
+  renderUsd,
+  onRender,
+  onCancel,
+  telling,
+  onTell,
+}: Props) {
+  const player = useRef<HTMLVideoElement>(null);
   const renders = jobs.filter((j) => j.kind === "render");
   const running = renders.find(isActive);
   const film = renders.find((j) => j.status === "done" && j.result?.film) ?? detail.film;
   const lastFinished = renders.find((j) => !isActive(j));
-  // A budget stop is shown at the top of the story, with the way to carry on.
-  const failed = lastFinished?.status === "failed" && !lastFinished.result?.budget ? lastFinished : undefined;
+  // A budget stop is shown at the top of the story, with the way to carry on; and a new render replaces it.
+  const failed =
+    !running && lastFinished?.status === "failed" && !lastFinished.result?.budget ? lastFinished : undefined;
   const result = film?.result;
   const name = detail.story.slug || "film";
+  const reel = running ?? finished;
+  // The reel draws the render over the story as it is now, so only while they're the same version.
+  const sameVersion = reel?.version === detail.version;
+
+  function watch() {
+    const v = player.current;
+    if (!v) return;
+    reveal(v, "center");
+    void v.play().catch(() => undefined);
+  }
 
   return (
     <div className="stack">
-      {running && (
+      {reel && sameVersion && detail.storyboard && (
+        <Reel
+          key={reel.id}
+          sb={detail.storyboard}
+          board={detail.board}
+          job={reel}
+          telling={!!telling[reel.id]}
+          onTell={() => onTell(reel)}
+          onCancel={() => onCancel(reel)}
+          onWatch={watch}
+        />
+      )}
+      {running && !sameVersion && (
         <section className="panel stack" aria-live="polite">
           <div className="row">
             <h2>Rendering version {running.version}</h2>
@@ -32,6 +74,9 @@ export default function FilmView({ detail, jobs, busy, renderUsd, onRender, onCa
               Cancel render
             </button>
           </div>
+          <p className="muted">
+            The script has changed since this render started, so it's shown as its stages.
+          </p>
           <Stages job={running} />
           <Log job={running} />
         </section>
@@ -50,6 +95,7 @@ export default function FilmView({ detail, jobs, busy, renderUsd, onRender, onCa
       {result?.film ? (
         <section className="hall">
           <video
+            ref={player}
             key={result.film}
             controls
             preload="metadata"

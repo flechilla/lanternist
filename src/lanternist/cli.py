@@ -28,12 +28,16 @@ def _load(path: Path) -> Storyboard:
 
 
 def _printer():
+    from .pipeline import ITEM
+
     t0 = time.time()
 
     def emit(e):
-        if e.status == "cached" and e.scene is not None:
+        # On a terminal, a line for each item made is enough, and one for a cast sheet already made.
+        sheet_made = e.status == "cached" and e.scene is None and e.who is None
+        if e.status in ITEM and e.status != "done" and not sheet_made:
             return
-        where = f" scene {e.scene}" if e.scene is not None else ""
+        where = f" scene {e.scene}" if e.scene is not None else f" {e.who}" if e.who else ""
         count = f" {e.done}/{e.total}" if e.total else ""
         msg = f" {e.message}" if e.message else ""
         print(f"[{time.time() - t0:6.1f}s] {e.stage:<9} {e.status:<8}{count}{where}{msg}", flush=True)

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   api,
+  CAMERA_NAMES,
   STYLE_NAMES,
   type Camera,
   type MediaCatalog,
@@ -12,15 +13,6 @@ import { useAction, useVoiceCatalog } from "../hooks";
 import ModelPicker from "./ModelPicker";
 import Slide from "./Slide";
 import VoicePicker from "./VoicePicker";
-
-const CAMERA_NAMES: Record<Camera, string> = {
-  auto: "Auto",
-  push_in: "Push in",
-  pull_out: "Pull out",
-  pan_left: "Pan left",
-  pan_right: "Pan right",
-  static: "Static",
-};
 
 const slug = (s: string) =>
   s

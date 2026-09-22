@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { asset } from "../api";
+import { asset, thumb } from "../api";
 
 interface Props {
   image?: string | null; // asset id
@@ -27,7 +27,7 @@ export default function Slide({ image, video, label, mark, square, empty, drawin
         {image ? (
           <img
             key={image}
-            src={asset(image)}
+            src={thumb(image, 768)}
             alt={alt}
             loading="lazy"
             className={fresh ? "fresh" : undefined}

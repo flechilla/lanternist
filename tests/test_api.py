@@ -29,6 +29,7 @@ def test_story_lifecycle(client, wait):
     sid = created["story"]["id"]
     story = client.get(f"/api/stories/{sid}").json()
     assert story["version"] == 1 and story["board"]["scenes"][0]["keyframe"] is None
+    assert story["board"]["scenes"][0]["line"] == "Scene 1 says a few words out loud."
     assert story["writer"] is None  # imported: nobody here wrote it
 
     wait(client.post(f"/api/stories/{sid}/board").json()["id"])
@@ -55,10 +56,51 @@ def test_story_lifecycle(client, wait):
     film = job["result"]["film"]
     stages = job["progress"]["stages"]
     assert {"narration", "keyframes", "motion", "clips", "mix"} <= set(stages)
+    # Every scene's steps, as the page reads them: made in this render, or served from the board's cache.
+    scenes = job["progress"]["scenes"]
+    assert scenes["2"]["motion"]["state"] == "done" and scenes["2"]["motion"]["asset"]
+    assert all(steps["clips"]["state"] == "done" for steps in scenes.values())
+    assert scenes["1"]["narration"]["state"] == "cached" and "motion" not in scenes["1"]  # a still
+    assert job["progress"]["spent_usd"] == 0 and stages["keyframes"]["doing"] == "Painting the scenes"
+    # What makes each stage, and whether it's this machine: the page doesn't guess.
+    assert (stages["clips"]["model"], stages["clips"]["local"]) == ("ffmpeg", True)
+    assert stages["keyframes"]["model"] == "FLUX.2 [klein] 9B" and job["progress"]["sheet"] is True
     r = client.get(f"/api/assets/{film}", headers={"Range": "bytes=0-99"})
     assert r.status_code == 206 and len(r.content) == 100
     assert client.get(f"/api/assets/{job['result']['vtt']}").headers["content-type"].startswith("text/vtt")
-    assert client.get("/api/stories").json()[0]["film"]["film"] == film
+    listed = client.get("/api/stories").json()[0]
+    assert listed["film"]["film"] == film and listed["progress"] is None  # nothing running
 
     assert client.delete(f"/api/stories/{sid}").status_code == 204
     assert client.get(f"/api/stories/{sid}").status_code == 404
+
+
+def test_a_picture_is_served_small_and_made_once(client, wait, tmp_path):
+    sid = client.post("/api/stories", json={"storyboard": storyboard(1)}).json()["story"]["id"]
+    wait(client.post(f"/api/stories/{sid}/board").json()["id"])
+    picture = client.get(f"/api/stories/{sid}").json()["board"]["scenes"][0]["keyframe"]
+    full = client.get(f"/api/assets/{picture}")
+
+    small = client.get(f"/api/assets/{picture}?w=500")
+    assert small.status_code == 200 and small.headers["content-type"] == "image/jpeg"
+    assert len(small.content) * 5 < len(full.content)
+    [kept] = (tmp_path / "lib" / "derived").rglob("*.jpg")
+    assert kept.name.endswith("-thumb@1-w768.jpg")
+    made = kept.stat().st_mtime_ns
+    assert client.get(f"/api/assets/{picture}?w=2000").content == small.content  # the largest there is
+    assert kept.stat().st_mtime_ns == made  # served as kept, not made again
+    assert len(client.get(f"/api/assets/{picture}?w=300").content) < len(small.content)  # a reel's slide
+    assert "immutable" not in small.headers["cache-control"]
+
+    film = wait(client.post(f"/api/stories/{sid}/render").json()["id"])["result"]["film"]
+    assert client.get(f"/api/assets/{film}?w=300").status_code == 422
+    assert client.get(f"/api/assets/{picture}?w=0").status_code == 422
+
+
+def test_a_picture_that_cant_be_read_says_so(client, tmp_path):
+    broken = "0" * 64 + ".png"
+    path = tmp_path / "lib" / "assets" / "00" / broken
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"not a picture")
+    r = client.get(f"/api/assets/{broken}?w=300")
+    assert r.status_code == 500 and "Draw its scene again" in r.json()["detail"]

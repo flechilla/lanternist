@@ -183,6 +183,16 @@ async def test_a_hybrid_film_on_kling_with_ambience(fake_cfg, db, fakes, story_r
     assert {r.stage for r in runs} == {"motion", "ambience"} and all(r.status == "done" for r in runs)
 
 
+def test_the_page_is_told_what_each_scene_cost_to_animate(client, wait, fakes, make_story):
+    sb = make_story(("still", "video"))
+    sb.models.video, sb.models.ambience = "fal/kling-v3-standard", "none"
+    sid = client.post("/api/stories", json={"storyboard": sb.model_dump()}).json()["story"]["id"]
+    progress = wait(client.post(f"/api/stories/{sid}/render").json()["id"])["progress"]
+    assert progress["scenes"]["2"]["motion"]["cost_usd"] == 0.504  # 6 s of Kling at $0.084
+    assert progress["stages"]["motion"]["spent_usd"] == progress["spent_usd"] == 0.504
+    assert "cost_usd" not in progress["scenes"]["2"]["narration"]  # made on this machine
+
+
 async def test_a_long_slot_is_two_chained_shots(fake_cfg, db, fakes, make_story):
     sb = make_story(("video",))
     sb.models.video, sb.models.ambience = "fal/kling-v3-standard", "none"

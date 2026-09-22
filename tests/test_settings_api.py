@@ -100,6 +100,10 @@ def test_the_default_writer_from_settings(client, wait):
     assert client.get("/api/models").json()["default"] == "openrouter/fake/cheap"
     job = wait(client.post("/api/stories", json={"brief": BRIEF}).json()["job"]["id"])
     assert job["result"]["writer"] == "openrouter/fake/cheap"
+    # The page lists the writer's passes from the snapshot, each counted as it ended.
+    write = job["progress"]["stages"]["write"]
+    assert write["passes"] == ["Drafting the story", "Planning the scenes"]
+    assert (write["done"], write["total"]) == (2, 2)
 
 
 def test_models_endpoint(client):

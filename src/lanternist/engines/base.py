@@ -53,6 +53,7 @@ class Item:
     params: dict = field(default_factory=dict)  # prompt, seed, size, refs, chunks, shots, …
     after: tuple[str, ...] = ()  # the items earlier in the same batch whose outputs this one needs
     stage: str | None = None  # the progress row it reports under, when not its stage's own
+    who: str | None = None  # the character a portrait is of: what the progress shows it under
 
 
 @dataclass
@@ -109,6 +110,11 @@ class StepContext:
     job_id: str | None = None
     user_cancelled: Callable[[], bool] = lambda: False
     note: Callable[[str, int | None], None] = lambda message, scene: None  # a progress line
+    # Where an item is while it's made: "working" on it, or "waiting" in a provider's queue with a
+    # number of requests ahead of it.
+    phase: Callable[[Item, str, int | None], None] = lambda item, phase, ahead: None
+    # How far through an item it is, 0 to 1, for an item that can say: the mix, from ffmpeg.
+    advance: Callable[[Item, float], None] = lambda item, at: None
     bind: Callable[[Item], None] = _unbound
 
 
@@ -121,6 +127,7 @@ class Maker:
 
     remote = False
     model_id: str | None = None  # the registry id, for the step_runs rows of local models
+    label = ""  # what the progress calls what makes it: a model's name
 
     def estimate(self, items: list[Item]) -> Estimate:
         raise NotImplementedError
@@ -134,7 +141,7 @@ class Engine(Maker):
 
     def __init__(self, cfg: Settings, entry: ModelEntry):
         self.cfg, self.entry = cfg, entry
-        self.model_id = entry.id
+        self.model_id, self.label = entry.id, entry.label
 
     def key(self, kind: str, **inputs) -> str:
         raise NotImplementedError
@@ -207,8 +214,10 @@ class FalEngine(Engine):
             seen["last"] = now
             if status == "IN_QUEUE":
                 pos = d.get("queue_position")
+                ctx.phase(item, "waiting", pos)
                 ctx.note(f"{where}: waiting at fal" + (f", {pos} ahead" if pos else ""), item.scene)
             elif status == "IN_PROGRESS":
+                ctx.phase(item, "working", None)
                 ctx.note(f"{where}: generating at fal", item.scene)
 
         spec = RunSpec(

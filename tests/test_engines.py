@@ -256,6 +256,14 @@ async def test_a_board_on_fal_draws_the_cast_first_and_uploads_it_once(fake_cfg,
     assert [(e.done, e.total) for e in events if e.stage == "cast" and e.status == "done"] == [(1, 1)]
     assert [(e.done, e.total) for e in events if e.stage == "keyframes" and e.status == "done"][-1] == (2, 2)
     assert any("generating at fal" in e.message for e in events if e.status == "progress")
+    # Each picture says where it is at fal: waiting in the queue, then being made.
+    assert [e.status for e in events if e.stage == "keyframes" and e.scene == 1 and not e.message] == [
+        "queued",
+        "waiting",
+        "working",
+        "done",
+    ]
+    assert next(e.ahead for e in events if e.status == "waiting") == 0
 
     # A second board is all cache hits; a re-roll asks for one picture.
     fakes.fal.submits.clear()

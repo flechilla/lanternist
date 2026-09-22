@@ -188,6 +188,7 @@ class LibraryRow:
     film: Job | None  # the latest finished render
     drawn: Job | None  # the latest finished board or render, for the poster
     active: int  # jobs queued or running
+    progress: float | None  # how far through the running one is, by time, when it knows
 
 
 class Database:
@@ -273,15 +274,17 @@ class Database:
                 )
                 film = s.scalars(done.where(Job.kind == "render")).first()
                 drawn = s.scalars(done.where(Job.kind.in_(("board", "render")))).first()
-                active = s.scalar(
-                    select(func.count()).where(Job.story_id == st.id, Job.status.in_(("queued", "running")))
+                active = list(
+                    s.scalars(select(Job).where(Job.story_id == st.id, Job.status.in_(("queued", "running"))))
                 )
+                running = next((j for j in active if j.status == "running"), None)
                 row = s.scalars(
                     select(StoryVersion).where(
                         StoryVersion.story_id == st.id, StoryVersion.version == st.version
                     )
                 ).first()
-                out.append(LibraryRow(st, row.storyboard if row else {}, film, drawn, active or 0))
+                fraction = (running.progress or {}).get("fraction") if running else None
+                out.append(LibraryRow(st, row.storyboard if row else {}, film, drawn, len(active), fraction))
             return out
 
     def get_story(self, story_id: str) -> Story | None:
@@ -420,6 +423,28 @@ class Database:
             q = q.where(StepRun.created_at >= since)
         with self.session() as s:
             return int(s.scalar(q))
+
+    def step_seconds(self, stage: str, model_id: str, limit: int) -> list[float]:
+        """How long a model's most recent steps in a stage took, end to end, newest first."""
+        q = (
+            select(func.coalesce(StepRun.wall_seconds, StepRun.gpu_seconds))
+            .where(StepRun.stage == stage, StepRun.model_id == model_id, StepRun.status == "done")
+            .where(func.coalesce(StepRun.wall_seconds, StepRun.gpu_seconds).is_not(None))
+            .order_by(StepRun.created_at.desc())
+            .limit(limit)
+        )
+        with self.session() as s:
+            return [float(secs) for secs in s.scalars(q)]
+
+    def spend_by_step(self, job_id: str) -> dict[tuple[str, int | None], int]:
+        """What a job has paid for, by stage and scene: only steps with a cost, so no local ones."""
+        q = (
+            select(StepRun.stage, StepRun.scene, func.sum(StepRun.cost_micros))
+            .where(StepRun.job_id == job_id, StepRun.cost_micros.is_not(None))
+            .group_by(StepRun.stage, StepRun.scene)
+        )
+        with self.session() as s:
+            return {(stage, scene): int(micros) for stage, scene, micros in s.execute(q)}
 
     def spend_by_story(self) -> dict[str, int]:
         """What each story has cost so far, in one query, for the library."""

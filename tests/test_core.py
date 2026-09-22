@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -315,3 +316,34 @@ def test_every_worker_speaks_the_runners_protocol():
         assert f'"{MARK}"' in script.read_text(encoding="utf-8"), (
             f"{script.name} doesn't prefix its events with {MARK!r}"
         )
+
+
+async def test_an_encode_whose_progress_fails_is_stopped(tmp_path):
+    """Nothing may go on encoding into a work dir that's being deleted."""
+    out = tmp_path / "long.mp4"
+
+    def fail(_: float) -> None:
+        raise RuntimeError("the page went away")
+
+    long = ["-f", "lavfi", "-i", "testsrc2=d=120", "-c:v", "libx264", "-preset", "ultrafast", str(out)]
+    with pytest.raises(RuntimeError):
+        await ffmpeg.run(long, on_time=fail)
+    left = await asyncio.create_subprocess_exec("pgrep", "-f", str(out), stdout=asyncio.subprocess.DEVNULL)
+    assert await left.wait() == 1  # no ffmpeg writing it any more
+
+
+async def test_an_encode_says_how_far_it_has_got(tmp_path):
+    seen: list[float] = []
+    short = [
+        "-f",
+        "lavfi",
+        "-i",
+        "testsrc2=d=2",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "ultrafast",
+        str(tmp_path / "a.mp4"),
+    ]
+    await ffmpeg.run(short, on_time=seen.append)
+    assert seen == sorted(seen) and seen[-1] == pytest.approx(2.0, abs=0.1)

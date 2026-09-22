@@ -90,7 +90,10 @@ export default function Library() {
               </div>
             </div>
             {s.active_jobs > 0 ? (
-              <span className="status-pill working">Working</span>
+              <span className="status-pill working">
+                {s.progress != null && <Ring fraction={s.progress} />}
+                Working{s.progress != null && ` · ${Math.round(s.progress * 100)}%`}
+              </span>
             ) : s.film ? (
               <span className="status-pill ready">Film ready</span>
             ) : null}
@@ -98,5 +101,16 @@ export default function Library() {
         ))}
       </div>
     </>
+  );
+}
+
+/** How far a job has got, as a ring filling round. */
+function Ring({ fraction }: { fraction: number }) {
+  const turn = 2 * Math.PI * 6;
+  return (
+    <svg className="ring" viewBox="0 0 16 16" aria-hidden="true">
+      <circle cx="8" cy="8" r="6" />
+      <circle cx="8" cy="8" r="6" className="fill" strokeDasharray={`${turn * fraction} ${turn}`} />
+    </svg>
   );
 }

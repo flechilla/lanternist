@@ -61,6 +61,7 @@ The models don't fit on the 32 GB card together. Before each stage, Lanternist u
 scripts/check                               # every gate CI runs: format, lint, types, tests, build, duplication
 uv run pytest                               # unit tests + the whole pipeline with fake engines
 LANTERNIST_FAKE_ENGINES=1 uv run lanternist serve   # UI work without the GPU
+LANTERNIST_FAKE_ENGINES=1 LANTERNIST_FAKE_PACE=1.5 uv run lanternist serve   # each fake item takes 1.5 s, to watch the progress
 cd web && pnpm dev                          # Vite on :5173, proxying /api to :8420
 ```
 

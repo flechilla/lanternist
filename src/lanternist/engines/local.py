@@ -10,7 +10,7 @@ In fake mode every one of them makes test media of the right shape and length in
 
 import asyncio
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 import httpx
@@ -46,16 +46,32 @@ KLEIN_STEPS, KLEIN_GUIDANCE = 4, 1.0
 def _on_worker(
     ctx: StepContext, items: list[Item], made: Callable[[Item, dict], None]
 ) -> Callable[[dict], None]:
-    """A worker's event handler: its load time as a progress line, then `made` for each output."""
+    """A worker's event handler: its load time as a progress line, then `made` for each output.
+    A worker makes its items in order, so once the model is loaded, or an item is made, the next begins."""
     by_id = {it.id: it for it in items}
+    ahead = iter(items)
 
     def on_event(ev: dict) -> None:
         if ev.get("event") == "loaded":
             ctx.note(f"model loaded in {ev['secs']}s", None)
         elif ev.get("event") == "item":
             made(by_id[ev["id"]], ev)
+        else:
+            return
+        if (it := next(ahead, None)) is not None:
+            ctx.phase(it, "working", None)
 
     return on_event
+
+
+async def _fake_worker(
+    cfg: Settings, jobs: list[dict], on_event: Callable[[dict], None], make: Callable[[dict], Awaitable[dict]]
+) -> None:
+    """What a worker reports, in fake mode: the model loads at once, and each item takes `fake_pace`."""
+    on_event({"event": "loaded", "secs": 0})
+    for job in jobs:
+        await asyncio.sleep(cfg.fake_pace)
+        on_event({"event": "item", **await make(job)})
 
 
 class LocalQwenTts(TtsEngine):
@@ -105,8 +121,10 @@ class LocalQwenTts(TtsEngine):
         on_event = _on_worker(ctx, items, made)
 
         if self.cfg.fake_engines:
-            for job in jobs:
-                on_event({"event": "item", **fake.tts(job, chunk_gap=self.cfg.render.chunk_gap)})
+            gap = self.cfg.render.chunk_gap
+            await _fake_worker(
+                self.cfg, jobs, on_event, lambda job: asyncio.to_thread(fake.tts, job, chunk_gap=gap)
+            )
             return
         eng = self.cfg.engines.qwen3tts
         job = {
@@ -159,8 +177,7 @@ class LocalKlein(Engine):
         on_event = _on_worker(ctx, items, made)
 
         if self.cfg.fake_engines:
-            for job in jobs:
-                on_event({"event": "item", **await fake.image(job)})
+            await _fake_worker(self.cfg, jobs, on_event, fake.image)
             return
         eng = self.cfg.engines.klein
         job = {"weights": str(eng.weights), "steps": KLEIN_STEPS, "guidance": KLEIN_GUIDANCE, "items": jobs}
@@ -205,6 +222,7 @@ class LocalLtx(VideoEngine):
             await ensure_running(self.cfg.comfyui.url, self.cfg.comfyui.root)
         async with lease(self.cfg, "comfyui", m.vram_gb), httpx.AsyncClient(timeout=120) as client:
             for it in items:
+                ctx.phase(it, "working", None)
                 t0 = time.monotonic()
                 n, frames = it.scene, self.frames(it.params["shots"])
                 shots = []
@@ -213,6 +231,7 @@ class LocalLtx(VideoEngine):
                     shot = ctx.work / f"{it.id}-{j}.mp4"
                     ctx.note(f"scene {n}: shot {j + 1}/{len(frames)}, {f} frames", n)
                     if self.cfg.fake_engines:
+                        await asyncio.sleep(self.cfg.fake_pace)
                         await fake.video(f, m.fps, m.width, m.height, shot)
                     else:
                         name = await comfy.upload(client, image)
@@ -234,6 +253,7 @@ class Clips(Maker):
     """Every scene's normalised clip: a still with its camera move, or a generated clip fitted to its slot."""
 
     CONCURRENT = 3  # ffmpeg encodes at once; more only queue on the encoder
+    label = "ffmpeg"
 
     async def run(self, items: list[Item], ctx: StepContext, on_item: OnItem) -> None:
         sem = asyncio.Semaphore(self.CONCURRENT)
@@ -242,6 +262,7 @@ class Clips(Maker):
         async def one(it: Item) -> None:
             p = it.params
             async with sem:
+                ctx.phase(it, "working", None)
                 dest = ctx.work / f"{it.id}.mp4"
                 src = ctx.store.path(p["src"])
                 if p["mode"] == "video":
@@ -256,24 +277,32 @@ class Clips(Maker):
 class Mix(Maker):
     """The film: the clips crossfaded, the narration laid on top, and the subtitle files."""
 
+    label = "ffmpeg"
+
     async def run(self, items: list[Item], ctx: StepContext, on_item: OnItem) -> None:
         for it in items:
-            p = it.params
-            extra = {}
-            srt_path = None
-            if p["subtitles"] != "off":
-                srt_path = ctx.work / "film.srt"
-                srt_path.write_text(timing.srt(p["cues"]), encoding="utf-8")
-                vtt_path = ctx.work / "film.vtt"
-                vtt_path.write_text(timing.vtt(p["cues"]), encoding="utf-8")
-                extra = {"srt": srt_path, "vtt": vtt_path}
-            film = ctx.work / "film.mp4"
-            await ffmpeg.mix(
-                [ctx.store.path(c) for c in p["clips"]],
-                [ctx.store.path(w) for w in p["wavs"]],
-                p["timeline"],
-                ctx.cfg.render,
-                film,
-                subtitles=srt_path if p["subtitles"] == "burned" else None,
-            )
-            on_item(Output(it, film, {"duration": round(p["timeline"].total, 3)}, extra=extra))
+            await self.film(it, ctx, on_item)
+
+    async def film(self, it: Item, ctx: StepContext, on_item: OnItem) -> None:
+        ctx.phase(it, "working", None)
+        p = it.params
+        extra = {}
+        srt_path = None
+        if p["subtitles"] != "off":
+            srt_path = ctx.work / "film.srt"
+            srt_path.write_text(timing.srt(p["cues"]), encoding="utf-8")
+            vtt_path = ctx.work / "film.vtt"
+            vtt_path.write_text(timing.vtt(p["cues"]), encoding="utf-8")
+            extra = {"srt": srt_path, "vtt": vtt_path}
+        film = ctx.work / "film.mp4"
+        length = p["timeline"].total
+        await ffmpeg.mix(
+            [ctx.store.path(c) for c in p["clips"]],
+            [ctx.store.path(w) for w in p["wavs"]],
+            p["timeline"],
+            ctx.cfg.render,
+            film,
+            subtitles=srt_path if p["subtitles"] == "burned" else None,
+            on_time=lambda secs: ctx.advance(it, min(secs / length, 1)),
+        )
+        on_item(Output(it, film, {"duration": round(length, 3)}, extra=extra))

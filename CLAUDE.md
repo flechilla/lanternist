@@ -81,7 +81,7 @@ sends it; the frontend doesn't hard-code it.
 | Languages | `text.LANGUAGES` | `/api/options` |
 | Styles, audiences, kinds | `writer.py` | `/api/options` |
 | Story length: words per minute and per scene | `writer.WPM`, `Brief.target_words`, `Brief.scenes` | the writer |
-| Stage names and labels | `pipeline.LABELS` | progress snapshots, the estimate, budget messages |
+| Stage names and labels, and what each is doing | `pipeline.LABELS`, `pipeline.ACTIONS` | progress snapshots, the estimate, budget messages |
 | Models, limits, prices | `registry/*.toml` | pickers, estimator, doctor, adapters |
 | Config defaults | `config.py` | documented in `lanternist.example.toml` (keep it in step) |
 | Settings the app may change | `prefs.EDITABLE` | Settings page |

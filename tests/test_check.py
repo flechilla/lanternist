@@ -12,7 +12,7 @@ from lanternist.cli import _flagged, _keep_redraws
 from lanternist.config import Settings
 from lanternist.db import Job, StepRun, to_micros
 from lanternist.doctor import needs, ollama_models
-from lanternist.jobs import Runner
+from lanternist.jobs import Progress, Runner
 from lanternist.pipeline import Board, BudgetExceeded, Event, Pipeline, timing
 from lanternist.storyboard import CastMember, Storyboard, next_seed
 
@@ -75,6 +75,58 @@ async def test_a_picture_that_fails_its_check_is_drawn_again_with_a_new_seed(fak
     )
     assert asked == {"type": "text", "text": check.question(sb, sb.scenes[0])}
     assert "- Ann: girl in a red coat" in asked["text"] and "a reflection in water" in asked["text"]
+
+
+async def test_the_progress_shows_a_failed_picture_until_its_redraw_lands(fake_cfg, db, fakes, make_story):
+    fakes.openrouter.replies = [TWICE]
+    job = db.add_job(None, "board", None, {}, None)
+    progress = Progress(db, job.id)
+    seen = []
+
+    def follow(e: Event) -> None:
+        progress.stage(e)
+        if e.scene == 1 and e.stage in ("keyframes", "check"):
+            steps = progress.snap["scenes"]["1"]
+            check = steps.get("check", {})
+            seen.append(
+                (e.stage, e.status, check.get("state"), check.get("note"), steps["keyframes"].get("asset"))
+            )
+
+    await Pipeline(checking(fake_cfg), follow, db=db, job_id=job.id).board(make_story(("still",)))
+    failed = next(
+        i for i, (stage, _, state, _, _) in enumerate(seen) if stage == "check" and state == "failed"
+    )
+    assert seen[failed][3] == "Ann appears twice."
+    # Drawn again: the old picture stays up beside the verdict until the new one lands.
+    old = seen[failed][4]
+    assert [(status, state, picture == old) for stage, status, state, _, picture in seen[failed + 1 :]][
+        :3
+    ] == [
+        ("queued", "failed", True),
+        ("working", "failed", True),
+        ("done", "failed", False),
+    ]
+    steps = progress.snap["scenes"]["1"]
+    # Two pictures and two verdicts: the page tells a verdict on the old picture by its fewer tries.
+    assert steps["keyframes"]["tries"] == steps["check"]["tries"] == 2
+    assert steps["check"]["state"] == "done" and "note" not in steps["check"]
+    assert progress.snap["stages"]["check"]["model"] == "Fake Cheap"  # the checker by its name
+
+
+async def test_a_fail_with_no_reason_is_still_a_fail(fake_cfg, db, fakes, make_story):
+    fakes.openrouter.replies = [TWICE.replace('"Ann appears twice."', '""')]
+    job = db.add_job(None, "board", None, {}, None)
+    progress = Progress(db, job.id)
+    states = []
+
+    def follow(e: Event) -> None:
+        progress.stage(e)
+        if e.stage == "check" and e.status == "done":
+            states.append(progress.snap["scenes"]["1"]["check"]["state"])
+
+    b = await Pipeline(checking(fake_cfg), follow, db=db, job_id=job.id).board(make_story(("still",)))
+    assert b.redrawn == {1: ""}
+    assert states == ["failed", "done"]
 
 
 async def test_a_flagged_picture_is_not_drawn_again_on_the_next_board(fake_cfg, db, fakes, make_story):

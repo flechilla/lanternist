@@ -2,6 +2,7 @@
 
     assets/ab/<sha256>.<ext>    every image, wav and mp4, named by its content
     steps/ab/<key>.json         one record per finished step: its outputs and metadata
+    derived/ab/<sha256>-<name>  files made from an asset for the pages, such as a smaller picture
 
 A step's key hashes everything that decides its output (kind, engine and version, parameters,
 the final prompt, the seed, upstream asset hashes), so an edit re-runs exactly the steps it
@@ -59,6 +60,11 @@ class Store:
 
     def sha(self, asset: str) -> str:
         return asset.split(".", 1)[0]
+
+    def derived(self, asset: str, name: str) -> Path:
+        """Where a file made from an asset is kept, such as a smaller copy of a picture: beside the
+        assets, named by the asset and what it is, so it's made once."""
+        return self.root / "derived" / asset[:2] / f"{self.sha(asset)}-{name}"
 
     # steps ----------------------------------------------------------------------------------
     def _step_path(self, key: str) -> Path:

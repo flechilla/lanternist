@@ -11,7 +11,9 @@ import logging
 import math
 import re
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 from ..config import Render
 from ..timing import Timeline
@@ -29,32 +31,47 @@ class FfmpegError(RuntimeError):
     pass
 
 
-async def run(args: list[str], loglevel: str = "error") -> str:
-    """Run ffmpeg and return what it logged, which is nothing but errors unless `loglevel` asks for more."""
-    cmd = ["ffmpeg", "-hide_banner", "-loglevel", loglevel, "-nostdin", "-y", *args]
-    proc = await asyncio.create_subprocess_exec(*cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+async def run(
+    args: list[str], loglevel: str = "error", on_time: Callable[[float], None] | None = None
+) -> str:
+    """Run ffmpeg and return what it logged, which is nothing but errors unless `loglevel` asks for more.
+    `on_time` hears how many seconds of output it has written, as it writes them."""
+    progress = ["-progress", "pipe:1", "-nostats"] if on_time else []
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", loglevel, "-nostdin", "-y", *progress, *args]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, stdout=subprocess.PIPE if on_time else subprocess.DEVNULL, stderr=subprocess.PIPE
+    )
     try:
-        _, err = await proc.communicate()
-    except asyncio.CancelledError:
-        proc.kill()
-        await proc.wait()
-        raise
+        if on_time:
+            errors = asyncio.ensure_future(cast(asyncio.StreamReader, proc.stderr).read())
+            async for raw in cast(asyncio.StreamReader, proc.stdout):  # stdout=PIPE, so never None
+                key, _, value = raw.decode(errors="replace").strip().partition("=")
+                if key == "out_time_us" and value.isdigit():  # "N/A" until the first frame is out
+                    on_time(int(value) / 1_000_000)
+            err = await errors
+            await proc.wait()
+        else:
+            _, err = await proc.communicate()
+    finally:
+        if proc.returncode is None:  # cancelled, or `on_time` raised: never leave it encoding
+            proc.kill()
+            await proc.wait()
     log_text = err.decode(errors="replace")
     if proc.returncode != 0:
         raise FfmpegError(f"ffmpeg failed: {log_text[-2000:]}\ncmd: {' '.join(cmd)[:1500]}")
     return log_text
 
 
-async def encode(build, r: Render) -> None:
+async def encode(build, r: Render, on_time: Callable[[float], None] | None = None) -> None:
     """Run an encode built by `build(render_settings)`; if the hardware encoder fails (it can't get a
     session or memory while a model fills the GPU), encode on the CPU instead."""
     try:
-        await run(build(r))
+        await run(build(r), on_time=on_time)
     except FfmpegError as e:
         if r.encoder == "libx264":
             raise
         log.warning("%s failed, retrying with libx264: %s", r.encoder, str(e).splitlines()[0][:200])
-        await run(build(r.model_copy(update={"encoder": "libx264"})))
+        await run(build(r.model_copy(update={"encoder": "libx264"})), on_time=on_time)
 
 
 def probe(path: Path) -> dict:
@@ -196,7 +213,7 @@ async def to_wav(src: Path, out: Path, rate: int) -> None:
 
 
 async def thumbnail(src: Path, out: Path, width: int) -> None:
-    """A picture as a JPEG `width` wide: what a vision model is shown."""
+    """A picture as a JPEG `width` wide: what a vision model is shown, and what the pages show."""
     await run(["-i", str(src), "-vf", f"scale={width}:-2", "-q:v", "4", str(out)])
 
 
@@ -358,8 +375,16 @@ async def loudness(inputs: list[str], tl: Timeline, r: Render, gains: list[float
 
 
 async def mix(
-    clips: list[Path], wavs: list[Path], tl: Timeline, r: Render, out: Path, subtitles: Path | None = None
+    clips: list[Path],
+    wavs: list[Path],
+    tl: Timeline,
+    r: Render,
+    out: Path,
+    subtitles: Path | None = None,
+    on_time: Callable[[float], None] | None = None,
 ) -> None:
+    """The film: each clip's sound levelled against the narration, then the whole encoded at the target
+    loudness. `on_time` hears how far the encode has got, in seconds of film."""
     inputs = []
     for c in clips:
         inputs += ["-i", str(c)]
@@ -395,4 +420,5 @@ async def mix(
             str(out),
         ],
         r,
+        on_time,
     )

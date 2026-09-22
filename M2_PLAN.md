@@ -1,6 +1,6 @@
 # Lanternist M2: OpenRouter and fal.ai
 
-> **Status, 21 Sep 2026: Phases A and B are built and checked against the live APIs.** 91 tests pass offline, and your library is migrated to `0002` (backup in `~/Lanternist/backups/`). Both keys work. A first real video was made end to end: GPT Luna wrote the story and MiniMax H3 Max rendered the shot on fal, for $0.80 as estimated. Stories can now be written by any OpenRouter model with structured output, picked on New story; Claude Opus 5 wrote a Spanish story in the app for $0.21, as estimated. **22 Sep: Phases C–F are built and pass offline** (162 tests): the engine interface; pictures on fal with five models (Nano Banana Pro, Seedream 5.0 Pro and FLUX.2 [max] among them); an estimate and a budget before anything is spent; video on fal with nine models, MiniMax H3 Max and its cheap Turbo among them, with MMAudio ambience; and narration on fal with voices you can hear before choosing. **A first live run through the app** (22 Sep, a throwaway library, $0.43 in all): GPT-5.6 Luna wrote a 1-minute Spanish story, two ElevenLabs voices were heard before Aria was chosen, ElevenLabs narrated it, klein drew the cast sheet and pictures, and MiniMax H3 Max Turbo animated one 15 s scene at 480P in 3 s of inference. Every fal charge matched its estimate within 3% (narration and video exactly), and the cast held between the pictures and the clip. What's left is the rest of the definition of done, live: Kling with MMAudio, a restart and a cancel mid-video, and a clone on fal Qwen3-TTS. **22 Sep, a film quality review (§6)** changed how pictures are referenced, how a paragraph is shot and how a film is mixed, and added a picture check.
+> **Status, 21 Sep 2026: Phases A and B are built and checked against the live APIs.** 91 tests pass offline, and your library is migrated to `0002` (backup in `~/Lanternist/backups/`). Both keys work. A first real video was made end to end: GPT Luna wrote the story and MiniMax H3 Max rendered the shot on fal, for $0.80 as estimated. Stories can now be written by any OpenRouter model with structured output, picked on New story; Claude Opus 5 wrote a Spanish story in the app for $0.21, as estimated. **22 Sep: Phases C–F are built and pass offline** (162 tests): the engine interface; pictures on fal with five models (Nano Banana Pro, Seedream 5.0 Pro and FLUX.2 [max] among them); an estimate and a budget before anything is spent; video on fal with nine models, MiniMax H3 Max and its cheap Turbo among them, with MMAudio ambience; and narration on fal with voices you can hear before choosing. **A first live run through the app** (22 Sep, a throwaway library, $0.43 in all): GPT-5.6 Luna wrote a 1-minute Spanish story, two ElevenLabs voices were heard before Aria was chosen, ElevenLabs narrated it, klein drew the cast sheet and pictures, and MiniMax H3 Max Turbo animated one 15 s scene at 480P in 3 s of inference. Every fal charge matched its estimate within 3% (narration and video exactly), and the cast held between the pictures and the clip. What's left is the rest of the definition of done, live: Kling with MMAudio, a restart and a cancel mid-video, and a clone on fal Qwen3-TTS. **22 Sep, a film quality review (§6)** changed how pictures are referenced, how a paragraph is shot and how a film is mixed, and added a picture check. **22 Sep, render progress for everyone (§7)**: every scene reports its own progress, and a render says how long it has left as a range; the Film step shows a render as a reel of its scenes filling in, and the dock, the tab title and the Library follow it from anywhere.
 >
 > This is the blueprint's M2 ("fal, registry, estimator, your own key") with one change: the writer calls OpenRouter directly instead of going through fal's `openrouter/router`. Going direct gives the real cost of every request, the full list of models, and one hop fewer.
 > API facts below were read from the OpenRouter and fal docs, the per-model `llms.txt` pages and the fal-client 1.0.3 source on 21 Sep 2026. Anything marked **verify** was not confirmed and gets checked in Phase A.
@@ -665,3 +665,61 @@ together and merged a jug into a mug. It made 4¼ minutes of video in 90 s.
   run 10% short. Measuring each narrator's pace would fix the length.
 - Next, from similar products: a music bed ducked under the voice (ACE-Step, locally or on fal), and
   checking clips as well as pictures.
+
+## 7. Render progress for everyone (22 Sep 2026)
+
+Outside the plan above. The progress spoke to engineers: stage bars, counts and a log. A render of a
+37-scene story takes 20 minutes, and what someone waiting wants to see is their story arriving. The
+design, the research behind it and a replay of a real run are in the sketch
+(https://claude.ai/artifact/A5ZWEADBPhP8eDR5LRkJn4). In short: every scene is a lantern slide on a
+reel from the first second, and fills in where it sits (voice, picture, motion); one plain sentence
+says what's happening; time left is a range; hovering a slide shows its details; and the stage bars,
+models, spend and log move behind a "Behind the scenes" switch.
+
+Decisions, as the sketch recommended: spend is one quiet line in the friendly view; Behind the
+scenes is closed by default and remembered per browser; the reel lives on the Film step, with a
+mini reel in the dock everywhere else; no sound; streaming the writer's prose comes later.
+
+- [x] **Per-scene progress in the snapshot** (`feat/scene-progress`). Every item of a stage reports
+  queued or cached, then waiting (with its place in fal's queue) or working, then done: each scene's
+  step in each stage and each character's portrait, under `scenes` and `cast`, with its asset and how
+  long it took. A scene's step on fal says what it cost, and each stage what it has spent. The picture
+  check's verdicts show as they land, and a picture drawn again keeps its old one up until the new
+  one lands. `pipeline.ACTIONS` says what each stage is
+  doing in plain words. `LANTERNIST_FAKE_PACE` makes each fake item take that many seconds. No step
+  key changes.
+- [x] **Time left and the phase bar** (`feat/progress-time`). A board or render says how long it
+  has left as a range (`pace.py`): each stage expects its items to take what its model took here
+  before (the median of its step_runs), else what the registry lists, else a guess; once two are
+  made, the job's own pace takes over. A guess spreads the range wider than a measurement, and items
+  waiting at fal widen it. The snapshot also gives each stage's share of the time, how far through the
+  job it is, how long each stage has worked, and where the mix is, from ffmpeg's `-progress`.
+- [x] **Thumbnails** (`feat/thumbnails`). `/api/assets/{id}?w=` serves a picture as a JPEG 768 wide,
+  made the first time it's asked for and kept under `derived/`. The lab's 37 pictures of a story weigh
+  120 MB as PNGs; the Board's slides now load 3.1 MB of them, and the reel's (384 wide, added with
+  it) 1 MB.
+- [x] **The reel** (`feat/reel`) on the Film step, in place of the stage bars. Every scene is a slide
+  on a winding thread, with the cast sheet and portraits above: a waveform when it's narrated, then its
+  picture warming in, a stamp while the check has it drawn again, and four pips for voice, picture,
+  motion and cut. One sentence says what's happening ("Recording the narrator", then the scene and its
+  first line), with time left as a range and what the render has spent so far. Hovering or focusing a
+  slide opens its card (the picture or clip, the line, each step's time and cost, a Listen button); a
+  portrait draws threads to its scenes. From the keyboard, Tab stops at one slide, the arrows move
+  between them, Tab goes on into the open card and Escape closes it. Behind the scenes holds the
+  stages with what makes them, their time and spend, a scene-by-step grid, and the log; it's closed
+  until opened, and the browser remembers. During the mix a spark runs the thread; at the finish, a
+  summary with the pictures that still fail the check. Loops (a card's clip too) run only with motion
+  allowed and not paused ("Pause motion"), and only what changes while someone watches animates. The
+  snapshot says what makes each stage, whether there's a cast sheet and whose portraits are coming,
+  and the board each scene's first sentence, so the page guesses none of them. A render of a version
+  the script has since moved on from is shown as its stages. No new dependencies. Not done: a View
+  Transition from the reel to the film.
+- [x] **Progress everywhere** (`feat/progress-everywhere`). The dock on the other steps says what's
+  happening in the same sentence, with time left and a mini reel of the scenes (hover one for its
+  state), and opens the reel for a render. The tab title reads "(62%) The Lantern of the Lake ·
+  Lanternist" while a job runs; the percentage is by time and never goes back. "Tell me when it's
+  ready" asks for notification permission only when clicked, and notifies once the job ends if the
+  page is in the background; the story's page does the telling, so the button says it does so while
+  that page is open. The Library shows a running story's percentage in a ring. Writing a story lists
+  the writer's passes as it names them (`writer.PASSES`), each done, now or to come, with the log
+  under Behind the scenes.
