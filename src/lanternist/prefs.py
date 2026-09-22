@@ -23,8 +23,12 @@ EDITABLE = {
     "fal.max_concurrency": "fal requests running at once",
     "fal.media_ttl_hours": "Hours fal keeps the files it makes for us",
 }
-MODEL_KEYS = {"defaults.tts": "tts.speak", "defaults.image": "image.keyframe",
-              "defaults.video": "video.image_to_video", "defaults.ambience": "audio.ambience"}
+MODEL_KEYS = {
+    "defaults.tts": "tts.speak",
+    "defaults.image": "image.keyframe",
+    "defaults.video": "video.image_to_video",
+    "defaults.ambience": "audio.ambience",
+}
 
 
 def _apply(cfg: Settings, values: dict) -> Settings:
@@ -64,7 +68,7 @@ def _check_model(key: str, value, library) -> None:
         return
     if key == "defaults.ambience" and value == "none":
         return
-    entry = registry.get(value, library)   # KeyError names the known ids
+    entry = registry.get(value, library)  # KeyError names the known ids
     if entry.capability != MODEL_KEYS[key]:
         raise ValueError(f"{value} is a {entry.capability} model, not {MODEL_KEYS[key]}")
 
@@ -82,7 +86,9 @@ def update(cfg: Settings, db: Database, changes: dict) -> None:
     try:
         new = _apply(cfg, merged)
     except ValidationError as e:
-        raise ValueError("; ".join(f"{'.'.join(map(str, err['loc']))}: {err['msg']}" for err in e.errors())) from None
+        raise ValueError(
+            "; ".join(f"{'.'.join(map(str, err['loc']))}: {err['msg']}" for err in e.errors())
+        ) from None
     for key in changes:
         if key in MODEL_KEYS or key == "defaults.writer":
             try:

@@ -18,10 +18,20 @@ def cfg(tmp_path):
 
 def story(modes=("still", "video", "still")) -> Storyboard:
     return Storyboard(
-        title="Test", cast=[CastMember(id="a", name="Ann", look="girl in a red coat")],
-        scenes=[Scene(n=i, narration=[Line(text=f"Scene {i} has a few words to say out loud here.")],
-                      visual=f"picture {i}", cast=["a"], mode=m) for i, m in enumerate(modes, 1)],
-        subtitles="burned")
+        title="Test",
+        cast=[CastMember(id="a", name="Ann", look="girl in a red coat")],
+        scenes=[
+            Scene(
+                n=i,
+                narration=[Line(text=f"Scene {i} has a few words to say out loud here.")],
+                visual=f"picture {i}",
+                cast=["a"],
+                mode=m,
+            )
+            for i, m in enumerate(modes, 1)
+        ],
+        subtitles="burned",
+    )
 
 
 async def test_render_then_cache_then_edit(cfg):

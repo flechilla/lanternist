@@ -26,7 +26,7 @@ LABELS = {"openrouter": "OpenRouter", "fal": "fal.ai"}
 class Key:
     provider: str
     value: str | None
-    source: str | None      # env | keychain | file | fake | None
+    source: str | None  # env | keychain | file | fake | None
 
     @property
     def last4(self) -> str | None:
@@ -34,8 +34,9 @@ class Key:
 
 
 def secrets_file() -> Path:
-    return Path(os.path.expanduser(os.environ.get("LANTERNIST_SECRETS_FILE",
-                                                  "~/.config/lanternist/secrets.toml")))
+    return Path(
+        os.path.expanduser(os.environ.get("LANTERNIST_SECRETS_FILE", "~/.config/lanternist/secrets.toml"))
+    )
 
 
 def _check(provider: str) -> None:

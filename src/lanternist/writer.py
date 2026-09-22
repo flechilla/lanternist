@@ -21,21 +21,21 @@ from .text import LANGUAGES, word_count
 
 STYLES = {
     "watercolour": "soft watercolour storybook illustration, gentle washes of colour, visible paper texture, "
-                   "warm light, no text",
+    "warm light, no text",
     "3d_film": "3D animated feature film still, stylized characters with big expressive eyes, soft global "
-               "illumination, vibrant warm colors, painterly detailed backgrounds, cinematic composition, no text",
+    "illumination, vibrant warm colors, painterly detailed backgrounds, cinematic composition, no text",
     "paper_cutout": "layered paper cut-out illustration, handmade craft textures, soft shadows between the "
-                    "layers, no text",
+    "layers, no text",
     "clay": "claymation stop-motion film still, sculpted plasticine characters, miniature handmade set, soft "
-            "studio lighting, no text",
+    "studio lighting, no text",
     "ink_pencil": "ink and coloured pencil illustration, expressive linework, light cross-hatching, muted "
-                  "palette, no text",
+    "palette, no text",
     "anime": "hand-drawn anime film still, painted backgrounds, soft cel shading, luminous skies, no text",
 }
 
 AUDIENCES = {
     "toddlers": "toddlers aged 2 to 4: very simple words, short sentences, gentle repetition, warm and safe, "
-                "no peril at all",
+    "no peril at all",
     "kids_5_8": "children aged 5 to 8: simple vocabulary, mild peril at most, always a kind resolution",
     "kids_9_12": "children aged 9 to 12: age-appropriate conflict and themes, richer vocabulary",
     "teens": "teenagers: real stakes and emotional depth, nothing graphic",
@@ -51,11 +51,24 @@ KINDS = {
 }
 
 # Narration speed used to size a story; corrected later from measured narrations.
-WPM = {"en": 150, "es": 140, "pt": 140, "fr": 145, "it": 145, "de": 130, "ru": 125, "zh": 240, "ja": 240, "ko": 170}
-WORDS_PER_SCENE = 32   # ~13 s of narration: one picture, and within one LTX generation
+WPM = {
+    "en": 150,
+    "es": 140,
+    "pt": 140,
+    "fr": 145,
+    "it": 145,
+    "de": 130,
+    "ru": 125,
+    "zh": 240,
+    "ja": 240,
+    "ko": 170,
+}
+WORDS_PER_SCENE = 32  # ~13 s of narration: one picture, and within one LTX generation
 
-ALWAYS = ("Never include sexual content, real identifiable people, public figures, or real brands. "
-          "No violence beyond what the audience allows.")
+ALWAYS = (
+    "Never include sexual content, real identifiable people, public figures, or real brands. "
+    "No violence beyond what the audience allows."
+)
 
 
 class Brief(BaseModel):
@@ -81,19 +94,26 @@ class Brief(BaseModel):
 class WriterCast(BaseModel):
     id: str = Field(description="short lowercase ascii slug of the name, e.g. 'luna'")
     name: str = Field(description="the character's name as used in the story")
-    look: str = Field(description="English, 15-35 words: species or age, build, colours, clothing, one "
-                                  "distinctive accessory. Concrete and visual. No name, no personality.")
+    look: str = Field(
+        description="English, 15-35 words: species or age, build, colours, clothing, one "
+        "distinctive accessory. Concrete and visual. No name, no personality."
+    )
 
 
 class WriterScene(BaseModel):
     n: int
-    visual: str = Field(description="English image prompt, 25-60 words: shot type (wide, medium or close-up), "
-                                    "setting, time of day and light, and what the characters are doing in this "
-                                    "one moment. Refer to characters by name only.")
-    motion: str = Field(description="English, one or two sentences: what moves in the shot and how the camera "
-                                    "moves.")
-    sound: str = Field(description="English ambience only, e.g. 'wind over water, distant waves'. Never speech, "
-                                   "singing or music.")
+    visual: str = Field(
+        description="English image prompt, 25-60 words: shot type (wide, medium or close-up), "
+        "setting, time of day and light, and what the characters are doing in this "
+        "one moment. Refer to characters by name only."
+    )
+    motion: str = Field(
+        description="English, one or two sentences: what moves in the shot and how the camera moves."
+    )
+    sound: str = Field(
+        description="English ambience only, e.g. 'wind over water, distant waves'. Never speech, "
+        "singing or music."
+    )
     cast: list[str] = Field(description="ids of the cast members visible in this picture")
     camera: Camera = Field(description="camera move for this shot")
     key_moment: bool = Field(description="true for the few most dramatic or magical moments of the story")
@@ -124,8 +144,11 @@ def inline_schema(model: type[BaseModel]) -> dict:
             if "$ref" in node:
                 return walk(defs[node["$ref"].split("/")[-1]])
             # Drop pydantic's "title" annotations, but not a property that happens to be called title.
-            return {k: walk(v, k == "properties") for k, v in node.items()
-                    if in_properties or not (k == "title" and isinstance(v, str))}
+            return {
+                k: walk(v, k == "properties")
+                for k, v in node.items()
+                if in_properties or not (k == "title" and isinstance(v, str))
+            }
         if isinstance(node, list):
             return [walk(v) for v in node]
         return node
@@ -172,17 +195,26 @@ def _parse_story(raw: str) -> tuple[str | None, list[str]]:
             title = m.group(2).strip(" #*\"'")
         else:
             kept.append(line)
-    blocks = [" ".join(b.replace("*", "").replace("#", "").split()) for b in re.split(r"\n\s*\n", "\n".join(kept))]
+    blocks = [
+        " ".join(b.replace("*", "").replace("#", "").split()) for b in re.split(r"\n\s*\n", "\n".join(kept))
+    ]
     blocks = [b for b in blocks if b]
-    if title is None and blocks and word_count(blocks[0]) <= 12 and not blocks[0].endswith((".", "!", "?", "…")):
+    if (
+        title is None
+        and blocks
+        and word_count(blocks[0]) <= 12
+        and not blocks[0].endswith((".", "!", "?", "…"))
+    ):
         title = blocks.pop(0).strip("\"'")
     return title, [p for p in blocks if word_count(p) >= 3]
 
 
 def story_prompt(b: Brief) -> tuple[str, str]:
     lang = _language_name(b.language)
-    system = (f"You are a master storyteller who writes stories to be read aloud and illustrated. "
-              f"You write natively in {lang}. {ALWAYS}")
+    system = (
+        f"You are a master storyteller who writes stories to be read aloud and illustrated. "
+        f"You write natively in {lang}. {ALWAYS}"
+    )
     user = (
         f"Write {KINDS.get(b.kind, b.kind)} for {AUDIENCES.get(b.audience, b.audience)}.\n\n"
         f"Idea: {b.idea}\n"
@@ -235,13 +267,18 @@ async def write_storyboard(cfg: Settings, b: Brief, emit: Callable[[str], None] 
             if abs(words / b.target_words - 1) <= 0.15:
                 break
             per = words / max(len(paras), 1)
-            advice = ("longer: add sensory detail and small actions, one more sentence per paragraph"
-                      if words < b.target_words else "shorter: cut repetition and side details")
+            advice = (
+                "longer: add sensory detail and small actions, one more sentence per paragraph"
+                if words < b.target_words
+                else "shorter: cut repetition and side details"
+            )
             emit(f"{words} words against a target of {b.target_words}: revising")
-            revise = (f"{user}\n\nYour draft below has {words} words in {len(paras)} paragraphs "
-                      f"(about {per:.0f} words each). It must be {b.target_words} words in {b.scenes} paragraphs of "
-                      f"about {WORDS_PER_SCENE} words. Make it {advice}. Keep the title, characters and plot. Same "
-                      f"output format.\n\n{raw}")
+            revise = (
+                f"{user}\n\nYour draft below has {words} words in {len(paras)} paragraphs "
+                f"(about {per:.0f} words each). It must be {b.target_words} words in {b.scenes} paragraphs of "
+                f"about {WORDS_PER_SCENE} words. Make it {advice}. Keep the title, characters and plot. Same "
+                f"output format.\n\n{raw}"
+            )
             raw2 = await llm.chat(system, revise, temperature=0.5)
             t2, p2 = _parse_story(raw2)
             w2 = sum(word_count(p) for p in p2)
@@ -271,8 +308,11 @@ async def write_storyboard(cfg: Settings, b: Brief, emit: Callable[[str], None] 
     return assemble(b, title or wb.title, paras, wb)
 
 
-_NOT_AMBIENCE = re.compile(r"\b(voice|voices|speech|speak\w*|talk\w*|whisper\w*|sing\w*|song|music\w*|"
-                           r"melod\w*|chime\w*|meow\w*|narrat\w*)\b", re.IGNORECASE)
+_NOT_AMBIENCE = re.compile(
+    r"\b(voice|voices|speech|speak\w*|talk\w*|whisper\w*|sing\w*|song|music\w*|"
+    r"melod\w*|chime\w*|meow\w*|narrat\w*)\b",
+    re.IGNORECASE,
+)
 
 
 def ambience_only(sound: str) -> str:
@@ -283,8 +323,11 @@ def ambience_only(sound: str) -> str:
     """
     pieces = [p.strip() for p in re.split(r"[,;.]", sound) if p.strip()]
     bad = [bool(_NOT_AMBIENCE.search(p)) for p in pieces]
-    keep = [p for i, p in enumerate(pieces)
-            if not bad[i] and not (i + 1 < len(pieces) and bad[i + 1] and len(p.split()) <= 3)]
+    keep = [
+        p
+        for i, p in enumerate(pieces)
+        if not bad[i] and not (i + 1 < len(pieces) and bad[i + 1] and len(p.split()) <= 3)
+    ]
     return ", ".join(keep) or "soft room tone"
 
 
@@ -297,7 +340,7 @@ def assemble(b: Brief, title: str, paras: list[str], wb: WriterBoard) -> Storybo
             cast.append(CastMember(id=cid, name=c.name.strip(), look=c.look.strip()))
     by_name = {c.name.lower(): c.id for c in cast}
     # Hybrid animates only the peaks: about 30% of scenes, spread across the story's key moments.
-    marked = [i for i, ws in enumerate(wb.scenes[:len(paras)]) if ws.key_moment]
+    marked = [i for i, ws in enumerate(wb.scenes[: len(paras)]) if ws.key_moment]
     k = max(1, round(len(paras) * 0.3))
     if not marked:
         marked = [len(paras) * 2 // 3]
@@ -314,28 +357,56 @@ def assemble(b: Brief, title: str, paras: list[str], wb: WriterBoard) -> Storybo
         mode = {"still": "still", "video": "video"}.get(b.mode, "video" if i - 1 in video else "still")
         # A still with a static camera is a slide; stills always get a move ("auto" alternates in and out).
         camera = "auto" if mode == "still" and ws.camera == "static" else ws.camera
-        scenes.append(Scene(n=i, narration=[Line(text=p)], visual=ws.visual.strip(), motion=ws.motion.strip(),
-                            sound=ambience_only(ws.sound), cast=members, camera=camera, mode=mode))
-    return Storyboard(title=title, language=b.language, audience=b.audience if b.audience in AUDIENCES else "adults",
-                      kind=b.kind, style=STYLES.get(b.style, b.style), voice=b.voice,
-                      seed=random.randint(1, 99_999), cast=cast, scenes=scenes)
+        scenes.append(
+            Scene(
+                n=i,
+                narration=[Line(text=p)],
+                visual=ws.visual.strip(),
+                motion=ws.motion.strip(),
+                sound=ambience_only(ws.sound),
+                cast=members,
+                camera=camera,
+                mode=mode,
+            )
+        )
+    return Storyboard(
+        title=title,
+        language=b.language,
+        audience=b.audience if b.audience in AUDIENCES else "adults",
+        kind=b.kind,
+        style=STYLES.get(b.style, b.style),
+        voice=b.voice,
+        seed=random.randint(1, 99_999),
+        cast=cast,
+        scenes=scenes,
+    )
 
 
 async def rewrite_scene(cfg: Settings, sb: Storyboard, n: int, instruction: str) -> Scene:
     """Rewrite one scene; the LLM sees the whole storyboard so the story stays consistent."""
     scene = next(s for s in sb.scenes if s.n == n)
     lang = _language_name(sb.language)
-    system = (f"You edit one scene of an illustrated, narrated story. Narration stays in {lang}; visual, motion "
-              f"and sound prompts stay in English and refer to characters by name only. {ALWAYS}")
-    user = (f"The whole storyboard, for context:\n{sb.model_dump_json(exclude={'cast_sheet_prompt'})}\n\n"
-            f"Rewrite scene {n} following this instruction: {instruction}\n"
-            f"Keep it consistent with the scenes before and after it. Return the full rewritten scene.")
+    system = (
+        f"You edit one scene of an illustrated, narrated story. Narration stays in {lang}; visual, motion "
+        f"and sound prompts stay in English and refer to characters by name only. {ALWAYS}"
+    )
+    user = (
+        f"The whole storyboard, for context:\n{sb.model_dump_json(exclude={'cast_sheet_prompt'})}\n\n"
+        f"Rewrite scene {n} following this instruction: {instruction}\n"
+        f"Keep it consistent with the scenes before and after it. Return the full rewritten scene."
+    )
     llm = Ollama(cfg)
     async with lease(cfg, "ollama", cfg.ollama.vram_gb):
         raw = await llm.chat(system, user, schema=inline_schema(RewrittenScene), temperature=0.6)
     r = RewrittenScene.model_validate_json(raw)
     ids = {c.id for c in sb.cast}
-    return scene.model_copy(update={
-        "narration": [Line(text=" ".join(r.narration.split()))], "visual": r.visual.strip(),
-        "motion": r.motion.strip(), "sound": r.sound.strip(), "cast": [c for c in r.cast if c in ids],
-        "camera": r.camera})
+    return scene.model_copy(
+        update={
+            "narration": [Line(text=" ".join(r.narration.split()))],
+            "visual": r.visual.strip(),
+            "motion": r.motion.strip(),
+            "sound": r.sound.strip(),
+            "cast": [c for c in r.cast if c in ids],
+            "camera": r.camera,
+        }
+    )

@@ -3,6 +3,7 @@
 Revision ID: 0001
 Revises:
 """
+
 import sqlalchemy as sa
 from alembic import op
 
@@ -26,7 +27,13 @@ def upgrade():
     op.create_table(
         "story_versions",
         sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
-        sa.Column("story_id", sa.String(32), sa.ForeignKey("stories.id", ondelete="CASCADE"), nullable=False, index=True),
+        sa.Column(
+            "story_id",
+            sa.String(32),
+            sa.ForeignKey("stories.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        ),
         sa.Column("version", sa.Integer, nullable=False),
         sa.Column("storyboard", sa.JSON, nullable=False),
         sa.Column("note", sa.String(200), nullable=False),
@@ -36,7 +43,13 @@ def upgrade():
     op.create_table(
         "jobs",
         sa.Column("id", sa.String(32), primary_key=True),
-        sa.Column("story_id", sa.String(32), sa.ForeignKey("stories.id", ondelete="CASCADE"), nullable=False, index=True),
+        sa.Column(
+            "story_id",
+            sa.String(32),
+            sa.ForeignKey("stories.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        ),
         sa.Column("version", sa.Integer, nullable=True),
         sa.Column("kind", sa.String(16), nullable=False),
         sa.Column("status", sa.String(16), nullable=False, index=True),

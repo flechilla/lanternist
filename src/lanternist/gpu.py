@@ -56,7 +56,9 @@ def vram() -> VramInfo | None:
             except OSError:
                 cmd = "?"
             procs.append(GpuProc(p.pid, (p.usedGpuMemory or 0) / 2**30, cmd.strip()))
-        return VramInfo(name if isinstance(name, str) else name.decode(), mem.total / 2**30, mem.free / 2**30, procs)
+        return VramInfo(
+            name if isinstance(name, str) else name.decode(), mem.total / 2**30, mem.free / 2**30, procs
+        )
     except Exception as e:  # noqa: BLE001 - no NVIDIA driver, or NVML unavailable
         log.debug("nvml unavailable: %s", e)
         return None
@@ -67,8 +69,9 @@ async def unload_ollama(cfg: Settings, client: httpx.AsyncClient, keep: str | No
         r = await client.get(f"{cfg.ollama.url}/api/ps", timeout=5)
         for m in r.json().get("models", []):
             if m["name"] != keep:
-                await client.post(f"{cfg.ollama.url}/api/generate",
-                                  json={"model": m["name"], "keep_alive": 0}, timeout=30)
+                await client.post(
+                    f"{cfg.ollama.url}/api/generate", json={"model": m["name"], "keep_alive": 0}, timeout=30
+                )
                 log.info("unloaded ollama model %s", m["name"])
     except httpx.HTTPError as e:
         log.debug("ollama not reachable: %s", e)
@@ -76,7 +79,9 @@ async def unload_ollama(cfg: Settings, client: httpx.AsyncClient, keep: str | No
 
 async def unload_comfyui(cfg: Settings, client: httpx.AsyncClient):
     try:
-        await client.post(f"{cfg.comfyui.url}/free", json={"unload_models": True, "free_memory": True}, timeout=5)
+        await client.post(
+            f"{cfg.comfyui.url}/free", json={"unload_models": True, "free_memory": True}, timeout=5
+        )
     except httpx.HTTPError as e:
         log.debug("comfyui not reachable: %s", e)
 
@@ -101,8 +106,10 @@ async def wait_free(need_gb: float, timeout: float = 90, own: str | None = None)
             return
         if time.monotonic() > deadline:
             holders = ", ".join(f"pid {p.pid} {p.used_gb:.1f} GB ({p.cmd[:60]})" for p in info.procs)
-            raise GpuBusy(f"needs {need_gb:.0f} GB free VRAM, only {info.free_gb:.1f} GB after "
-                          f"{timeout:.0f}s. Held by: {holders or 'unknown'}")
+            raise GpuBusy(
+                f"needs {need_gb:.0f} GB free VRAM, only {info.free_gb:.1f} GB after "
+                f"{timeout:.0f}s. Held by: {holders or 'unknown'}"
+            )
         await asyncio.sleep(1)
 
 

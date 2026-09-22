@@ -61,7 +61,7 @@ class Story(Base):
     title: Mapped[str] = mapped_column(String(300))
     language: Mapped[str] = mapped_column(String(8), default="en")
     version: Mapped[int] = mapped_column(Integer, default=0)
-    budget_micros: Mapped[int | None] = mapped_column(BigInteger, nullable=True)   # None: the default
+    budget_micros: Mapped[int | None] = mapped_column(BigInteger, nullable=True)  # None: the default
     created_at: Mapped[datetime] = mapped_column(default=now)
     updated_at: Mapped[datetime] = mapped_column(default=now, onupdate=now)
 
@@ -81,13 +81,13 @@ class Job(Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
     story_id: Mapped[str] = mapped_column(ForeignKey("stories.id", ondelete="CASCADE"), index=True)
     version: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    kind: Mapped[str] = mapped_column(String(16))          # write | rewrite | cast | board | render
+    kind: Mapped[str] = mapped_column(String(16))  # write | rewrite | cast | board | render
     status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
     params: Mapped[dict] = mapped_column(JSON, default=dict)
     progress: Mapped[dict] = mapped_column(JSON, default=dict)
     result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    estimate: Mapped[dict | None] = mapped_column(JSON, nullable=True)   # shown before it ran, with price date
+    estimate: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # shown before it ran, with price date
     created_at: Mapped[datetime] = mapped_column(default=now)
     started_at: Mapped[datetime | None] = mapped_column(nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(nullable=True)
@@ -99,29 +99,34 @@ OPEN_RUN = ("submitted", "running")
 
 class StepRun(Base):
     """One step that actually ran: the invoice line, the resume record, the estimator's data."""
+
     __tablename__ = "step_runs"
-    __table_args__ = (Index("ix_step_runs_key_status", "step_key", "status"),
-                      Index("ix_step_runs_provider_created", "provider", "created_at"))
+    __table_args__ = (
+        Index("ix_step_runs_key_status", "step_key", "status"),
+        Index("ix_step_runs_provider_created", "provider", "created_at"),
+    )
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     # SET NULL, not CASCADE: what was spent stays counted after its story is deleted.
     story_id: Mapped[str | None] = mapped_column(ForeignKey("stories.id", ondelete="SET NULL"), index=True)
     job_id: Mapped[str | None] = mapped_column(ForeignKey("jobs.id", ondelete="SET NULL"), index=True)
     scene: Mapped[int | None] = mapped_column(Integer)
-    stage: Mapped[str] = mapped_column(String(16))           # write | narration | cast | keyframes | motion | ambience
+    stage: Mapped[str] = mapped_column(String(16))  # write | narration | cast | keyframes | motion | ambience
     step_key: Mapped[str | None] = mapped_column(String(64))  # the cache key; None for writer calls
     model_id: Mapped[str] = mapped_column(String(200))
-    provider: Mapped[str] = mapped_column(String(16))         # local | ollama | openrouter | fal
-    status: Mapped[str] = mapped_column(String(16), default="running")  # submitted | running | done | failed | cancelled
+    provider: Mapped[str] = mapped_column(String(16))  # local | ollama | openrouter | fal
+    status: Mapped[str] = mapped_column(
+        String(16), default="running"
+    )  # submitted | running | done | failed | cancelled
     request_id: Mapped[str | None] = mapped_column(String(100))
-    urls: Mapped[dict | None] = mapped_column(JSON)           # fal: status, response, cancel
+    urls: Mapped[dict | None] = mapped_column(JSON)  # fal: status, response, cancel
     units: Mapped[float | None] = mapped_column(Float)
     unit: Mapped[str | None] = mapped_column(String(32))
     cost_micros: Mapped[int | None] = mapped_column(BigInteger)
-    cost_source: Mapped[str] = mapped_column(String(16), default="none")   # reported | computed | none
+    cost_source: Mapped[str] = mapped_column(String(16), default="none")  # reported | computed | none
     estimate_micros: Mapped[int | None] = mapped_column(BigInteger)
     gpu_seconds: Mapped[float | None] = mapped_column(Float)
     wall_seconds: Mapped[float | None] = mapped_column(Float)
-    meta: Mapped[dict] = mapped_column(JSON, default=dict)    # tokens, billable units, queue wait, …
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)  # tokens, billable units, queue wait, …
     error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(default=now)
     started_at: Mapped[datetime | None] = mapped_column()
@@ -130,20 +135,22 @@ class StepRun(Base):
 
 class ModelPrice(Base):
     """Price and status history: a row only when either changes, so an old estimate can be explained."""
+
     __tablename__ = "model_prices"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     model_id: Mapped[str] = mapped_column(String(200), index=True)
     endpoint: Mapped[str | None] = mapped_column(String(200))
     unit: Mapped[str] = mapped_column(String(32))
-    unit_price: Mapped[str] = mapped_column(String(40))       # decimal string: token prices go to 1e-7 USD
+    unit_price: Mapped[str] = mapped_column(String(40))  # decimal string: token prices go to 1e-7 USD
     currency: Mapped[str] = mapped_column(String(8), default="USD")
-    status: Mapped[str] = mapped_column(String(16), default="active")   # active | deprecated, from the catalog
-    source: Mapped[str] = mapped_column(String(24))           # fal_pricing_api | registry | openrouter
+    status: Mapped[str] = mapped_column(String(16), default="active")  # active | deprecated, from the catalog
+    source: Mapped[str] = mapped_column(String(24))  # fal_pricing_api | registry | openrouter
     synced_at: Mapped[datetime] = mapped_column(default=now)
 
 
 class Setting(Base):
     """What the Settings page saves; wins over lanternist.toml. Never API keys."""
+
     __tablename__ = "settings"
     key: Mapped[str] = mapped_column(String(100), primary_key=True)
     value: Mapped[object] = mapped_column(JSON)
@@ -152,6 +159,7 @@ class Setting(Base):
 
 class Upload(Base):
     """A file we put on a provider's storage, reused until shortly before it expires."""
+
     __tablename__ = "uploads"
     __table_args__ = (UniqueConstraint("provider", "asset"),)
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -231,12 +239,17 @@ class Database:
     def open_run(self, step_key: str, provider: str) -> StepRun | None:
         """The newest submitted or running request for this step, if a restart left one behind."""
         with self.session() as s:
-            return s.scalars(select(StepRun).where(StepRun.step_key == step_key, StepRun.provider == provider,
-                                                   StepRun.status.in_(OPEN_RUN))
-                             .order_by(StepRun.created_at.desc())).first()
+            return s.scalars(
+                select(StepRun)
+                .where(
+                    StepRun.step_key == step_key, StepRun.provider == provider, StepRun.status.in_(OPEN_RUN)
+                )
+                .order_by(StepRun.created_at.desc())
+            ).first()
 
-    def spend_micros(self, story_id: str | None = None, job_id: str | None = None,
-                     since: datetime | None = None) -> int:
+    def spend_micros(
+        self, story_id: str | None = None, job_id: str | None = None, since: datetime | None = None
+    ) -> int:
         q = select(func.coalesce(func.sum(StepRun.cost_micros), 0))
         if story_id:
             q = q.where(StepRun.story_id == story_id)
@@ -268,7 +281,9 @@ class Database:
                 s.commit()
 
     # uploads ----------------------------------------------------------------------------------
-    def upload_url(self, provider: str, asset: str, min_left: timedelta = timedelta(minutes=10)) -> str | None:
+    def upload_url(
+        self, provider: str, asset: str, min_left: timedelta = timedelta(minutes=10)
+    ) -> str | None:
         with self.session() as s:
             row = s.scalars(select(Upload).where(Upload.provider == provider, Upload.asset == asset)).first()
             return row.url if row and row.expires_at - now() >= min_left else None
@@ -286,22 +301,45 @@ class Database:
     def latest_prices(self) -> dict[str, ModelPrice]:
         with self.session() as s:
             rows = s.scalars(select(ModelPrice).order_by(ModelPrice.synced_at, ModelPrice.id))
-            return {r.model_id: r for r in rows}   # later rows overwrite earlier ones
+            return {r.model_id: r for r in rows}  # later rows overwrite earlier ones
 
-    def record_price(self, model_id: str, unit: str, unit_price: Decimal | str, source: str,
-                     endpoint: str | None = None, currency: str = "USD", status: str = "active") -> bool:
+    def record_price(
+        self,
+        model_id: str,
+        unit: str,
+        unit_price: Decimal | str,
+        source: str,
+        endpoint: str | None = None,
+        currency: str = "USD",
+        status: str = "active",
+    ) -> bool:
         """Add a row if price or status differs from the latest one; returns whether anything changed."""
         price = str(Decimal(str(unit_price)).normalize())
         latest = self.latest_prices().get(model_id)
         if latest and (latest.unit, Decimal(latest.unit_price), latest.currency, latest.status) == (
-                unit, Decimal(price), currency, status):
+            unit,
+            Decimal(price),
+            currency,
+            status,
+        ):
             return False
         with self.session() as s:
-            s.add(ModelPrice(model_id=model_id, endpoint=endpoint, unit=unit, unit_price=price,
-                             currency=currency, status=status, source=source))
+            s.add(
+                ModelPrice(
+                    model_id=model_id,
+                    endpoint=endpoint,
+                    unit=unit,
+                    unit_price=price,
+                    currency=currency,
+                    status=status,
+                    source=source,
+                )
+            )
             s.commit()
         return True
 
     def prices_synced_at(self) -> datetime | None:
         with self.session() as s:
-            return s.scalar(select(func.max(ModelPrice.synced_at)).where(ModelPrice.source == "fal_pricing_api"))
+            return s.scalar(
+                select(func.max(ModelPrice.synced_at)).where(ModelPrice.source == "fal_pricing_api")
+            )

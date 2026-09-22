@@ -43,10 +43,21 @@ export default function Library() {
           <p>Each story becomes a narrated film, drawn and voiced on this machine.</p>
         </div>
         <div className="spacer" />
-        <input ref={file} type="file" accept="application/json,.json" hidden
-               onChange={(e) => { const f = e.target.files?.[0]; if (f) importFile(f); e.target.value = ""; }} />
+        <input
+          ref={file}
+          type="file"
+          accept="application/json,.json"
+          hidden
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) importFile(f);
+            e.target.value = "";
+          }}
+        />
         <button onClick={() => file.current?.click()}>Import storyboard</button>
-        <Link className="btn primary" to="/new">New story</Link>
+        <Link className="btn primary" to="/new">
+          New story
+        </Link>
       </div>
       {error && <p className="error">{error}</p>}
       {stories === null && !error && <p className="muted">Loading your stories…</p>}
@@ -54,13 +65,20 @@ export default function Library() {
         <div className="empty-state">
           <h2>No stories yet</h2>
           <p>Start with a one-line idea. The writer drafts the story, then you shape it scene by scene.</p>
-          <Link className="btn primary" to="/new">Write your first story</Link>
+          <Link className="btn primary" to="/new">
+            Write your first story
+          </Link>
         </div>
       )}
       <div className="library">
         {stories?.map((s) => (
           <Link key={s.id} to={`/stories/${s.id}${s.film ? "/film" : ""}`} className="story-row">
-            <Slide image={s.poster} video={s.poster ? null : s.film?.film} empty={s.version ? "No film yet" : "Being written"} alt="" />
+            <Slide
+              image={s.poster}
+              video={s.poster ? null : s.film?.film}
+              empty={s.version ? "No film yet" : "Being written"}
+              alt=""
+            />
             <div>
               <h2>{s.title}</h2>
               <div className="facts">

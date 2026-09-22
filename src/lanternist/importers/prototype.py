@@ -16,8 +16,11 @@ from ..storyboard import Line, Scene, Storyboard
 
 
 def _blocks(path: Path) -> list[str]:
-    return [b.strip() for b in re.split(r"\n\s*\n", path.read_text(encoding="utf-8"))
-            if b.strip() and not b.strip().startswith("#")]
+    return [
+        b.strip()
+        for b in re.split(r"\n\s*\n", path.read_text(encoding="utf-8"))
+        if b.strip() and not b.strip().startswith("#")
+    ]
 
 
 def _story(path: Path) -> tuple[str, list[str]]:
@@ -38,7 +41,7 @@ def import_story(path: str | Path, mode: str = "still", language: str = "en") ->
     if sidecar.is_file():
         prompts = _blocks(sidecar)
         if prompts and prompts[0].startswith("STYLE:"):
-            style = prompts.pop(0)[len("STYLE:"):].strip()
+            style = prompts.pop(0)[len("STYLE:") :].strip()
     motion = [""] * len(paras)
     if path.with_suffix(".motion.txt").is_file():
         motion = _blocks(path.with_suffix(".motion.txt"))
@@ -47,13 +50,20 @@ def import_story(path: str | Path, mode: str = "still", language: str = "en") ->
         cast_prompt = " ".join(" ".join(b.split()) for b in _blocks(path.with_suffix(".cast.txt")))
 
     if not (len(prompts) == len(motion) == len(paras)):
-        raise ValueError(f"counts differ: {len(paras)} paragraphs, {len(prompts)} prompts, "
-                         f"{len(motion)} motion lines")
+        raise ValueError(
+            f"counts differ: {len(paras)} paragraphs, {len(prompts)} prompts, {len(motion)} motion lines"
+        )
 
     scenes = [
-        Scene(n=i, narration=[Line(text=p)], visual=" ".join(v.split()), motion=" ".join(m.split()),
-              mode=mode)
+        Scene(
+            n=i, narration=[Line(text=p)], visual=" ".join(v.split()), motion=" ".join(m.split()), mode=mode
+        )
         for i, (p, v, m) in enumerate(zip(paras, prompts, motion), 1)
     ]
-    return Storyboard(title=title, language=language, style=" ".join(style.split()),
-                      cast_sheet_prompt=cast_prompt, scenes=scenes)
+    return Storyboard(
+        title=title,
+        language=language,
+        style=" ".join(style.split()),
+        cast_sheet_prompt=cast_prompt,
+        scenes=scenes,
+    )

@@ -3,6 +3,7 @@
 Revision ID: 0002
 Revises: 0001
 """
+
 import sqlalchemy as sa
 from alembic import op
 
@@ -20,8 +21,16 @@ def upgrade():
     op.create_table(
         "step_runs",
         sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
-        sa.Column("story_id", sa.String(32), sa.ForeignKey("stories.id", ondelete="SET NULL"), nullable=True, index=True),
-        sa.Column("job_id", sa.String(32), sa.ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True, index=True),
+        sa.Column(
+            "story_id",
+            sa.String(32),
+            sa.ForeignKey("stories.id", ondelete="SET NULL"),
+            nullable=True,
+            index=True,
+        ),
+        sa.Column(
+            "job_id", sa.String(32), sa.ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True, index=True
+        ),
         sa.Column("scene", sa.Integer, nullable=True),
         sa.Column("stage", sa.String(16), nullable=False),
         sa.Column("step_key", sa.String(64), nullable=True),

@@ -27,7 +27,10 @@ def alembic(db: Database) -> Config:
 def counts(path: Path) -> dict:
     c = sqlite3.connect(path)
     try:
-        return {t: c.execute(f"select count(*) from {t}").fetchone()[0] for t in ("stories", "story_versions", "jobs")}
+        return {
+            t: c.execute(f"select count(*) from {t}").fetchone()[0]
+            for t in ("stories", "story_versions", "jobs")
+        }
     finally:
         c.close()
 
@@ -45,10 +48,14 @@ def test_migration_keeps_mvp_rows(tmp_path):
     command.upgrade(alembic(d), "0001")
     with sqlite3.connect(tmp_path / "old.db") as c:
         c.execute("insert into stories values ('s1','luna','Luna','es',1,'2026-09-01','2026-09-01')")
-        c.execute("insert into story_versions (story_id, version, storyboard, note, created_at) "
-                  "values ('s1', 1, '{\"title\": \"Luna\"}', 'written', '2026-09-01')")
-        c.execute("insert into jobs values ('j1','s1',1,'render','done','{}','{}','{\"film\": \"x.mp4\"}',"
-                  "null,'2026-09-01',null,null)")
+        c.execute(
+            "insert into story_versions (story_id, version, storyboard, note, created_at) "
+            "values ('s1', 1, '{\"title\": \"Luna\"}', 'written', '2026-09-01')"
+        )
+        c.execute(
+            "insert into jobs values ('j1','s1',1,'render','done','{}','{}','{\"film\": \"x.mp4\"}',"
+            "null,'2026-09-01',null,null)"
+        )
     before = counts(tmp_path / "old.db")
     d.migrate()
     assert counts(tmp_path / "old.db") == before
@@ -80,8 +87,16 @@ def test_deleting_a_story_keeps_what_it_cost(db):
         s.flush()
         s.add(Job(id="j1", story_id="s1", kind="render", params={}, progress={}))
         s.commit()
-    db.start_run(story_id="s1", job_id="j1", stage="motion", model_id="fal/x", provider="fal",
-                 status="done", cost_micros=to_micros("0.42"), cost_source="computed")
+    db.start_run(
+        story_id="s1",
+        job_id="j1",
+        stage="motion",
+        model_id="fal/x",
+        provider="fal",
+        status="done",
+        cost_micros=to_micros("0.42"),
+        cost_source="computed",
+    )
     assert db.spend_micros(story_id="s1") == 420_000
     with db.session() as s:
         s.query(Job).filter_by(story_id="s1").delete()
@@ -119,8 +134,9 @@ def test_uploads_are_reused_until_close_to_expiry(db):
 def test_open_run_finds_only_unfinished_requests(db):
     db.start_run(stage="motion", model_id="m", provider="fal", status="done", step_key="k")
     assert db.open_run("k", "fal") is None
-    rid = db.start_run(stage="motion", model_id="m", provider="fal", status="submitted", step_key="k",
-                       urls={"status": "s"})
+    rid = db.start_run(
+        stage="motion", model_id="m", provider="fal", status="submitted", step_key="k", urls={"status": "s"}
+    )
     assert db.open_run("k", "fal").id == rid
     db.update_run(rid, status="running")
     assert db.open_run("k", "fal").id == rid and db.open_run("k", "local") is None
@@ -129,7 +145,7 @@ def test_open_run_finds_only_unfinished_requests(db):
 # ------------------------------------------------------------------------------------ settings
 def test_settings_precedence(tmp_path, db, monkeypatch):
     toml = tmp_path / "lanternist.toml"
-    toml.write_text('[defaults]\nbudget_usd = 8.0\n')
+    toml.write_text("[defaults]\nbudget_usd = 8.0\n")
     monkeypatch.setenv("LANTERNIST_CONFIG", str(toml))
     cfg = Settings(paths=Paths(library=tmp_path / "lib"), defaults=Defaults(budget_usd=8.0))
     rows = {r["key"]: r for r in prefs.describe(cfg, db)}
@@ -145,14 +161,17 @@ def test_settings_precedence(tmp_path, db, monkeypatch):
     assert prefs.effective(cfg, db).defaults.budget_usd == 8.0
 
 
-@pytest.mark.parametrize("change, message", [
-    ({"paths.library": "/tmp"}, "can't change"),
-    ({"defaults.video": "fal/flux-2-klein-9b"}, "image.keyframe model"),
-    ({"defaults.tts": "fal/nope"}, "no model"),
-    ({"defaults.writer": "gpt"}, "the writer is"),
-    ({"fal.max_concurrency": 0}, "concurrency"),
-    ({"defaults.budget_usd": "lots"}, "budget_usd"),
-])
+@pytest.mark.parametrize(
+    "change, message",
+    [
+        ({"paths.library": "/tmp"}, "can't change"),
+        ({"defaults.video": "fal/flux-2-klein-9b"}, "image.keyframe model"),
+        ({"defaults.tts": "fal/nope"}, "no model"),
+        ({"defaults.writer": "gpt"}, "the writer is"),
+        ({"fal.max_concurrency": 0}, "concurrency"),
+        ({"defaults.budget_usd": "lots"}, "budget_usd"),
+    ],
+)
 def test_settings_are_validated(tmp_path, db, change, message):
     cfg = Settings(paths=Paths(library=tmp_path / "lib"))
     with pytest.raises(ValueError, match=message):
@@ -198,7 +217,9 @@ def test_registry_entries_are_consistent():
         else:
             assert e.price.gpu_seconds
         if e.capability == "video.image_to_video" and e.provider == "fal":
-            assert e.durations.lengths() and (e.audio == "ambience" or e.defaults.get("generate_audio") is False)
+            assert e.durations.lengths() and (
+                e.audio == "ambience" or e.defaults.get("generate_audio") is False
+            )
     d = Defaults()
     for model in (d.tts, d.image, d.video):
         assert model in entries
@@ -211,7 +232,8 @@ def test_registry_user_file_and_synced_prices(tmp_path, db):
     lib = tmp_path / "lib"
     registry.user_file(lib).write_text(
         '[[model]]\nid = "fal/veo-3.1-fast"\ndisabled = true\n\n'
-        '[[model]]\nid = "fal/kling-v3-standard"\nprice = { usd = "0.07" }\n')
+        '[[model]]\nid = "fal/kling-v3-standard"\nprice = { usd = "0.07" }\n'
+    )
     entries = registry.load(lib)
     assert "fal/veo-3.1-fast" not in entries
     kling = entries["fal/kling-v3-standard"]
@@ -226,7 +248,10 @@ def test_registry_user_file_and_synced_prices(tmp_path, db):
     assert str(kling.price.usd) == "0.07" and str(kling.billing[""].unit_price) == "0.14"
     assert kling.billing[""].unit == "seconds"
     klein = entries["fal/flux-2-klein-9b"]
-    assert str(klein.billing["text_to_image"].unit_price) == "0.007" and str(klein.price.tiers["text_to_image"]) == "0.006"
+    assert (
+        str(klein.billing["text_to_image"].unit_price) == "0.007"
+        and str(klein.price.tiers["text_to_image"]) == "0.006"
+    )
     assert entries["fal/nano-banana-2"].status == "deprecated"
 
 
@@ -236,4 +261,3 @@ def test_unit_names_from_fal():
     assert registry.normalise_unit("1000 characters") == "1k_chars"
     assert registry.normalise_unit("images") == "image"
     assert registry.normalise_unit("gpu hours") == "gpu hours"
-

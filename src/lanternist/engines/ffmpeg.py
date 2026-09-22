@@ -32,7 +32,9 @@ async def run(args: list[str]) -> None:
         await proc.wait()
         raise
     if proc.returncode != 0:
-        raise FfmpegError(f"ffmpeg failed: {err.decode(errors='replace')[-2000:]}\ncmd: {' '.join(cmd)[:1500]}")
+        raise FfmpegError(
+            f"ffmpeg failed: {err.decode(errors='replace')[-2000:]}\ncmd: {' '.join(cmd)[:1500]}"
+        )
 
 
 async def encode(build, r: Render) -> None:
@@ -48,14 +50,30 @@ async def encode(build, r: Render) -> None:
 
 
 def probe(path: Path) -> dict:
-    out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration:stream=codec_type,width,height",
-                          "-of", "json", str(path)], capture_output=True, text=True, check=True).stdout
+    out = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration:stream=codec_type,width,height",
+            "-of",
+            "json",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
     data = json.loads(out)
     streams = data.get("streams", [])
     video = next((s for s in streams if s.get("codec_type") == "video"), {})
-    return {"duration": float(data.get("format", {}).get("duration", 0) or 0),
-            "has_audio": any(s.get("codec_type") == "audio" for s in streams),
-            "width": video.get("width"), "height": video.get("height")}
+    return {
+        "duration": float(data.get("format", {}).get("duration", 0) or 0),
+        "has_audio": any(s.get("codec_type") == "audio" for s in streams),
+        "width": video.get("width"),
+        "height": video.get("height"),
+    }
 
 
 def _venc(r: Render, final: bool) -> list[str]:
@@ -90,33 +108,77 @@ async def still_clip(image: Path, length: float, camera: str, r: Render, out: Pa
     frames = max(round(length * r.fps), 2)
     z, x, y = camera_expr(camera, frames)
     w2, h2 = r.width * 2, r.height * 2
-    vf = (f"scale={w2}:{h2}:force_original_aspect_ratio=increase:flags=lanczos,crop={w2}:{h2},"
-          f"zoompan=z='{z}':x='{x}':y='{y}':d={frames}:s={r.width}x{r.height}:fps={r.fps},"
-          f"setsar=1,format=yuv420p")
-    await encode(lambda r: ["-i", str(image), "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
-                            "-filter_complex", f"[0:v]{vf}[v]", "-map", "[v]", "-map", "1:a",
-                            *_venc(r, final=False), "-c:a", "aac", "-b:a", "192k", "-t", f"{length:.3f}",
-                            str(out)], r)
+    vf = (
+        f"scale={w2}:{h2}:force_original_aspect_ratio=increase:flags=lanczos,crop={w2}:{h2},"
+        f"zoompan=z='{z}':x='{x}':y='{y}':d={frames}:s={r.width}x{r.height}:fps={r.fps},"
+        f"setsar=1,format=yuv420p"
+    )
+    await encode(
+        lambda r: [
+            "-i",
+            str(image),
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc=r=48000:cl=stereo",
+            "-filter_complex",
+            f"[0:v]{vf}[v]",
+            "-map",
+            "[v]",
+            "-map",
+            "1:a",
+            *_venc(r, final=False),
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-t",
+            f"{length:.3f}",
+            str(out),
+        ],
+        r,
+    )
 
 
 async def video_clip(src: Path, length: float, r: Render, out: Path) -> None:
     """Fit a generated clip to its slot: cover-scale, crop, conform fps; keep its ambience."""
     info = probe(src)
-    vf = (f"[0:v]trim=0:{length:.3f},setpts=PTS-STARTPTS,"
-          f"scale={r.width}:{r.height}:force_original_aspect_ratio=increase:flags=lanczos,"
-          f"crop={r.width}:{r.height},fps={r.fps},setsar=1,format=yuv420p,"
-          f"tpad=stop_mode=clone:stop_duration={length:.3f}[v]")
+    vf = (
+        f"[0:v]trim=0:{length:.3f},setpts=PTS-STARTPTS,"
+        f"scale={r.width}:{r.height}:force_original_aspect_ratio=increase:flags=lanczos,"
+        f"crop={r.width}:{r.height},fps={r.fps},setsar=1,format=yuv420p,"
+        f"tpad=stop_mode=clone:stop_duration={length:.3f}[v]"
+    )
     fade_out = max(length - 0.3, 0)
     if info["has_audio"]:
-        af = (f"[0:a]atrim=0:{length:.3f},asetpts=PTS-STARTPTS,aresample=48000,"
-              f"aformat=channel_layouts=stereo,afade=t=in:d=0.15,afade=t=out:st={fade_out:.3f}:d=0.3,apad[a]")
+        af = (
+            f"[0:a]atrim=0:{length:.3f},asetpts=PTS-STARTPTS,aresample=48000,"
+            f"aformat=channel_layouts=stereo,afade=t=in:d=0.15,afade=t=out:st={fade_out:.3f}:d=0.3,apad[a]"
+        )
         inputs = ["-i", str(src)]
     else:
         af = "[1:a]anull[a]"
         inputs = ["-i", str(src), "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
-    await encode(lambda r: [*inputs, "-filter_complex", f"{vf};{af}", "-map", "[v]", "-map", "[a]",
-                            *_venc(r, final=False), "-c:a", "aac", "-b:a", "192k", "-t", f"{length:.3f}",
-                            str(out)], r)
+    await encode(
+        lambda r: [
+            *inputs,
+            "-filter_complex",
+            f"{vf};{af}",
+            "-map",
+            "[v]",
+            "-map",
+            "[a]",
+            *_venc(r, final=False),
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-t",
+            f"{length:.3f}",
+            str(out),
+        ],
+        r,
+    )
 
 
 async def last_frame(src: Path, out: Path) -> None:
@@ -150,28 +212,57 @@ def mix_graph(tl: Timeline, r: Render, subtitles: Path | None) -> str:
     for i in range(n):
         chains.append(f"[{i}:a]adelay=delays={int(tl.clip_start(i) * 1000)}:all=1[a{i}]")
     amb = "".join(f"[a{i}]" for i in range(n))
-    chains.append(f"{amb}amix=inputs={n}:normalize=0:duration=longest,volume={r.ambience}[amb]" if n > 1
-                  else f"{amb}volume={r.ambience}[amb]")
+    chains.append(
+        f"{amb}amix=inputs={n}:normalize=0:duration=longest,volume={r.ambience}[amb]"
+        if n > 1
+        else f"{amb}volume={r.ambience}[amb]"
+    )
 
     # Narration: every scene's wav at its speech start.
     for i in range(n):
-        chains.append(f"[{n + i}:a]aresample=48000,aformat=channel_layouts=stereo,"
-                      f"adelay=delays={int(tl.speech_starts[i] * 1000)}:all=1[n{i}]")
+        chains.append(
+            f"[{n + i}:a]aresample=48000,aformat=channel_layouts=stereo,"
+            f"adelay=delays={int(tl.speech_starts[i] * 1000)}:all=1[n{i}]"
+        )
     nar = "".join(f"[n{i}]" for i in range(n))
-    chains.append((f"{nar}amix=inputs={n}:normalize=0:duration=longest" if n > 1 else f"{nar}anull")
-                  + f",apad=whole_dur={tl.total:.3f}[nar]")
-    chains.append(f"[nar][amb]amix=inputs=2:duration=first:normalize=0,"
-                  f"afade=t=out:st={max(tl.total - 1.2, 0):.3f}:d=1.2[aout]")
+    chains.append(
+        (f"{nar}amix=inputs={n}:normalize=0:duration=longest" if n > 1 else f"{nar}anull")
+        + f",apad=whole_dur={tl.total:.3f}[nar]"
+    )
+    chains.append(
+        f"[nar][amb]amix=inputs=2:duration=first:normalize=0,"
+        f"afade=t=out:st={max(tl.total - 1.2, 0):.3f}:d=1.2[aout]"
+    )
     return ";".join(chains)
 
 
-async def mix(clips: list[Path], wavs: list[Path], tl: Timeline, r: Render, out: Path,
-              subtitles: Path | None = None) -> None:
+async def mix(
+    clips: list[Path], wavs: list[Path], tl: Timeline, r: Render, out: Path, subtitles: Path | None = None
+) -> None:
     inputs = []
     for c in clips:
         inputs += ["-i", str(c)]
     for w in wavs:
         inputs += ["-i", str(w)]
-    await encode(lambda r: [*inputs, "-filter_complex", mix_graph(tl, r, subtitles), "-map", "[vout]",
-                            "-map", "[aout]", *_venc(r, final=True), "-c:a", "aac", "-b:a", "192k",
-                            "-t", f"{tl.total:.3f}", "-movflags", "+faststart", str(out)], r)
+    await encode(
+        lambda r: [
+            *inputs,
+            "-filter_complex",
+            mix_graph(tl, r, subtitles),
+            "-map",
+            "[vout]",
+            "-map",
+            "[aout]",
+            *_venc(r, final=True),
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-t",
+            f"{tl.total:.3f}",
+            "-movflags",
+            "+faststart",
+            str(out),
+        ],
+        r,
+    )

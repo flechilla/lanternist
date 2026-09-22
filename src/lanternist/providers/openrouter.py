@@ -58,15 +58,23 @@ def _error(status: int, body: dict | None, fallback: str = "") -> OpenRouterErro
         extra.append(f"limit: {meta['limit_source']}")
     if meta.get("reasons"):
         extra.append(f"reasons: {', '.join(map(str, meta['reasons']))}")
-    retryable = status in (408, 429, 502, 503) or (status == 402 and
-                                                   meta.get("limit_source") == "openrouter_in_flight_budget")
+    retryable = status in (408, 429, 502, 503) or (
+        status == 402 and meta.get("limit_source") == "openrouter_in_flight_budget"
+    )
     text = f"{head}: {message}" + (f" ({'; '.join(extra)})" if extra else "")
-    return OpenRouterError(redact(text), status=status, type=meta.get("error_type") or str(err.get("code", status)),
-                           retryable=retryable, meta=meta)
+    return OpenRouterError(
+        redact(text),
+        status=status,
+        type=meta.get("error_type") or str(err.get("code", status)),
+        retryable=retryable,
+        meta=meta,
+    )
 
 
 class OpenRouter:
-    def __init__(self, cfg: Settings, key: str | None = None, transport_: httpx.AsyncBaseTransport | None = None):
+    def __init__(
+        self, cfg: Settings, key: str | None = None, transport_: httpx.AsyncBaseTransport | None = None
+    ):
         self.cfg = cfg
         self.key = key or get_key("openrouter", fake=cfg.fake_engines).value
         self._transport = transport_ or transport(cfg)
@@ -75,17 +83,31 @@ class OpenRouter:
         return httpx.AsyncClient(transport=self._transport, timeout=httpx.Timeout(timeout, connect=15))
 
     def _headers(self, auth: bool = True) -> dict:
-        h = {"HTTP-Referer": self.cfg.openrouter.referer, "X-OpenRouter-Title": self.cfg.openrouter.title,
-             "X-Title": self.cfg.openrouter.title}
+        h = {
+            "HTTP-Referer": self.cfg.openrouter.referer,
+            "X-OpenRouter-Title": self.cfg.openrouter.title,
+            "X-Title": self.cfg.openrouter.title,
+        }
         if auth:
             if not self.key:
-                raise OpenRouterError("no OpenRouter key: add one in Settings, or run `lanternist keys set openrouter`")
+                raise OpenRouterError(
+                    "no OpenRouter key: add one in Settings, or run `lanternist keys set openrouter`"
+                )
             h["Authorization"] = f"Bearer {self.key}"
         return h
 
-    async def chat(self, model: str, messages: list[dict], *, schema: dict | None = None, schema_name: str = "answer",
-                   temperature: float | None = None, max_tokens: int | None = None,
-                   reasoning: dict | None = None, tries: int = 3) -> ChatResult:
+    async def chat(
+        self,
+        model: str,
+        messages: list[dict],
+        *,
+        schema: dict | None = None,
+        schema_name: str = "answer",
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        reasoning: dict | None = None,
+        tries: int = 3,
+    ) -> ChatResult:
         body: dict = {"model": model, "messages": messages}
         if temperature is not None:
             body["temperature"] = temperature
@@ -95,20 +117,24 @@ class OpenRouter:
             body["reasoning"] = reasoning
         provider: dict = {"data_collection": self.cfg.openrouter.data_collection}
         if schema is not None:
-            body["response_format"] = {"type": "json_schema",
-                                       "json_schema": {"name": schema_name, "strict": True, "schema": schema}}
+            body["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": schema_name, "strict": True, "schema": schema},
+            }
             provider["require_parameters"] = True
         body["provider"] = provider
 
         async with self.client() as client:
             for attempt in range(tries):
                 try:
-                    r = await client.post(f"{self.cfg.openrouter.url}/chat/completions", json=body,
-                                          headers=self._headers())
+                    r = await client.post(
+                        f"{self.cfg.openrouter.url}/chat/completions", json=body, headers=self._headers()
+                    )
                 except httpx.TransportError as e:
                     if attempt + 1 == tries:
-                        raise OpenRouterError(f"OpenRouter isn't reachable: {e.__class__.__name__}",
-                                              retryable=True) from e
+                        raise OpenRouterError(
+                            f"OpenRouter isn't reachable: {e.__class__.__name__}", retryable=True
+                        ) from e
                     await asyncio.sleep(backoff(attempt))
                     continue
                 try:
@@ -119,7 +145,7 @@ class OpenRouter:
                 if r.status_code >= 400:
                     err = _error(r.status_code, data, r.text[:300])
                     err.retry_after = retry_after(r)
-                elif isinstance(data, dict) and data.get("error"):   # failed after the 200 went out
+                elif isinstance(data, dict) and data.get("error"):  # failed after the 200 went out
                     err = _error(int((data["error"] or {}).get("code") or 502), data)
                 if err is None:
                     return self._result(model, data)
@@ -137,12 +163,23 @@ class OpenRouter:
         finish = choice.get("finish_reason")
         usage = data.get("usage") or {}
         if not text.strip() and finish == "length":
-            reasoning = ((usage.get("completion_tokens_details") or {}).get("reasoning_tokens"))
+            reasoning = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens")
             raise OpenRouterError(
-                "the model used its whole token budget" + (f" on reasoning ({reasoning} tokens)" if reasoning else "")
-                + " and wrote nothing; raise max_tokens", type="length", status=200)
-        return ChatResult(text=text, model=data.get("model") or model, cost_usd=usage.get("cost"), usage=usage,
-                          provider=data.get("provider"), generation_id=data.get("id"), finish_reason=finish)
+                "the model used its whole token budget"
+                + (f" on reasoning ({reasoning} tokens)" if reasoning else "")
+                + " and wrote nothing; raise max_tokens",
+                type="length",
+                status=200,
+            )
+        return ChatResult(
+            text=text,
+            model=data.get("model") or model,
+            cost_usd=usage.get("cost"),
+            usage=usage,
+            provider=data.get("provider"),
+            generation_id=data.get("id"),
+            finish_reason=finish,
+        )
 
     async def key_info(self) -> dict:
         """Usage and limit of this key: {usage, limit, limit_remaining, is_free_tier, …}."""
@@ -160,7 +197,9 @@ class OpenRouter:
         if hit and not refresh and time.time() - hit[0] < MODELS_TTL:
             return hit[1]
         async with self.client(timeout=30) as client:
-            r = await client.get(f"{self.cfg.openrouter.url}/models", params=params, headers=self._headers(auth=False))
+            r = await client.get(
+                f"{self.cfg.openrouter.url}/models", params=params, headers=self._headers(auth=False)
+            )
         if r.status_code >= 400:
             raise _error(r.status_code, _json(r), r.text[:300])
         models = r.json().get("data") or []
@@ -176,7 +215,11 @@ class OpenRouter:
             return False, f"OpenRouter isn't reachable: {e.__class__.__name__}", {}
         usage, limit = info.get("usage"), info.get("limit")
         detail = f"key works; used ${usage or 0:.2f}"
-        detail += f" of a ${limit:.2f} limit (${info.get('limit_remaining') or 0:.2f} left)" if limit else ", no limit set on the key"
+        detail += (
+            f" of a ${limit:.2f} limit (${info.get('limit_remaining') or 0:.2f} left)"
+            if limit
+            else ", no limit set on the key"
+        )
         return True, detail, info
 
 

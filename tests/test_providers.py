@@ -46,8 +46,16 @@ def runs(db) -> list[StepRun]:
 
 
 def spec(**kw) -> RunSpec:
-    return RunSpec(**{"stage": "motion", "model_id": "fal/kling-v3-standard", "step_key": "key1",
-                      "unit": "output_second", "unit_price": Decimal("0.084")} | kw)
+    return RunSpec(
+        **{
+            "stage": "motion",
+            "model_id": "fal/kling-v3-standard",
+            "step_key": "key1",
+            "unit": "output_second",
+            "unit_price": Decimal("0.084"),
+        }
+        | kw
+    )
 
 
 async def wait_for(cond, timeout=5.0):
@@ -61,12 +69,21 @@ async def wait_for(cond, timeout=5.0):
 # ------------------------------------------------------------------------------------ fal queue
 async def test_a_request_is_logged_priced_and_downloaded(fal, db, world, tmp_path):
     seen = []
-    res = await fal.run(KLING, {"prompt": "a cat", "start_image_url": "https://x/y.png", "duration": "5"},
-                        spec(), on_status=lambda st, _: seen.append(st))
+    res = await fal.run(
+        KLING,
+        {"prompt": "a cat", "start_image_url": "https://x/y.png", "duration": "5"},
+        spec(),
+        on_status=lambda st, _: seen.append(st),
+    )
     assert {"IN_QUEUE", "IN_PROGRESS"} <= set(seen) and not res.resumed
     assert res.billable_units == 5.0 and res.cost_micros == 420_000
     [run] = runs(db)
-    assert (run.status, run.provider, run.request_id, run.cost_source) == ("done", "fal", res.request_id, "computed")
+    assert (run.status, run.provider, run.request_id, run.cost_source) == (
+        "done",
+        "fal",
+        res.request_id,
+        "computed",
+    )
     assert run.urls["cancel"].endswith("/cancel") and run.meta["billable_units_from"] == "result"
     assert run.meta["endpoint"] == KLING and run.finished_at and run.wall_seconds is not None
     sent = world.fal.requests[res.request_id]
@@ -94,7 +111,9 @@ async def test_every_request_asks_fal_to_expire_its_media(cfg, db, world):
     fal = Fal(cfg, db, key="test-key", transport_=httpx.MockTransport(handle))
     await fal.run(KLING, {"duration": "5"}, spec())
     submit = next(r for r in captured if r.method == "POST" and r.url.host == "queue.fal.run")
-    assert json.loads(submit.headers["x-fal-object-lifecycle-preference"]) == {"expiration_duration_seconds": 86400}
+    assert json.loads(submit.headers["x-fal-object-lifecycle-preference"]) == {
+        "expiration_duration_seconds": 86400
+    }
     assert submit.headers["authorization"] == "Key test-key"
 
 
@@ -103,7 +122,7 @@ async def test_a_restart_resumes_instead_of_paying_again(fal, db, world):
     task = asyncio.create_task(fal.run(KLING, {"duration": "5"}, spec()))
     await wait_for(lambda: world.fal.submits)
     await wait_for(lambda: runs(db) and runs(db)[0].status == "running")
-    task.cancel()   # a server shutdown: not the user's cancel
+    task.cancel()  # a server shutdown: not the user's cancel
     with pytest.raises(asyncio.CancelledError):
         await task
     assert world.fal.cancels == [] and runs(db)[0].status == "running"
@@ -140,8 +159,20 @@ async def test_the_users_cancel_cancels_at_fal(fal, db, world):
 
 
 async def test_bad_input_fails_with_the_field_named(fal, db, world):
-    world.fal.fail_submit.append((422, {"detail": [{"loc": ["body", "duration"], "msg": "Input should be '5' or '10'",
-                                                    "type": "literal_error"}]}))
+    world.fal.fail_submit.append(
+        (
+            422,
+            {
+                "detail": [
+                    {
+                        "loc": ["body", "duration"],
+                        "msg": "Input should be '5' or '10'",
+                        "type": "literal_error",
+                    }
+                ]
+            },
+        )
+    )
     with pytest.raises(FalError, match=r"field duration") as e:
         await fal.run(KLING, {"duration": "7"}, spec())
     assert e.value.status == 422 and not e.value.retryable and runs(db) == []
@@ -149,7 +180,10 @@ async def test_bad_input_fails_with_the_field_named(fal, db, world):
 
 async def test_rate_limits_and_server_errors_are_retried(fal, db, world, monkeypatch):
     monkeypatch.setattr("lanternist.providers.fal.backoff", lambda *a, **k: 0)
-    world.fal.fail_submit += [(429, {"detail": "concurrent_requests_limit"}), (503, {"detail": "runner down"})]
+    world.fal.fail_submit += [
+        (429, {"detail": "concurrent_requests_limit"}),
+        (503, {"detail": "runner down"}),
+    ]
     res = await fal.run(KLING, {"duration": "5"}, spec())
     assert runs(db)[0].status == "done" and res.request_id in world.fal.submits
 
@@ -197,15 +231,18 @@ async def test_upload_falls_back_when_the_cdn_refuses(fal, world, tmp_path, monk
 # ------------------------------------------------------------------------------------ prices
 async def test_price_sync_records_changes_only(cfg, db, fal, world):
     world.fal.deprecated.add("fal-ai/veo3.1/fast/image-to-video")
-    world.fal.prices[KLING] = ("0.14", "seconds")                          # matches no list tier
-    world.fal.prices["fal-ai/veo3.1/fast/image-to-video"] = ("0.15", "seconds")   # the audio-on tier
+    world.fal.prices[KLING] = ("0.14", "seconds")  # matches no list tier
+    world.fal.prices["fal-ai/veo3.1/fast/image-to-video"] = ("0.15", "seconds")  # the audio-on tier
     world.fal.prices["lightricks/ltx-2.5/image-to-video/fast"] = ("0.01", "units")
     lines = await registry.sync_prices(cfg, db, fal)
     by_model = {x["model"]: x for x in lines}
     assert by_model["fal/kling-v3-standard"]["changed"]
     assert "matches no list price" in by_model["fal/kling-v3-standard"]["drift"]
-    assert by_model["fal/veo-3.1-fast"]["drift"] is None and by_model["fal/veo-3.1-fast"]["status"] == "deprecated"
-    assert by_model["fal/ltx-2.5-fast"]["drift"] is None      # billed in its own units: not comparable
+    assert (
+        by_model["fal/veo-3.1-fast"]["drift"] is None
+        and by_model["fal/veo-3.1-fast"]["status"] == "deprecated"
+    )
+    assert by_model["fal/ltx-2.5-fast"]["drift"] is None  # billed in its own units: not comparable
     assert "fal/flux-2-klein-9b#text_to_image" in by_model
     entries = registry.load(cfg.library, db)
     kling = entries["fal/kling-v3-standard"]
@@ -228,10 +265,19 @@ def router(cfg, world) -> OpenRouter:
 
 
 async def test_structured_chat_is_strict_and_reports_cost(router, world):
-    schema = {"type": "object", "properties": {"title": {"type": "string"}, "n": {"type": "integer"}},
-              "required": ["title", "n"], "additionalProperties": False}
-    res = await router.chat("fake/frontier", [{"role": "user", "content": "hi"}], schema=schema, temperature=0.4,
-                            reasoning={"effort": "none"})
+    schema = {
+        "type": "object",
+        "properties": {"title": {"type": "string"}, "n": {"type": "integer"}},
+        "required": ["title", "n"],
+        "additionalProperties": False,
+    }
+    res = await router.chat(
+        "fake/frontier",
+        [{"role": "user", "content": "hi"}],
+        schema=schema,
+        temperature=0.4,
+        reasoning={"effort": "none"},
+    )
     assert json.loads(res.text) == {"title": "text", "n": 1}
     assert res.cost_usd and res.cost_usd > 0 and res.provider == "FakeProvider"
     body = world.openrouter.chats[0]
@@ -242,12 +288,24 @@ async def test_structured_chat_is_strict_and_reports_cost(router, world):
 
 async def test_plain_chat_doesnt_force_parameters(router, world):
     res = await router.chat("fake/cheap", [{"role": "user", "content": "write"}])
-    assert res.text.startswith("TITLE:") and world.openrouter.chats[0]["provider"] == {"data_collection": "deny"}
+    assert res.text.startswith("TITLE:") and world.openrouter.chats[0]["provider"] == {
+        "data_collection": "deny"
+    }
 
 
 async def test_out_of_credit_is_not_retried(router, world):
-    world.openrouter.replies.append((402, {"error": {"code": 402, "message": "Insufficient credits",
-                                                     "metadata": {"limit_source": "openrouter_credits"}}}))
+    world.openrouter.replies.append(
+        (
+            402,
+            {
+                "error": {
+                    "code": 402,
+                    "message": "Insufficient credits",
+                    "metadata": {"limit_source": "openrouter_credits"},
+                }
+            },
+        )
+    )
     with pytest.raises(OpenRouterError, match="out of credit") as e:
         await router.chat("fake/frontier", [{"role": "user", "content": "x"}])
     assert not e.value.retryable and len(world.openrouter.chats) == 1
@@ -255,22 +313,33 @@ async def test_out_of_credit_is_not_retried(router, world):
 
 async def test_rate_limits_and_errors_after_200_are_retried(router, world, monkeypatch):
     monkeypatch.setattr("lanternist.providers.openrouter.backoff", lambda *a, **k: 0)
-    world.openrouter.replies += [(429, {"error": {"code": 429, "message": "slow down"}}),
-                                 (200, {"error": {"code": 502, "message": "provider hiccup"}}), "fine"]
+    world.openrouter.replies += [
+        (429, {"error": {"code": 429, "message": "slow down"}}),
+        (200, {"error": {"code": 502, "message": "provider hiccup"}}),
+        "fine",
+    ]
     res = await router.chat("fake/frontier", [{"role": "user", "content": "x"}])
     assert res.text == "fine" and len(world.openrouter.chats) == 3
 
 
 async def test_moderation_is_reported_with_reasons(router, world):
-    world.openrouter.replies.append((403, {"error": {"code": 403, "message": "flagged",
-                                                     "metadata": {"reasons": ["violence"]}}}))
+    world.openrouter.replies.append(
+        (403, {"error": {"code": 403, "message": "flagged", "metadata": {"reasons": ["violence"]}}})
+    )
     with pytest.raises(OpenRouterError, match="reasons: violence"):
         await router.chat("fake/frontier", [{"role": "user", "content": "x"}])
 
 
 async def test_an_empty_answer_out_of_tokens_is_an_error(router, world):
-    world.openrouter.replies.append((200, {"choices": [{"message": {"content": ""}, "finish_reason": "length"}],
-                                           "usage": {"completion_tokens_details": {"reasoning_tokens": 4000}}}))
+    world.openrouter.replies.append(
+        (
+            200,
+            {
+                "choices": [{"message": {"content": ""}, "finish_reason": "length"}],
+                "usage": {"completion_tokens_details": {"reasoning_tokens": 4000}},
+            },
+        )
+    )
     with pytest.raises(OpenRouterError, match="4000 tokens"):
         await router.chat("fake/frontier", [{"role": "user", "content": "x"}])
 
@@ -283,7 +352,7 @@ async def test_key_usage_and_the_model_list(cfg, router, world):
     models = await router.models(refresh=True)
     assert [m["id"] for m in models] == ["fake/frontier", "fake/cheap"]
     world.openrouter.models.pop()
-    assert len(await router.models()) == 2          # cached for a day
+    assert len(await router.models()) == 2  # cached for a day
     assert len(await router.models(refresh=True)) == 1
 
 
@@ -293,6 +362,12 @@ async def test_no_openrouter_key(cfg, world):
 
 
 def test_sample_fits_the_schema():
-    s = {"type": "object", "properties": {"a": {"type": "array", "items": {"enum": ["x", "y"]}, "minItems": 2},
-                                          "b": {"type": ["number", "null"]}, "c": {"type": "boolean"}}}
+    s = {
+        "type": "object",
+        "properties": {
+            "a": {"type": "array", "items": {"enum": ["x", "y"]}, "minItems": 2},
+            "b": {"type": ["number", "null"]},
+            "c": {"type": "boolean"},
+        },
+    }
     assert sample(s) == {"a": ["x", "x"], "b": 1.0, "c": False}

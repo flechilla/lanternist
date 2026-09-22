@@ -6,7 +6,11 @@ export function useJobStreams(jobs: Job[], onEnd: (job: Job) => void): Record<st
   const [live, setLive] = useState<Record<string, Job>>({});
   const onEndRef = useRef(onEnd);
   onEndRef.current = onEnd;
-  const ids = jobs.filter(isActive).map((j) => j.id).sort().join(",");
+  const ids = jobs
+    .filter(isActive)
+    .map((j) => j.id)
+    .sort()
+    .join(",");
 
   useEffect(() => {
     if (!ids) return;
@@ -48,7 +52,7 @@ export function useOptions(): Options | null {
 export function useAction() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const run = useCallback(async <T,>(fn: () => Promise<T>): Promise<T | undefined> => {
+  const run = useCallback(async <T>(fn: () => Promise<T>): Promise<T | undefined> => {
     setBusy(true);
     setError(null);
     try {

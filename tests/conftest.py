@@ -5,7 +5,7 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _isolated_keys(request, tmp_path, monkeypatch):
-    if request.node.get_closest_marker("live"):   # live tests use your real keys
+    if request.node.get_closest_marker("live"):  # live tests use your real keys
         yield
         return
     monkeypatch.setenv("LANTERNIST_KEYRING", "0")

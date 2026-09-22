@@ -28,19 +28,59 @@ def tts(item: dict, sample_rate: int = 24000, chunk_gap: float = 0.25) -> dict:
         w.setframerate(sample_rate)
         w.writeframes(bytes(frames))
     total = sum(durs) + chunk_gap * (len(durs) - 1)
-    return {"id": item["id"], "out": item["out"], "sample_rate": sample_rate, "duration": round(total, 3),
-            "chunk_durations": [round(d, 3) for d in durs], "secs": 0.0}
+    return {
+        "id": item["id"],
+        "out": item["out"],
+        "sample_rate": sample_rate,
+        "duration": round(total, 3),
+        "chunk_durations": [round(d, 3) for d in durs],
+        "secs": 0.0,
+    }
 
 
 async def image(item: dict) -> dict:
     hue = (item["seed"] * 47) % 360
-    await ffmpeg.run(["-f", "lavfi", "-i", f"testsrc2=s={item['width']}x{item['height']}:d=1",
-                      "-vf", f"hue=h={hue}", "-frames:v", "1", item["out"]])
-    return {"id": item["id"], "out": item["out"], "width": item["width"], "height": item["height"], "secs": 0.0}
+    await ffmpeg.run(
+        [
+            "-f",
+            "lavfi",
+            "-i",
+            f"testsrc2=s={item['width']}x{item['height']}:d=1",
+            "-vf",
+            f"hue=h={hue}",
+            "-frames:v",
+            "1",
+            item["out"],
+        ]
+    )
+    return {
+        "id": item["id"],
+        "out": item["out"],
+        "width": item["width"],
+        "height": item["height"],
+        "secs": 0.0,
+    }
 
 
 async def video(frames: int, fps: int, width: int, height: int, out: Path) -> None:
     secs = frames / fps
-    await ffmpeg.run(["-f", "lavfi", "-i", f"testsrc2=s={width}x{height}:r={fps}:d={secs:.3f}",
-                      "-f", "lavfi", "-i", f"sine=f=330:d={secs:.3f}",
-                      "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-shortest", str(out)])
+    await ffmpeg.run(
+        [
+            "-f",
+            "lavfi",
+            "-i",
+            f"testsrc2=s={width}x{height}:r={fps}:d={secs:.3f}",
+            "-f",
+            "lavfi",
+            "-i",
+            f"sine=f=330:d={secs:.3f}",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-c:a",
+            "aac",
+            "-shortest",
+            str(out),
+        ]
+    )

@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api, ApiError, fmtSeconds, isActive, LANGUAGE_NAMES, type Job, type Mode, type StoryDetail, type Storyboard } from "../api";
+import {
+  api,
+  ApiError,
+  fmtSeconds,
+  isActive,
+  LANGUAGE_NAMES,
+  type Job,
+  type Mode,
+  type StoryDetail,
+  type Storyboard,
+} from "../api";
 import BoardView from "../components/BoardView";
 import FilmView from "../components/FilmView";
 import { Dock, Log, Stages } from "../components/JobProgress";
@@ -37,11 +47,17 @@ export default function Story() {
   }, [id]);
 
   useEffect(() => {
-    load().catch((e) => setError(e instanceof ApiError && e.status === 404 ? "This story no longer exists." : String(e.message)));
+    load().catch((e) =>
+      setError(
+        e instanceof ApiError && e.status === 404 ? "This story no longer exists." : String(e.message),
+      ),
+    );
   }, [load, setError]);
 
   const allJobs = useMemo(() => [...started, ...(detail?.jobs ?? [])], [started, detail]);
-  const live = useJobStreams(allJobs, () => { load().catch(() => undefined); });
+  const live = useJobStreams(allJobs, () => {
+    load().catch(() => undefined);
+  });
   const jobs = allJobs.map((j) => live[j.id] ?? j);
   const active = jobs.filter(isActive).sort((a, b) => (a.created_at ?? "").localeCompare(b.created_at ?? ""));
   const current = active.find((j) => j.status === "running") ?? active[0];
@@ -58,13 +74,19 @@ export default function Story() {
     return { keyframes, cast };
   }, [jobs, detail]);
 
-  if (error && !detail) return <p className="error">{error} <Link to="/">Back to your stories</Link></p>;
+  if (error && !detail)
+    return (
+      <p className="error">
+        {error} <Link to="/">Back to your stories</Link>
+      </p>
+    );
   if (!detail) return <p className="muted">Opening the story…</p>;
 
   const writing = detail.version === 0;
   const hasPictures = !!detail.board?.scenes.some((s) => s.keyframe);
   const step: Step = (stepParam as Step) ?? (detail.film ? "film" : hasPictures ? "board" : "script");
-  const drawingNow = !!current && (current.kind === "board" || current.kind === "render" || current.kind === "cast");
+  const drawingNow =
+    !!current && (current.kind === "board" || current.kind === "render" || current.kind === "cast");
 
   function edit(fn: (sb: Storyboard) => void) {
     setDraft((d) => {
@@ -89,8 +111,14 @@ export default function Story() {
   }
 
   const save = () => run(() => saveBoard(draft!, "edited"));
-  const discard = () => { setDirty(false); dirtyRef.current = false; setDraft(structuredClone(detail.storyboard)); };
-  const ensureSaved = async () => { if (dirtyRef.current && draft) await saveBoard(draft, "edited"); };
+  const discard = () => {
+    setDirty(false);
+    dirtyRef.current = false;
+    setDraft(structuredClone(detail.storyboard));
+  };
+  const ensureSaved = async () => {
+    if (dirtyRef.current && draft) await saveBoard(draft, "edited");
+  };
 
   const startJob = (fn: () => Promise<Job>, then?: () => void) =>
     run(async () => {
@@ -120,7 +148,11 @@ export default function Story() {
 
   const actions = {
     board: () => startJob(() => api.run(id, "board")),
-    render: () => startJob(() => api.run(id, "render"), () => navigate(`/stories/${id}/film`)),
+    render: () =>
+      startJob(
+        () => api.run(id, "render"),
+        () => navigate(`/stories/${id}/film`),
+      ),
     cast: () => startJob(() => api.run(id, "cast")),
     rerollCast: () => withVersion(() => api.rerollCast(id)),
     reroll: (n: number) => withVersion(() => api.reroll(id, n)),
@@ -128,8 +160,16 @@ export default function Story() {
     setMode,
   };
 
-  const cancel = (job: Job) => run(async () => { await api.cancel(job.id); await load(); });
-  const remove = () => run(async () => { await api.remove(id); navigate("/"); });
+  const cancel = (job: Job) =>
+    run(async () => {
+      await api.cancel(job.id);
+      await load();
+    });
+  const remove = () =>
+    run(async () => {
+      await api.remove(id);
+      navigate("/");
+    });
 
   const sb = draft ?? detail.storyboard;
   const writeJob = jobs.find((j) => j.kind === "write");
@@ -147,11 +187,17 @@ export default function Story() {
           {confirmDelete ? (
             <span className="row">
               Delete this story and its films?
-              <button className="small danger" onClick={remove} disabled={busy}>Delete</button>
-              <button className="small" onClick={() => setConfirmDelete(false)}>Keep it</button>
+              <button className="small danger" onClick={remove} disabled={busy}>
+                Delete
+              </button>
+              <button className="small" onClick={() => setConfirmDelete(false)}>
+                Keep it
+              </button>
             </span>
           ) : (
-            <button className="quiet danger small" onClick={() => setConfirmDelete(true)}>Delete story</button>
+            <button className="quiet danger small" onClick={() => setConfirmDelete(true)}>
+              Delete story
+            </button>
           )}
         </div>
       </div>
@@ -159,7 +205,17 @@ export default function Story() {
       {stale && (
         <p className="error">
           This story changed somewhere else since you opened it.{" "}
-          <button className="small" onClick={() => { setStale(false); setError(null); discard(); load(); }}>Load the latest version</button>
+          <button
+            className="small"
+            onClick={() => {
+              setStale(false);
+              setError(null);
+              discard();
+              load();
+            }}
+          >
+            Load the latest version
+          </button>
         </p>
       )}
       {error && !stale && <p className="error">{error}</p>}
@@ -169,7 +225,10 @@ export default function Story() {
           {writeJob && writeJob.status !== "failed" && writeJob.status !== "cancelled" ? (
             <>
               <h2>Writing your story</h2>
-              <p className="muted">The writer drafts the story first, then the cast and a picture, motion and sound note for every scene.</p>
+              <p className="muted">
+                The writer drafts the story first, then the cast and a picture, motion and sound note for
+                every scene.
+              </p>
               <Stages job={writeJob} />
               <Log job={writeJob} />
             </>
@@ -185,35 +244,56 @@ export default function Story() {
         <>
           <nav className="steps" aria-label="Steps">
             {STEPS.map((s, i) => (
-              <Link key={s.id} to={`/stories/${id}/${s.id}`} className={step === s.id ? "active" : undefined}
-                    aria-current={step === s.id ? "page" : undefined}>
-                <span className="num">{i + 1}</span>{s.name}
+              <Link
+                key={s.id}
+                to={`/stories/${id}/${s.id}`}
+                className={step === s.id ? "active" : undefined}
+                aria-current={step === s.id ? "page" : undefined}
+              >
+                <span className="num">{i + 1}</span>
+                {s.name}
               </Link>
             ))}
           </nav>
 
           {step === "script" && draft && (
             <ScriptEditor
-              draft={draft} edit={edit} opts={opts} dirty={dirty} busy={busy}
-              onSave={save} onDiscard={discard}
+              draft={draft}
+              edit={edit}
+              opts={opts}
+              dirty={dirty}
+              busy={busy}
+              onSave={save}
+              onDiscard={discard}
               cast={detail.board?.cast ?? liveAssets.cast ?? null}
-              castDrawing={!!current && (current.kind === "cast" || current.kind === "board" || current.kind === "render") && !detail.board?.cast}
+              castDrawing={
+                !!current &&
+                (current.kind === "cast" || current.kind === "board" || current.kind === "render") &&
+                !detail.board?.cast
+              }
               jobActive={!!current}
-              onDrawCast={actions.cast} onRerollCast={actions.rerollCast} onRewrite={actions.rewrite}
+              onDrawCast={actions.cast}
+              onRerollCast={actions.rerollCast}
+              onRewrite={actions.rewrite}
             />
           )}
           {step === "board" && draft && detail.board && (
             <BoardView
-              draft={draft} board={detail.board} liveKeyframes={liveAssets.keyframes}
-              drawing={drawingNow} jobActive={!!current} busy={busy} dirty={dirty}
-              onMode={actions.setMode} onReroll={actions.reroll} onBoard={actions.board} onRender={actions.render}
+              draft={draft}
+              board={detail.board}
+              liveKeyframes={liveAssets.keyframes}
+              drawing={drawingNow}
+              jobActive={!!current}
+              busy={busy}
+              dirty={dirty}
+              onMode={actions.setMode}
+              onReroll={actions.reroll}
+              onBoard={actions.board}
+              onRender={actions.render}
             />
           )}
           {step === "film" && (
-            <FilmView
-              detail={detail} jobs={jobs} busy={busy}
-              onRender={actions.render} onCancel={cancel}
-            />
+            <FilmView detail={detail} jobs={jobs} busy={busy} onRender={actions.render} onCancel={cancel} />
           )}
         </>
       )}

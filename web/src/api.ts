@@ -202,7 +202,9 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
       const data = await res.json();
       if (typeof data.detail === "string") message = data.detail;
       else if (Array.isArray(data.detail))
-        message = data.detail.map((d: { loc?: unknown[]; msg: string }) => `${(d.loc ?? []).join(".")}: ${d.msg}`).join("; ");
+        message = data.detail
+          .map((d: { loc?: unknown[]; msg: string }) => `${(d.loc ?? []).join(".")}: ${d.msg}`)
+          .join("; ");
     } catch {
       /* not JSON */
     }
@@ -222,7 +224,11 @@ export const api = {
   importStoryboard: (storyboard: unknown) =>
     call<{ story: StoryMeta; job: null }>("POST", "/api/stories", { storyboard }),
   save: (id: string, storyboard: Storyboard, base_version: number, note = "edited") =>
-    call<{ story: StoryMeta; version: number }>("PUT", `/api/stories/${id}`, { storyboard, base_version, note }),
+    call<{ story: StoryMeta; version: number }>("PUT", `/api/stories/${id}`, {
+      storyboard,
+      base_version,
+      note,
+    }),
   remove: (id: string) => call<void>("DELETE", `/api/stories/${id}`),
   rewrite: (id: string, n: number, instruction: string) =>
     call<Job>("POST", `/api/stories/${id}/scenes/${n}/rewrite`, { instruction }),
@@ -248,13 +254,25 @@ export const asset = (id: string | null | undefined, download?: string) =>
 export const isActive = (j: Job) => j.status === "queued" || j.status === "running";
 
 export const LANGUAGE_NAMES: Record<string, string> = {
-  en: "English", es: "Spanish", pt: "Portuguese", fr: "French", de: "German",
-  it: "Italian", ru: "Russian", zh: "Chinese", ja: "Japanese", ko: "Korean",
+  en: "English",
+  es: "Spanish",
+  pt: "Portuguese",
+  fr: "French",
+  de: "German",
+  it: "Italian",
+  ru: "Russian",
+  zh: "Chinese",
+  ja: "Japanese",
+  ko: "Korean",
 };
 
 export const STYLE_NAMES: Record<string, string> = {
-  watercolour: "Watercolour", "3d_film": "3D film", paper_cutout: "Paper cut-out", clay: "Clay",
-  ink_pencil: "Ink and pencil", anime: "Anime",
+  watercolour: "Watercolour",
+  "3d_film": "3D film",
+  paper_cutout: "Paper cut-out",
+  clay: "Clay",
+  ink_pencil: "Ink and pencil",
+  anime: "Anime",
 };
 
 export function fmtSeconds(s: number | null | undefined): string {

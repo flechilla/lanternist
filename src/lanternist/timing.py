@@ -14,8 +14,8 @@ from .text import MAX_CUE, pack
 
 @dataclass
 class Timeline:
-    speech_starts: list[float]   # when each scene's narration starts
-    bounds: list[float]          # scene boundaries b0=0 .. bN=total
+    speech_starts: list[float]  # when each scene's narration starts
+    bounds: list[float]  # scene boundaries b0=0 .. bN=total
     xfade: float
 
     @property
@@ -67,8 +67,12 @@ class Cue:
     text: str
 
 
-def cues(scene_texts: list[list[str]], chunk_durations: list[list[float]], speech_starts: list[float],
-         chunk_gap: float) -> list[Cue]:
+def cues(
+    scene_texts: list[list[str]],
+    chunk_durations: list[list[float]],
+    speech_starts: list[float],
+    chunk_gap: float,
+) -> list[Cue]:
     """Subtitle cues from the synthesis chunks' real durations, split into sentence-sized pieces.
 
     Within a chunk, pieces share its duration in proportion to their length.
@@ -94,7 +98,9 @@ def _ts(t: float, sep: str) -> str:
 
 
 def srt(cs: list[Cue]) -> str:
-    return "\n".join(f"{i}\n{_ts(c.start, ',')} --> {_ts(c.end, ',')}\n{c.text}\n" for i, c in enumerate(cs, 1))
+    return "\n".join(
+        f"{i}\n{_ts(c.start, ',')} --> {_ts(c.end, ',')}\n{c.text}\n" for i, c in enumerate(cs, 1)
+    )
 
 
 def vtt(cs: list[Cue]) -> str:

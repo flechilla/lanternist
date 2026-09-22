@@ -95,41 +95,42 @@ class Render(BaseModel):
     width: int = 1920
     height: int = 1080
     fps: int = 24
-    xfade: float = 0.8        # crossfade, centred on each scene boundary
-    gap: float = 0.45         # silence between scenes' narration
-    chunk_gap: float = 0.25   # silence between synthesis chunks inside a scene
-    lead_in: float = 0.5      # silence before the first word
-    tail: float = 1.5         # the last shot breathes after the final word
-    ambience: float = 0.3     # generated sound, ducked under the voice
+    xfade: float = 0.8  # crossfade, centred on each scene boundary
+    gap: float = 0.45  # silence between scenes' narration
+    chunk_gap: float = 0.25  # silence between synthesis chunks inside a scene
+    lead_in: float = 0.5  # silence before the first word
+    tail: float = 1.5  # the last shot breathes after the final word
+    ambience: float = 0.3  # generated sound, ducked under the voice
     encoder: str = "h264_nvenc"
     bitrate: str = "12M"
 
 
 class Defaults(BaseModel):
     """The model each stage uses when a story doesn't pick one. Values saved on the Settings page win."""
-    writer: str = ""                          # empty: the local Ollama model above
+
+    writer: str = ""  # empty: the local Ollama model above
     tts: str = "local/qwen3-tts-1.7b"
     image: str = "local/flux2-klein-9b"
     video: str = "local/ltx-2.5-22b-nvfp4"
-    ambience: str = "none"                    # or a registry id such as "fal/mmaudio-v2"
-    budget_usd: float = 5.0                   # per story, for remote models
+    ambience: str = "none"  # or a registry id such as "fal/mmaudio-v2"
+    budget_usd: float = 5.0  # per story, for remote models
 
 
 class OpenRouter(BaseModel):
     url: str = "https://openrouter.ai/api/v1"
-    recommended: list[str] = []               # model ids pinned at the top of the writer picker
-    data_collection: Literal["allow", "deny"] = "deny"   # route only to providers that don't store prompts
-    title: str = "Lanternist"                 # attribution headers OpenRouter shows for the app
+    recommended: list[str] = []  # model ids pinned at the top of the writer picker
+    data_collection: Literal["allow", "deny"] = "deny"  # route only to providers that don't store prompts
+    title: str = "Lanternist"  # attribution headers OpenRouter shows for the app
     referer: str = "https://github.com/lanternist/lanternist"
 
 
 class Fal(BaseModel):
     queue_url: str = "https://queue.fal.run"
     api_url: str = "https://api.fal.ai"
-    rest_url: str = "https://rest.fal.ai"     # storage tokens for uploads
-    max_concurrency: int = 4                  # requests running at once; fal queues the rest
-    media_ttl_hours: float = 24               # fal keeps media public forever unless told otherwise
-    voice_ttl_hours: float = 1                # reference voice clips we upload
+    rest_url: str = "https://rest.fal.ai"  # storage tokens for uploads
+    max_concurrency: int = 4  # requests running at once; fal queues the rest
+    media_ttl_hours: float = 24  # fal keeps media public forever unless told otherwise
+    voice_ttl_hours: float = 1  # reference voice clips we upload
 
 
 class Settings(BaseModel):
@@ -149,8 +150,11 @@ class Settings(BaseModel):
 
 
 def config_path() -> Path | None:
-    candidates = [os.environ.get("LANTERNIST_CONFIG"), "lanternist.toml",
-                  "~/.config/lanternist/lanternist.toml"]
+    candidates = [
+        os.environ.get("LANTERNIST_CONFIG"),
+        "lanternist.toml",
+        "~/.config/lanternist/lanternist.toml",
+    ]
     for c in candidates:
         if c and _expand(c).is_file():
             return _expand(c)

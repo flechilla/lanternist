@@ -12,7 +12,10 @@ export default function Doctor() {
   const load = useCallback(() => {
     setRunning(true);
     setError(null);
-    api.doctor().then(setChecks, (e) => setError(e.message)).finally(() => setRunning(false));
+    api
+      .doctor()
+      .then(setChecks, (e) => setError(e.message))
+      .finally(() => setRunning(false));
   }, []);
   useEffect(load, [load]);
 
@@ -33,14 +36,18 @@ export default function Doctor() {
           </p>
         </div>
         <div className="spacer" />
-        <button onClick={load} disabled={running}>{running ? "Checking…" : "Check again"}</button>
+        <button onClick={load} disabled={running}>
+          {running ? "Checking…" : "Check again"}
+        </button>
       </div>
       {error && <p className="error">{error}</p>}
       {checks && (
         <div className="checklist">
           {checks.map((c) => (
             <div key={c.name} className={`checkrow ${c.status}`}>
-              <span className="mark" aria-label={WORD[c.status]}>{MARK[c.status]}</span>
+              <span className="mark" aria-label={WORD[c.status]}>
+                {MARK[c.status]}
+              </span>
               <b>{c.name}</b>
               <span className="detail">{c.detail}</span>
             </div>

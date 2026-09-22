@@ -28,10 +28,20 @@ def client(tmp_path, monkeypatch):
 
 
 def storyboard(n=3):
-    return {"title": "Test story", "cast": [{"id": "a", "name": "Ann", "look": "girl in a red coat"}],
-            "scenes": [{"n": i, "narration": [{"text": f"Scene {i} says a few words out loud."}],
-                        "visual": f"picture {i}", "cast": ["a"], "mode": "video" if i == 2 else "still"}
-                       for i in range(1, n + 1)]}
+    return {
+        "title": "Test story",
+        "cast": [{"id": "a", "name": "Ann", "look": "girl in a red coat"}],
+        "scenes": [
+            {
+                "n": i,
+                "narration": [{"text": f"Scene {i} says a few words out loud."}],
+                "visual": f"picture {i}",
+                "cast": ["a"],
+                "mode": "video" if i == 2 else "still",
+            }
+            for i in range(1, n + 1)
+        ],
+    }
 
 
 def wait(client, job_id, timeout=60):
@@ -63,7 +73,9 @@ def test_story_lifecycle(client):
     sb = client.get(f"/api/stories/{sid}").json()["storyboard"]
     assert client.put(f"/api/stories/{sid}", json={"storyboard": sb, "base_version": 0}).status_code == 409
     sb["scenes"][0]["visual"] = "a new picture"
-    assert client.put(f"/api/stories/{sid}", json={"storyboard": sb, "base_version": 1}).json()["version"] == 2
+    assert (
+        client.put(f"/api/stories/{sid}", json={"storyboard": sb, "base_version": 1}).json()["version"] == 2
+    )
     after = client.get(f"/api/stories/{sid}").json()["board"]["scenes"]
     assert after[0]["keyframe"] is None and after[1]["keyframe"] == board["scenes"][1]["keyframe"]
 

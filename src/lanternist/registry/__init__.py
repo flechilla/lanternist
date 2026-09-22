@@ -41,28 +41,30 @@ Unit = Literal["output_second", "audio_second", "image", "megapixel", "1k_chars"
 class Price(BaseModel):
     model_config = ConfigDict(extra="forbid")
     unit: Unit
-    usd: Decimal | None = None             # list price per unit, remote models
-    gpu_seconds: float | None = None       # GPU time per unit, local models
-    tiers: dict[str, Decimal] = {}         # named alternatives: resolutions, audio on, a second endpoint
+    usd: Decimal | None = None  # list price per unit, remote models
+    gpu_seconds: float | None = None  # GPU time per unit, local models
+    tiers: dict[str, Decimal] = {}  # named alternatives: resolutions, audio on, a second endpoint
     synced: date | None = None
-    source: str = "registry"               # registry | fal_pricing_api
+    source: str = "registry"  # registry | fal_pricing_api
 
 
 class Billing(BaseModel):
     """fal's base price per billing unit for one endpoint, from its pricing API."""
+
     unit_price: Decimal
-    unit: str                              # fal's own unit name: seconds, megapixels, units, …
+    unit: str  # fal's own unit name: seconds, megapixels, units, …
     synced: date
 
 
 class Durations(BaseModel):
     """The clip lengths a video model bills, or LTX's frame rule when running locally."""
+
     model_config = ConfigDict(extra="forbid")
     values: list[float] | None = None
     min: float | None = None
     max: float | None = None
     step: float | None = None
-    frames: str | None = None              # "8k+1": any length, in frames
+    frames: str | None = None  # "8k+1": any length, in frames
     fps: int | None = None
     max_seconds: float | None = None
 
@@ -85,24 +87,24 @@ class ModelEntry(BaseModel):
     label: str
     capability: Capability
     provider: Provider
-    family: str | None = None              # which input builder a remote adapter uses
-    endpoint: str | None = None            # the main endpoint of a remote model
-    endpoints: dict[str, str] = {}         # extra endpoints by role, e.g. text_to_image, clone
-    engine_id: str | None = None           # local models: the id inside every step key
-    references: int = 0                    # reference images a picture model accepts
-    clone: bool = False                    # narration: clones from a reference clip
-    voices: list[str] = []                 # narration: preset voice ids
-    languages: list[str] = []              # narration: ISO 639-1 codes; empty means not listed
-    max_chars: int | None = None           # narration: longest text per request
-    audio: Literal["none", "ambience"] = "none"   # video: whether it makes its own sound bed
+    family: str | None = None  # which input builder a remote adapter uses
+    endpoint: str | None = None  # the main endpoint of a remote model
+    endpoints: dict[str, str] = {}  # extra endpoints by role, e.g. text_to_image, clone
+    engine_id: str | None = None  # local models: the id inside every step key
+    references: int = 0  # reference images a picture model accepts
+    clone: bool = False  # narration: clones from a reference clip
+    voices: list[str] = []  # narration: preset voice ids
+    languages: list[str] = []  # narration: ISO 639-1 codes; empty means not listed
+    max_chars: int | None = None  # narration: longest text per request
+    audio: Literal["none", "ambience"] = "none"  # video: whether it makes its own sound bed
     durations: Durations | None = None
-    defaults: dict = {}                    # request fields always sent
+    defaults: dict = {}  # request fields always sent
     commercial_use: bool | Literal["below_10m_revenue"] = True
     licence: str = ""
     notes: str = ""
-    status: str = "active"                 # active | deprecated | unlisted, from fal's catalog
+    status: str = "active"  # active | deprecated | unlisted, from fal's catalog
     price: Price
-    billing: dict[str, Billing] = {}       # by endpoint role ("" for the main one), after a sync
+    billing: dict[str, Billing] = {}  # by endpoint role ("" for the main one), after a sync
 
     @property
     def remote(self) -> bool:
@@ -168,8 +170,9 @@ def load(library: Path | None = None, db=None) -> dict[str, ModelEntry]:
                 continue
             if not role:
                 e.status = row.status
-            e.billing[role] = Billing(unit_price=Decimal(row.unit_price), unit=row.unit,
-                                      synced=row.synced_at.date())
+            e.billing[role] = Billing(
+                unit_price=Decimal(row.unit_price), unit=row.unit, synced=row.synced_at.date()
+            )
     return entries
 
 
@@ -218,14 +221,40 @@ async def sync_prices(cfg, db, fal=None) -> list[dict]:
         status = (meta or {}).get("status") or ("unlisted" if meta is None else "active")
         p = prices.get(ep)
         if p is None:
-            lines.append({"model": key, "endpoint": ep, "status": status, "price": None, "unit": None,
-                          "api_unit": None, "changed": False, "matches": False})
+            lines.append(
+                {
+                    "model": key,
+                    "endpoint": ep,
+                    "status": status,
+                    "price": None,
+                    "unit": None,
+                    "api_unit": None,
+                    "changed": False,
+                    "matches": False,
+                }
+            )
             continue
         api_unit = str(p.get("unit", ""))
-        changed = db.record_price(key, api_unit, str(p["unit_price"]), "fal_pricing_api", endpoint=ep,
-                                  currency=p.get("currency") or "USD", status=status)
-        lines.append({"model": key, "endpoint": ep, "status": status, "price": p["unit_price"],
-                      "api_unit": api_unit, "changed": changed, "drift": _drift(e, role, api_unit, p["unit_price"])})
+        changed = db.record_price(
+            key,
+            api_unit,
+            str(p["unit_price"]),
+            "fal_pricing_api",
+            endpoint=ep,
+            currency=p.get("currency") or "USD",
+            status=status,
+        )
+        lines.append(
+            {
+                "model": key,
+                "endpoint": ep,
+                "status": status,
+                "price": p["unit_price"],
+                "api_unit": api_unit,
+                "changed": changed,
+                "drift": _drift(e, role, api_unit, p["unit_price"]),
+            }
+        )
     return lines
 
 

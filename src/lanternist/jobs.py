@@ -20,8 +20,15 @@ from .storyboard import Storyboard
 log = logging.getLogger(__name__)
 
 STAGES = ["write", "narration", "cast", "keyframes", "motion", "clips", "mix"]
-LABELS = {"write": "Writing", "narration": "Narration", "cast": "Cast sheet", "keyframes": "Pictures",
-          "motion": "Animation", "clips": "Scene clips", "mix": "Final mix"}
+LABELS = {
+    "write": "Writing",
+    "narration": "Narration",
+    "cast": "Cast sheet",
+    "keyframes": "Pictures",
+    "motion": "Animation",
+    "clips": "Scene clips",
+    "mix": "Final mix",
+}
 
 
 def describe(e: Event) -> str:
@@ -66,8 +73,10 @@ class Progress:
         elif e.asset:
             st["asset"] = e.asset
         if e.message or e.status in ("start", "done", "finish"):
-            self.note(e.message and f"{LABELS.get(e.stage, e.stage)}: {e.message}" or describe(e),
-                      flush=e.status != "done")
+            self.note(
+                e.message and f"{LABELS.get(e.stage, e.stage)}: {e.message}" or describe(e),
+                flush=e.status != "done",
+            )
         else:
             self.flush()
 
@@ -222,16 +231,26 @@ class Runner:
 
         if job.kind == "board":
             b = await pipeline.board(sb)
-            return {"cast": b.cast, "keyframes": b.keyframes, "total": round(b.timeline.total, 2),
-                    "poster": b.keyframes[0] if b.keyframes else None}
+            return {
+                "cast": b.cast,
+                "keyframes": b.keyframes,
+                "total": round(b.timeline.total, 2),
+                "poster": b.keyframes[0] if b.keyframes else None,
+            }
 
         if job.kind == "render":
             film = await pipeline.render(sb)
             dest = self.cfg.library / "films" / f"{story.slug}-v{job.version}.mp4"
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(pipeline.store.path(film.film), dest)
-            return {"film": film.film, "srt": film.srt, "vtt": film.vtt, "duration": film.duration,
-                    "path": str(dest), "poster": film.poster}
+            return {
+                "film": film.film,
+                "srt": film.srt,
+                "vtt": film.vtt,
+                "duration": film.duration,
+                "path": str(dest),
+                "poster": film.poster,
+            }
 
         raise ValueError(f"unknown job kind {job.kind}")
 
