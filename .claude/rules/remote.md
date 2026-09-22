@@ -9,7 +9,7 @@ paths:
 
 # Remote providers, keys, prices and the registry
 
-Background: M2_PLAN.md §1.2–1.13. Where the plan marks something **verify**, confirm it with a live
+Background: plans/M2_PLAN.md §1.2–1.13. Where the plan marks something **verify**, confirm it with a live
 test before relying on it, and record what you learned in the plan.
 
 ## Keys

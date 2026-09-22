@@ -126,7 +126,7 @@ class Defaults(BaseModel):
 
 class OpenRouter(BaseModel):
     url: str = "https://openrouter.ai/api/v1"
-    # Pinned at the top of the writer picker: the best value from the Phase B trials (M2_PLAN.md).
+    # Pinned at the top of the writer picker: the best value from the Phase B trials (plans/M2_PLAN.md).
     recommended: list[str] = [
         "anthropic/claude-opus-5",
         "anthropic/claude-sonnet-5",

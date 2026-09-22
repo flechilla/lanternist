@@ -410,7 +410,7 @@ def check_key(cfg: Settings, writer: str | None = "") -> None:
 # ---------------------------------------------------------------------------------- the writer picker
 # Tokens a story takes per minute of narration, both passes and any length revision included, with
 # reasoning at the model's default effort. From the Phase B trials on 21 Sep 2026: three 3-minute
-# stories per model, in English, Spanish and Portuguese (M2_PLAN.md). Reasoning is most of the output,
+# stories per model, in English, Spanish and Portuguese (plans/M2_PLAN.md). Reasoning is most of the output,
 # so models differ by 4x; stories written here replace these numbers as they finish.
 TRIAL_TOKENS_PER_MINUTE = {
     "openrouter/anthropic/claude-opus-5": {"in": 921, "out": 2613},

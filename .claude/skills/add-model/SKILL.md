@@ -6,7 +6,7 @@ argument-hint: "<model name or fal endpoint id>"
 
 # Add a model: $ARGUMENTS
 
-Read `.claude/rules/remote.md` and the capability's section in `M2_PLAN.md` (§1.7 pictures, §1.8
+Read `.claude/rules/remote.md` and the capability's section in `plans/M2_PLAN.md` (§1.7 pictures, §1.8
 video, §1.9 narration) first. Writer models are not registry entries: they come live from Ollama and
 OpenRouter.
 
@@ -15,7 +15,7 @@ OpenRouter.
    there, and pick the `family` whose input builder fits. If none fits, the model needs a new family
    adapter: say so, and plan that code with its own tests before writing the entry.
 2. **Read the source, not memory.** Fetch the endpoint's page on fal.ai (its API schema and
-   `llms.txt`, as M2_PLAN.md did) and note today's date. Record:
+   `llms.txt`, as plans/M2_PLAN.md did) and note today's date. Record:
    - every input name and its default
    - billable lengths and sizes
    - list price per our unit, with its tiers (audio on, resolution)
@@ -41,5 +41,5 @@ OpenRouter.
    doesn't match fal's billing: re-read the page before trusting either.
 6. **Live test, only if the user agrees.** Say what it will cost first. Add one minimal call to
    `tests/test_live.py`, and compare the computed cost with the account's usage.
-7. **Plan.** Add the model to the relevant table in `M2_PLAN.md`, with its price and date.
+7. **Plan.** Add the model to the relevant table in `plans/M2_PLAN.md`, with its price and date.
 8. Run `scripts/check`.

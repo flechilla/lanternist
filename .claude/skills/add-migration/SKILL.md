@@ -43,6 +43,6 @@ migration runs against their data the next time they open Lanternist. Read
 5. **The real library.** Don't migrate `~/Lanternist/lanternist.db` yourself. In the PR, tell the
    user the first start will migrate it, and suggest a backup first:
    `cp ~/Lanternist/lanternist.db ~/Lanternist/backups/lanternist-$(date +%F).db`.
-6. **Docs.** Update the data table in the plan (M2_PLAN.md §1.13 or its successor) when it describes
+6. **Docs.** Update the data table in the plan (plans/M2_PLAN.md §1.13 or its successor) when it describes
    the schema.
 7. Run `scripts/check`.

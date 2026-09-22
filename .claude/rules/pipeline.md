@@ -11,7 +11,7 @@ paths:
 
 # The render pipeline and the step cache
 
-Background: MVP_PLAN.md §2 ("Decisions"), M2_PLAN.md §1.1.
+Background: plans/MVP_PLAN.md §2 ("Decisions"), plans/M2_PLAN.md §1.1.
 
 ## Step keys
 

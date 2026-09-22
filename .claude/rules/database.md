@@ -8,7 +8,7 @@ paths:
 
 SQLite at `~/Lanternist/lanternist.db`, through SQLAlchemy 2 and Alembic. The user's real library
 lives in it, and `Database.migrate()` upgrades it at every start. A bad migration therefore breaks
-their data the next time they open the app. Background: M2_PLAN.md §1.13.
+their data the next time they open the app. Background: plans/M2_PLAN.md §1.13.
 
 - **Every query lives in `db.py`**, as a `Database` method or on a model. Other modules call those;
   they don't build queries of their own. `api/app.py` still queries inline: move a query into

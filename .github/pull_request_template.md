@@ -1,6 +1,6 @@
 ## What and why
 
-<!-- One paragraph: the change, and the reason for it. Link the plan item (M2_PLAN.md §…) if there is one. -->
+<!-- One paragraph: the change, and the reason for it. Link the plan item (plans/M2_PLAN.md §…) if there is one. -->
 
 ## How it was checked
 
