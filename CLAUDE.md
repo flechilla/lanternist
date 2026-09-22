@@ -95,7 +95,7 @@ Known duplication, to remove, not to copy (delete a line when it's fixed):
 - `web/src/api.ts` `LANGUAGE_NAMES` and `STYLE_NAMES`, and `NewStory.tsx` `AUDIENCE_NAMES` repeat
   backend lists.
 - `app.options()` lists the cameras again instead of reading `storyboard.Camera`.
-- `api/app.py` and `jobs.py` build queries inline instead of calling `db.py`.
+- `api/app.py` builds queries inline instead of calling `db.py`.
 
 ## How code here is written
 

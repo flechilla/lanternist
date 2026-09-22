@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from lanternist import config, providers
 from lanternist.config import Paths, Settings
-from lanternist.db import Database
+from lanternist.db import Database, Story
 from lanternist.providers.fake import FakeWorld
 from lanternist.storyboard import CastMember, Line, Scene, Storyboard
 
@@ -85,6 +85,15 @@ def make_story():
         )
 
     return make
+
+
+@pytest.fixture
+def story_row(db) -> str:
+    """A story in the database, for pipelines that record spend and check its budget."""
+    with db.session() as s:
+        s.add(Story(id="s1", slug="test", title="Test", version=1))
+        s.commit()
+    return "s1"
 
 
 @pytest.fixture

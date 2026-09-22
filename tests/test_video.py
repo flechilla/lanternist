@@ -5,7 +5,7 @@ import asyncio
 import pytest
 
 from lanternist import timing
-from lanternist.db import StepRun, Story, to_micros
+from lanternist.db import StepRun, to_micros
 from lanternist.engines import catalog
 from lanternist.engines.base import Item
 from lanternist.engines.fal_video import FalVideo
@@ -146,14 +146,6 @@ def test_video_is_priced_per_second_billed(cfg, model, quality, shots, seconds, 
 
 
 # ------------------------------------------------------------------------------------ a render on fal
-@pytest.fixture
-def story_row(db) -> str:
-    with db.session() as s:
-        s.add(Story(id="s1", slug="video", title="Video", version=1))
-        s.commit()
-    return "s1"
-
-
 def endpoints(fakes) -> list[str]:
     return [fakes.fal.requests[r].endpoint for r in fakes.fal.submits]
 
@@ -268,3 +260,43 @@ async def test_the_users_cancel_cancels_the_requests_at_fal(fake_cfg, db, fakes,
     assert sorted(fakes.fal.cancels) == sorted(fakes.fal.submits)
     with db.session() as s:
         assert {r.status for r in s.query(StepRun).filter(StepRun.provider == "fal")} == {"cancelled"}
+
+
+async def test_a_film_with_every_stage_remote_never_takes_the_gpu(
+    fake_cfg, db, fakes, make_story, monkeypatch
+):
+    """Definition of done, step 7: no lease, so neither Ollama nor ComfyUI is touched."""
+    from lanternist.engines import local
+
+    def no_lease(*args):
+        raise AssertionError(f"the GPU lease was taken: {args[1:]}")
+
+    monkeypatch.setattr(local, "lease", no_lease)
+    sb = make_story(("still", "video"))
+    sb.models.tts, sb.voice = "fal/elevenlabs-v3", "Aria"
+    sb.models.image, sb.models.video = "fal/flux-2-klein-9b", "fal/kling-v3-standard"
+    sb.scenes[1].sound = "rain on a tin roof"
+    film = await Pipeline(fake_cfg, db=db).render(sb)
+    assert film.film and {"elevenlabs", "klein", "kling", "mmaudio"} <= {
+        part for e in endpoints(fakes) for part in ("elevenlabs", "klein", "kling", "mmaudio") if part in e
+    }
+
+
+def test_mmaudio_hears_the_clip_and_its_sound_line(cfg):
+    eng = catalog.ambience(cfg, None, "fal/mmaudio-v2")
+    item = Item(
+        "s002", "a2", 2, {"video": "v.mp4", "prompt": "rain on a tin roof", "seed": 70000, "seconds": 45.0}
+    )
+    assert eng.arguments(item, "https://cdn/clip.mp4") == {
+        "video_url": "https://cdn/clip.mp4",
+        "prompt": "rain on a tin roof",
+        "negative_prompt": "speech, talking, voices, singing, music",
+        "seed": 70000 % 65536,
+        "duration": 30.0,  # the most it scores; the rest of a longer clip goes quiet
+        "num_steps": 25,
+        "cfg_strength": 4.5,
+        "mask_away_clip": False,
+    }
+    assert eng.estimate([item]).micros == 30_000  # 30 s at $0.001
+    item.params["seconds"] = 12.5
+    assert eng.estimate([item]).micros == 12_500

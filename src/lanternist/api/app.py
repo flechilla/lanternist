@@ -20,9 +20,10 @@ from ..engines import catalog as engines
 from ..estimate import Kind, estimate
 from ..jobs import Runner, is_terminal
 from ..pipeline import Pipeline
+from ..store import Store
 from ..storyboard import Storyboard, slugify
 from ..text import LANGUAGES
-from ..voices import find_voice, list_voices
+from ..voices import find_voice
 from ..writer import AUDIENCES, KINDS, STYLES, Brief
 
 STATIC = Path(__file__).parent / "static"
@@ -213,38 +214,19 @@ def options():
 # ---------------------------------------------------------------------------------- stories
 @app.get("/api/stories")
 def list_stories():
-    with db.session() as s:
-        stories = s.query(Story).order_by(Story.updated_at.desc()).all()
-        spent = db.spend_by_story()
-        out = []
-        for st in stories:
-            film = (
-                s.query(Job)
-                .filter_by(story_id=st.id, kind="render", status="done")
-                .order_by(Job.finished_at.desc())
-                .first()
-            )
-            drawn = (
-                s.query(Job)
-                .filter(Job.story_id == st.id, Job.kind.in_(("board", "render")), Job.status == "done")
-                .order_by(Job.finished_at.desc())
-                .first()
-            )
-            active = s.query(Job).filter(Job.story_id == st.id, Job.status.in_(("queued", "running"))).count()
-            row = s.query(StoryVersion).filter_by(story_id=st.id, version=st.version).one_or_none()
-            sb = row.storyboard if row else {}
-            out.append(
-                {
-                    **story_dict(st),
-                    "scenes": len(sb.get("scenes", [])),
-                    "active_jobs": active,
-                    "film": film.result if film else None,
-                    "film_version": film.version if film else None,
-                    "poster": (drawn.result or {}).get("poster") if drawn else None,
-                    "spent_usd": to_usd(spent.get(st.id, 0)),
-                }
-            )
-        return out
+    spent = db.spend_by_story()
+    return [
+        {
+            **story_dict(r["story"]),
+            "scenes": len(r["storyboard"].get("scenes", [])),
+            "active_jobs": r["active"],
+            "film": r["film"].result if r["film"] else None,
+            "film_version": r["film"].version if r["film"] else None,
+            "poster": (r["drawn"].result or {}).get("poster") if r["drawn"] else None,
+            "spent_usd": to_usd(spent.get(r["story"].id, 0)),
+        }
+        for r in db.library()
+    ]
 
 
 class NewStory(BaseModel):
@@ -520,17 +502,12 @@ def get_asset(asset: str, download: str | None = None):
     )
 
 
-@app.get("/api/voices")
-def voices():
-    return list_voices(cfg)
-
-
 @app.get("/api/voices/catalog")
 def voice_catalog(language: str = "en", tts: str = ""):
     """The voices a narration model offers, each with its sample if one was made."""
     eff = prefs.effective(cfg, db)
     try:
-        return engines.voices(eff, db, _pipeline().store, tts or eff.defaults.tts, language)
+        return engines.voices(eff, db, Store(eff.library), tts or eff.defaults.tts, language)
     except ValueError as e:
         raise HTTPException(422, str(e)) from None
 
@@ -549,15 +526,11 @@ def voice_sample(body: SampleBody):
     eff = prefs.effective(cfg, db)
     model = body.tts or eff.defaults.tts
     try:
-        eng = engines.tts(eff, db, model, body.voice, body.language)
+        eng = engines.sampler(eff, db, model, body.voice, body.language)
     except (FileNotFoundError, ValueError) as e:
         raise HTTPException(422, str(e)) from None
-    if not eng.remote:
-        raise HTTPException(
-            422, "a narrator on this machine clones your recording: listen to the recording itself"
-        )
-    if rec := _pipeline().cached(engines.sample_item(eng, body.language)):
-        return {"audio": rec["assets"]["audio"], "job": None}
+    if audio := engines.cached_sample(Store(eff.library), eng, body.language):
+        return {"audio": audio, "job": None}
     params = {"tts": model, "voice": body.voice, "language": body.language}
     return {"audio": None, "job": job_dict(runner.enqueue(None, "sample", None, params))}
 

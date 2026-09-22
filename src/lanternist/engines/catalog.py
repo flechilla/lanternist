@@ -4,20 +4,21 @@ Local models map by id to their engine, fal models by adapter family. The prices
 come from each engine's own estimate, so the price on a picker is the price the estimator uses.
 """
 
+from collections.abc import Callable
 from decimal import Decimal
 
-from .. import registry, text
+from .. import prefs, registry, text
 from ..config import Settings
-from ..db import Database, to_micros, to_usd
+from ..db import Database, to_usd
 from ..keys import get_key
 from ..registry import ModelEntry
 from ..store import Store
 from ..voices import find_voice, list_voices
 from ..writer import CHARS_PER_WORD, narration_seconds, wpm
-from .base import Engine, Item, TtsEngine, VideoEngine, keyframe_size
+from .base import Engine, Item, TtsEngine, VideoEngine, gpu_estimate, keyframe_size
 from .fal_audio import FalMmaudio
 from .fal_image import FalImage
-from .fal_tts import FalTts
+from .fal_tts import FalTts, chars_estimate
 from .fal_video import FalVideo
 from .local import LocalKlein, LocalLtx, LocalQwenTts
 
@@ -78,6 +79,21 @@ def sample_item(eng: TtsEngine, language: str) -> Item:
     )
 
 
+def sampler(cfg: Settings, db: Database | None, model_id: str, voice: str, language: str) -> TtsEngine:
+    """The engine that makes `voice`'s sample. Only a remote one: a narrator on this machine would take
+    the GPU for it, and the voice it clones is the recording, which plays as it is."""
+    eng = tts(cfg, db, model_id, voice, language)
+    if not eng.remote:
+        raise ValueError("a narrator on this machine clones your recording: listen to the recording itself")
+    return eng
+
+
+def cached_sample(store: Store, eng: TtsEngine, language: str) -> str | None:
+    """The sample's audio if it was made before."""
+    rec = store.get_step(sample_item(eng, language).key or "")
+    return rec["assets"]["audio"] if rec else None
+
+
 def voices(cfg: Settings, db: Database | None, store: Store, model_id: str, language: str) -> dict:
     """The voices a narration model offers: its presets and, if it clones, the recordings in voices/.
     Each comes with its sample when one was made; `sample_usd` is what making one costs."""
@@ -86,8 +102,7 @@ def voices(cfg: Settings, db: Database | None, store: Store, model_id: str, lang
     def sample(voice: str) -> str | None:
         if e.provider == "local":
             return None  # the recording itself is the sample
-        rec = store.get_step(sample_item(tts(cfg, db, e.id, voice, language), language).key or "")
-        return rec["assets"]["audio"] if rec else None
+        return cached_sample(store, tts(cfg, db, e.id, voice, language), language)
 
     recordings = list_voices(cfg) if e.clone else []
     price = None
@@ -137,23 +152,27 @@ def _picture(cfg: Settings) -> Item:
     return Item("s001", None, 1, {"prompt": "", "seed": 0, "width": w, "height": h, "refs": ["cast"]})
 
 
+def _qualities(e: ModelEntry, price: Callable[[str | None], dict]) -> dict:
+    """The row's price at the default quality, and the quality options with their own prices."""
+    q = e.quality
+    return {
+        **price(None),
+        "quality": {
+            "param": q.param,
+            "default": q.default,
+            "options": [{"id": o, "label": q.labels.get(o, o), **price(o)} for o in q.options],
+        }
+        if q
+        else None,
+    }
+
+
 def _image_row(cfg: Settings, db: Database | None, e: ModelEntry) -> dict:
     def per_picture(quality: str | None) -> dict:
         est = _image(cfg, db, e, quality).estimate([_picture(cfg)])
         return {"usd": to_usd(est.micros) if e.remote else None, "gpu_seconds": est.gpu_seconds or None}
 
-    q = e.quality
-    return {
-        "per": "picture",
-        **per_picture(None),
-        "quality": {
-            "param": q.param,
-            "default": q.default,
-            "options": [{"id": o, "label": q.labels.get(o, o), **per_picture(o)} for o in q.options],
-        }
-        if q
-        else None,
-    }
+    return {"per": "picture", **_qualities(e, per_picture)}
 
 
 def _second(seconds: float = 10.0) -> Item:
@@ -170,36 +189,17 @@ def _video_row(cfg: Settings, db: Database | None, e: ModelEntry) -> dict:
             "gpu_seconds": est.gpu_seconds / 10 or None,
         }
 
-    q, d = e.quality, e.durations
-    return {
-        "per": "second of video",
-        "sound": e.audio == "ambience",
-        "lengths": d.lengths() if d else [],
-        **per_second(None),
-        "quality": {
-            "param": q.param,
-            "default": q.default,
-            "options": [{"id": o, "label": q.labels.get(o, o), **per_second(o)} for o in q.options],
-        }
-        if q
-        else None,
-    }
+    return {"per": "second of video", "sound": e.audio == "ambience", **_qualities(e, per_second)}
 
 
 def _tts_row(e: ModelEntry) -> dict:
     """Priced per minute of English narration: characters for remote models, GPU time for local ones."""
-    minute = e.price.on()
-    chars = wpm("en") * CHARS_PER_WORD
-    usd = to_usd(to_micros(minute.usd * chars / 1000)) if minute.usd is not None else None
-    gpu = 60 * minute.gpu_seconds if minute.gpu_seconds else None
+    est = chars_estimate(e, [wpm("en") * CHARS_PER_WORD]) if e.remote else gpu_estimate(e, units=60, items=1)
     return {
         "per": "minute of narration",
-        "usd": usd,
-        "gpu_seconds": gpu,
+        "usd": to_usd(est.micros) if e.remote else None,
+        "gpu_seconds": est.gpu_seconds or None,
         "quality": None,
-        "clone": e.clone,
-        "presets": len(e.voices),
-        "languages": e.languages,
     }
 
 
@@ -210,14 +210,7 @@ def _ambience_row(cfg: Settings, db: Database | None, e: ModelEntry) -> dict:
 
 def catalog(cfg: Settings, db: Database | None, capability: str) -> dict:
     """Every model a stage can use, with what it costs and whether it can run here now."""
-    defaults = {
-        "tts.speak": cfg.defaults.tts,
-        "image.keyframe": cfg.defaults.image,
-        "video.image_to_video": cfg.defaults.video,
-        "audio.ambience": cfg.defaults.ambience,
-    }
-    if capability not in defaults:
-        raise ValueError(f"no model list for '{capability}'")
+    default = prefs.default_model(cfg, capability)
     rows = []
     for e in registry.by_capability(capability, cfg.library, db):
         row = {
@@ -241,4 +234,4 @@ def catalog(cfg: Settings, db: Database | None, capability: str) -> dict:
             row |= _tts_row(e)
         rows.append(row)
     rows.sort(key=lambda r: (not r["local"], Decimal(str(r.get("usd") or 0))))
-    return {"default": defaults[capability], "models": rows}
+    return {"default": default, "models": rows}

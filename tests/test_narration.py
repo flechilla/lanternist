@@ -162,9 +162,25 @@ async def test_a_language_the_model_doesnt_speak_is_refused(fake_cfg, db, make_s
     sb = make_story(("still",))
     sb.models.tts, sb.voice, sb.language = "fal/chatterbox-multilingual", "demo", "de"
     await Pipeline(fake_cfg, db=db).narrate(sb)  # German is one of Chatterbox's 23
-    sb.language = "xx"
-    with pytest.raises(ValueError, match="not supported by Chatterbox"):
+    sb.language = "ar"  # Chatterbox speaks Arabic, but the app writes no stories in it yet
+    with pytest.raises(ValueError, match="can't be narrated in 'ar' yet"):
         await Pipeline(fake_cfg, db=db).narrate(sb)
+
+
+async def test_a_new_story_seed_doesnt_pay_again_for_a_model_that_takes_none(fake_cfg, db, fakes, make_story):
+    """A cast re-roll changes the story's seed; ElevenLabs takes no seed, so its narration stays cached."""
+    sb = make_story(("still", "still"))
+    sb.models.tts, sb.voice = "fal/elevenlabs-v3", "Aria"
+    p = Pipeline(fake_cfg, db=db)
+    await p.narrate(sb)
+    sb.seed = 12345
+    fakes.fal.submits.clear()
+    await p.narrate(sb)
+    assert not fakes.fal.submits
+    sb.models.tts, sb.voice = "fal/chatterbox-multilingual", "demo"
+    before = p.narration_items(sb, p.tts(sb))[0].key
+    sb.seed = 7
+    assert p.narration_items(sb, p.tts(sb))[0].key != before  # Chatterbox takes the seed: a new take
 
 
 # ------------------------------------------------------------------------------------ voices and samples
@@ -220,3 +236,13 @@ async def test_a_sample_doesnt_wait_behind_a_render(cfg, db, until):
         release.set()
         await runner.stop()
     assert db.update_job(sample.id).result == {"kind": "sample"}
+
+
+def test_narration_is_priced_per_character(fake_cfg, cfg):
+    eng = tts(fake_cfg, "fal/elevenlabs-v3", "Aria")
+    item = catalog.sample_item(eng, "es")
+    assert len(item.params["chunks"][0]) == 98 and eng.estimate([item]).micros == 9_800  # $0.10 per 1k
+    rows = {m["id"]: m for m in catalog.catalog(cfg, None, "tts.speak")["models"]}
+    # A minute of English narration is 150 words of about 6 characters: 900.
+    assert rows["fal/elevenlabs-v3"]["usd"] == 0.09 and rows["fal/chatterbox-multilingual"]["usd"] == 0.0225
+    assert rows["local/qwen3-tts-1.7b"]["usd"] is None and rows["local/qwen3-tts-1.7b"]["gpu_seconds"] == 27.6

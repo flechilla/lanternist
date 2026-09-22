@@ -123,32 +123,23 @@ function text(rows: SettingRow[] | null, key: string): string {
   return typeof v === "string" || typeof v === "number" ? String(v) : "";
 }
 
-/** The default model of each media stage, by its setting. */
-const STAGES: { key: string; capability: Capability; label: string; off?: string }[] = [
-  { key: "defaults.tts", capability: "tts.speak", label: "Narration" },
-  { key: "defaults.image", capability: "image.keyframe", label: "Pictures" },
-  { key: "defaults.video", capability: "video.image_to_video", label: "Video" },
-  {
-    key: "defaults.ambience",
-    capability: "audio.ambience",
-    label: "Ambience, for video models with no sound of their own",
-    off: "Their scenes stay silent under the narration.",
-  },
-];
-
 function Defaults() {
   const [rows, setRows] = useState<SettingRow[] | null>(null);
   const [catalogs, setCatalogs] = useState<Partial<Record<Capability, MediaCatalog>>>({});
+  // The model settings: each names its stage (capability), in the order the backend lists them.
+  const stages = (rows ?? []).filter((r): r is SettingRow & { capability: Capability } => !!r.capability);
   const [budget, setBudget] = useState("");
   const { busy, error, setError, run } = useAction();
 
   // Each catalog names its stage's default, so they're fetched again after a save.
   const loadCatalogs = useCallback(
-    () =>
-      Promise.all(STAGES.map((st) => api.models(st.capability))).then(
-        (all) => setCatalogs(Object.fromEntries(STAGES.map((st, i) => [st.capability, all[i]]))),
+    (settings: SettingRow[]) => {
+      const caps = settings.flatMap((r) => (r.capability ? [r.capability] : []));
+      return Promise.all(caps.map((c) => api.models(c))).then(
+        (all) => setCatalogs(Object.fromEntries(caps.map((c, i) => [c, all[i]]))),
         (e: unknown) => setError(errorMessage(e)),
-      ),
+      );
+    },
     [setError],
   );
   useEffect(() => {
@@ -156,23 +147,24 @@ function Defaults() {
       (r) => {
         setRows(r);
         setBudget(text(r, "defaults.budget_usd"));
+        void loadCatalogs(r);
       },
       (e: unknown) => setError(errorMessage(e)),
     );
-    void loadCatalogs();
   }, [loadCatalogs, setError]);
 
   const save = (changes: Record<string, unknown>) =>
     run(async () => {
-      setRows(await api.saveSettings(changes));
-      await loadCatalogs();
+      const saved = await api.saveSettings(changes);
+      setRows(saved);
+      await loadCatalogs(saved);
     });
 
   return (
     <section className="panel stack" aria-labelledby="defaults-title">
       <h2 id="defaults-title">Defaults for every story</h2>
       <p className="muted">A story uses these unless it picks its own on the Board step.</p>
-      {STAGES.map((st) => (
+      {stages.map((st) => (
         <ModelPicker
           key={st.key}
           label={st.label}
@@ -180,7 +172,7 @@ function Defaults() {
           error={error}
           value={text(rows, st.key)}
           allowDefault={false}
-          off={st.off}
+          off={st.off ?? undefined}
           disabled={busy}
           onChange={(model) => void save({ [st.key]: model })}
         />

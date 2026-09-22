@@ -16,7 +16,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from . import prompts, registry, timing
+from . import prompts, registry, text, timing
 from .config import Settings
 from .db import Database, now
 from .engines import catalog, ffmpeg
@@ -84,7 +84,7 @@ def usd(micros: int) -> str:
 
 @dataclass
 class Event:
-    stage: str  # narration | cast | keyframes | motion | clips | mix
+    stage: str  # a key of LABELS
     status: str  # start | cached | done | finish | progress
     scene: int | None = None
     done: int = 0
@@ -276,6 +276,10 @@ class Pipeline:
         return items
 
     async def narrate(self, sb: Storyboard) -> list[Narration]:
+        if sb.language not in text.LANGUAGES:
+            raise ValueError(
+                f"stories can't be narrated in '{sb.language}' yet (the languages: {', '.join(text.LANGUAGES)})"
+            )
         eng = self.tts(sb)
         languages = eng.entry.languages
         if languages and sb.language not in languages:
@@ -289,11 +293,7 @@ class Pipeline:
 
     async def sample(self, model: str, voice: str, language: str) -> str:
         """One line spoken by `voice`, to hear it before choosing it; made once, like any narration."""
-        eng = catalog.tts(self.cfg, self.db, model, voice, language)
-        if not eng.remote:
-            raise ValueError(
-                "a narrator on this machine clones your recording: listen to the recording itself"
-            )
+        eng = catalog.sampler(self.cfg, self.db, model, voice, language)
         item = catalog.sample_item(eng, language)
         return (await self._stage("sample", eng, [item], "audio"))["sample"]["assets"]["audio"]
 
@@ -376,8 +376,9 @@ class Pipeline:
             if sc.mode != "video":
                 continue
             prompt, seed = prompts.video(sb, sc), sb.video_seed(sc)
+            # Unrounded, as it always was: rounding first moves a few local LTX clips by a frame count.
+            shots = eng.shots(tl.clip_length(i))
             seconds = round(tl.clip_length(i), 3)
-            shots = eng.shots(seconds)
             inputs = {"prompt": prompt, "seed": seed, "keyframe": keyframes[i]}
             key = eng.key("motion", shots=shots, **inputs) if keyframes[i] else None
             items.append(Item(_sid(sc), key, sc.n, {"shots": shots, "seconds": seconds, **inputs}))
@@ -519,8 +520,12 @@ class Pipeline:
             tl = self.timeline([n.duration for n in narration])
             out["total"] = round(tl.total, 2)
             if any(sc.mode == "video" for sc in sb.scenes):
+                try:
+                    video = self.video(sb)
+                except ValueError:  # the story's video model left the registry: none of it is cached
+                    return out
                 by_scene = {row["n"]: row for row in scenes}
-                for it in self.motion_items(sb, tl, [r["keyframe"] for r in scenes], self.video(sb)):
+                for it in self.motion_items(sb, tl, [r["keyframe"] for r in scenes], video):
                     rec = self.cached(it)
                     by_scene[it.scene]["motion"] = rec["assets"]["video"] if rec else None
         return out

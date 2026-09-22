@@ -81,12 +81,9 @@ endpoint = "fal-ai/chatterbox/text-to-speech/multilingual"
 clone = true
 seed = true
 max_chars = 300
-languages = [
-  "ar", "da", "de", "el", "en", "es", "fi", "fr", "he", "hi", "it", "ja", "ko", "ms", "nl", "no",
-  "pl", "pt", "ru", "sv", "sw", "tr", "zh",
-]
+languages = ["en", "es", "pt", "fr", "de", "it", "ru", "zh", "ja", "ko"]   # of its 23, the ones the app writes in
 commercial_use = true
 licence = "fal commercial terms; confirm on the endpoint page"
 defaults = { exaggeration = 0.5, temperature = 0.8, cfg_scale = 0.5 }
-notes = "The cheapest: clones your recordings in 23 languages."
+notes = "The cheapest: clones your recordings, in 23 languages."
 price = { unit = "1k_chars", usd = "0.025", synced = "2026-09-21" }

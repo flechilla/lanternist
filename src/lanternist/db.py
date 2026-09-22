@@ -227,6 +227,38 @@ class Database:
             s.commit()
             return story
 
+    def library(self) -> list[dict]:
+        """Every story, newest edit first, with what the library shows of it: its latest film, the
+        poster of its latest board or render, how many scenes it has and whether a job is working on it."""
+        with self.session() as s:
+            out = []
+            for st in s.scalars(select(Story).order_by(Story.updated_at.desc())):
+                done = (
+                    select(Job)
+                    .where(Job.story_id == st.id, Job.status == "done")
+                    .order_by(Job.finished_at.desc())
+                )
+                film = s.scalars(done.where(Job.kind == "render")).first()
+                drawn = s.scalars(done.where(Job.kind.in_(("board", "render")))).first()
+                active = s.scalar(
+                    select(func.count()).where(Job.story_id == st.id, Job.status.in_(("queued", "running")))
+                )
+                row = s.scalars(
+                    select(StoryVersion).where(
+                        StoryVersion.story_id == st.id, StoryVersion.version == st.version
+                    )
+                ).first()
+                out.append(
+                    {
+                        "story": st,
+                        "storyboard": row.storyboard if row else {},
+                        "film": film,
+                        "drawn": drawn,
+                        "active": active,
+                    }
+                )
+            return out
+
     def get_story(self, story_id: str) -> Story | None:
         with self.session() as s:
             return s.get(Story, story_id)
@@ -271,6 +303,34 @@ class Database:
             return row.version
 
     # jobs -------------------------------------------------------------------------------------
+    def add_job(
+        self, story_id: str | None, kind: str, version: int | None, params: dict, estimate: dict | None
+    ) -> Job:
+        with self.session() as s:
+            job = Job(
+                story_id=story_id, kind=kind, version=version, params=params, progress={}, estimate=estimate
+            )
+            s.add(job)
+            s.commit()
+            return job
+
+    def requeue_running(self) -> None:
+        """Put every job a stopped server left running back in the queue."""
+        with self.session() as s:
+            for job in s.scalars(select(Job).where(Job.status == "running")):
+                job.status = "queued"
+            s.commit()
+
+    def cancel_queued(self, job_id: str) -> bool:
+        """Cancel a job that hasn't started; False if it has, or is gone."""
+        with self.session() as s:
+            job = s.get(Job, job_id)
+            if job is None or job.status != "queued":
+                return False
+            job.status, job.finished_at = "cancelled", now()
+            s.commit()
+            return True
+
     def next_job(self, fast_kinds: tuple[str, ...], fast: bool) -> Job | None:
         """The oldest queued job of one lane: the fast kinds, or everything else."""
         lane = Job.kind.in_(fast_kinds) if fast else Job.kind.not_in(fast_kinds)

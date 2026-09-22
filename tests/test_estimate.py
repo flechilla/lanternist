@@ -4,17 +4,9 @@ import time
 
 import pytest
 
-from lanternist.db import Story, to_micros
+from lanternist.db import to_micros
 from lanternist.estimate import estimate
 from lanternist.pipeline import BudgetExceeded, Pipeline
-
-
-@pytest.fixture
-def story_row(db) -> str:
-    with db.session() as s:
-        s.add(Story(id="s1", slug="budget", title="Budget", version=1))
-        s.commit()
-    return "s1"
 
 
 def lines(quote: dict) -> dict:

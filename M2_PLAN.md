@@ -516,7 +516,7 @@ Each phase ends with something that runs end to end. Sizes assume one developer 
   - What fal bills is refreshed at most once a day, before the first remote stage of a job (`registry.ensure_synced`), and read at request time, so a computed cost uses today's billing price.
 - [x] `Storyboard.models` (it holds the writer since Phase B) gains the picture model and its quality. A "Models" panel on the Board step (pictures for now) with the price of each redraw on its button. `GET /api/models?capability=image.keyframe` lists every model with its price per picture at each quality, priced by the engines' own estimates.
 - [x] Progress lines show fal queue position and in-progress state.
-  - Progress rows now carry their label from `jobs.LABELS`, and the web app shows them in the order they ran: its own stage list is gone.
+  - Progress rows now carry their label from `pipeline.LABELS` (moved from `jobs.py`), and the web app shows them in the order they ran: its own stage list is gone.
 
 **Exit:**
 - [ ] Maya's board with fal klein pictures and local narration: the cast is as consistent as the local board (checked by eye). Needs a live run.

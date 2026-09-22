@@ -84,7 +84,7 @@ export interface WriterResult {
 }
 
 export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled";
-export type JobKind = "write" | "rewrite" | "cast" | "board" | "render";
+export type JobKind = "write" | "rewrite" | "cast" | "board" | "render" | "sample";
 
 export interface FilmResult {
   film: string;
@@ -143,7 +143,8 @@ export interface Budget {
 
 export interface Job {
   id: string;
-  story_id: string;
+  /** None for a job that belongs to no story: a voice sample. */
+  story_id: string | null;
   version: number | null;
   kind: JobKind;
   status: JobStatus;
@@ -362,6 +363,10 @@ export interface SettingRow {
   label: string;
   value: unknown;
   source: "app" | "file" | "default";
+  /** For a default-model setting: the stage it picks for. */
+  capability: Capability | null;
+  /** For a model setting that may be "none": what that means. */
+  off: string | null;
 }
 
 /** The message to show for anything a promise rejected with. */

@@ -34,10 +34,13 @@ def test_settings_round_trip(client):
     rows = {r["key"]: r for r in client.get("/api/settings").json()}
     assert rows["defaults.video"] == {
         "key": "defaults.video",
-        "label": "Video model",
+        "label": "Video",
         "value": "local/ltx-2.5-22b-nvfp4",
         "source": "default",
+        "capability": "video.image_to_video",
+        "off": None,
     }
+    assert rows["defaults.ambience"]["off"] and rows["defaults.budget_usd"]["capability"] is None
     r = client.put(
         "/api/settings",
         json={"changes": {"defaults.video": "fal/kling-v3-standard", "defaults.budget_usd": 2.5}},

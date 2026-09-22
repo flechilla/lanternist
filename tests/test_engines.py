@@ -1,5 +1,7 @@
 """The engine interface: local engines keep today's step keys; fal engines send exact requests and price them."""
 
+from datetime import date
+
 import pytest
 
 from lanternist import prompts, registry, timing
@@ -80,6 +82,32 @@ def test_local_step_keys_are_unchanged(tmp_path):
         "1219dfec2dc822a08708f82898540b2e8b23198b36bb6a28d27508962f575d5a",
         "6e1cc8dd8a3011f1f7483191002cbfb8fd898d157ecf4a7921d1673aee25535b",
     ]
+
+
+def test_a_clip_length_a_hair_over_a_whole_second_keeps_its_frames(tmp_path):
+    """3.07 + 5.75 s of narration make scene 2's clip 7.000000000000001 s: 177 frames on main, not 169."""
+    cfg = Settings(paths=Paths(library=tmp_path / "lib", voices=[tmp_path]))
+    sb = golden()
+    sb.scenes = [
+        Scene(n=i, narration=[Line(text="x")], visual=f"v{i}", cast=["luna"], mode="video") for i in (1, 2, 3)
+    ]
+    tl = timing.timeline([3.07, 5.75, 5.0], 0.45, 0.5, 1.5, 0.8)
+    p = Pipeline(cfg)
+    items = p.motion_items(sb, tl, ["k1.png", "k2.png", "k3.png"], p.video(sb))
+    assert items[1].key == "c6f0043af794e429f77645ec290dc55b11fdcd7d45f350e5c4cd0d219674f240"
+
+
+def test_a_story_whose_video_model_left_the_registry_still_opens(client, wait):
+    sb = {
+        "title": "Gone",
+        "models": {"video": "fal/gone-video"},
+        "scenes": [{"n": 1, "narration": [{"text": "A few words."}], "visual": "v", "mode": "video"}],
+    }
+    sid = client.post("/api/stories", json={"storyboard": sb}).json()["story"]["id"]
+    wait(client.post(f"/api/stories/{sid}/board").json()["id"])
+    story = client.get(f"/api/stories/{sid}")
+    assert story.status_code == 200 and story.json()["board"]["scenes"][0]["motion"] is None
+    assert client.get(f"/api/stories/{sid}/estimate").status_code == 422
 
 
 def test_a_picture_model_change_is_a_new_key(cfg):
@@ -193,8 +221,6 @@ def test_a_launch_price_ends_on_its_date():
             "then": {"unit": "output_second", "usd": "0.04"},
         }
     )
-    from datetime import date
-
     assert str(price.on(date(2026, 9, 30)).usd) == "0.02" and str(price.on(date(2026, 10, 1)).usd) == "0.04"
 
 
@@ -244,3 +270,39 @@ def test_the_picture_catalog_prices_every_model(cfg):
     assert [o["usd"] for o in rows["fal/nano-banana-pro"]["quality"]["options"]] == [0.15, 0.15, 0.3]
     assert not rows["fal/nano-banana-pro"]["available"]  # no fal key here
     assert keyframe_size(cfg) == (1920, 1088)
+
+
+def test_fal_step_keys_are_pinned(tmp_path):
+    """A change to what a fal adapter keys on re-makes (and re-bills) every story: bump its version."""
+    (tmp_path / "demo.wav").write_bytes(b"RIFF fake")
+    cfg = Settings(paths=Paths(library=tmp_path / "lib", voices=[tmp_path]))
+    sb = golden()
+    sb.scenes = sb.scenes[:1]
+    sb.scenes[0].narration = [Line(text="Luna vivía en el faro.")]
+    sb.scenes[0].sound = "wind"
+    sb.models.image, sb.models.video, sb.models.tts, sb.voice = (
+        "fal/flux-2-klein-9b",
+        "fal/h3-max-turbo",
+        "fal/elevenlabs-v3",
+        "Aria",
+    )
+    p = Pipeline(cfg)
+    img = p.image(sb)
+    assert (
+        p._cast_key(img, sb, "a cast") == "7f5577c05795157a562c9395a593f1ae3cfed5f1c92636f2d2e219be9b0b8b9d"
+    )
+    assert p._keyframe_key(img, "a picture", 8, "c" * 64 + ".png") == (
+        "6c9ba2fa0266073eb676203c111e706d27f1e7833df294b13444cb4b8f5180bb"
+    )
+    assert p.narration_items(sb, p.tts(sb))[0].key == (
+        "03aad02697fdca5a853d873e6cee22891f6a7c589475d592de91ac31f005ef48"
+    )
+    motion = p.motion_items(sb, timing.timeline([6.0], 0.45, 0.5, 1.5, 0.8), ["k1.png"], p.video(sb))
+    assert (motion[0].key, motion[0].params["shots"]) == (
+        "b4500d49d597fe9c2943b32ae3d2934cdfef0255644c82a37012b3b760b2542b",
+        [7.0],
+    )
+    ambience = catalog.ambience(cfg, None, "fal/mmaudio-v2")
+    assert p.ambience_items(sb, motion, {1: "v" * 64 + ".mp4"}, ambience)[0].key == (
+        "9e18612b73d890ada8660debe6cb7a5a5a2d8ccfb9c4ed3bb086ea54829e8683"
+    )

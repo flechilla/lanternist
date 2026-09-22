@@ -13,6 +13,8 @@ function jobTitle(job: Job): string {
       return "Preparing the board";
     case "render":
       return "Rendering the film";
+    case "sample":
+      return "Making a voice sample";
   }
 }
 

@@ -21,7 +21,7 @@ from pathlib import Path
 
 from .. import text
 from ..config import Settings
-from ..db import Database
+from ..db import Database, to_micros
 from ..registry import ModelEntry
 from ..store import step_key
 from ..voices import Voice, find_voice
@@ -51,6 +51,17 @@ def join_speech(parts: list[Path], gap: float, out: Path) -> list[float]:
     return durations
 
 
+def chars_estimate(entry: ModelEntry, chars: list[int]) -> Estimate:
+    """What narrating texts of these lengths costs at the model's price per thousand characters."""
+    est = Estimate()
+    for n in chars:
+        thousands = Decimal(n) / 1000
+        est = est + Estimate(
+            items=1, units=thousands, micros=to_micros(thousands * (entry.price.on().usd or 0))
+        )
+    return est
+
+
 class FalTts(FalEngine, TtsEngine):
     def __init__(self, cfg: Settings, entry: ModelEntry, db: Database | None, voice: str, language: str):
         super().__init__(cfg, entry, db)
@@ -68,6 +79,8 @@ class FalTts(FalEngine, TtsEngine):
         return text.tts_chunks(words, self.language, self.entry.max_chars or text.MAX_CHUNK)
 
     def key(self, kind: str, **inputs) -> str:
+        if not self.entry.seed:
+            inputs.pop("seed")  # the story's seed decides nothing a model without one makes
         return step_key(
             kind,
             engine=self.engine_id,
@@ -80,11 +93,7 @@ class FalTts(FalEngine, TtsEngine):
         )
 
     def estimate(self, items: list[Item]) -> Estimate:
-        est = Estimate()
-        for it in items:
-            thousands = Decimal(sum(len(c) for c in it.params["chunks"])) / 1000
-            est = est + Estimate(items=1, units=thousands, micros=self.micros(thousands))
-        return est
+        return chars_estimate(self.entry, [sum(len(c) for c in it.params["chunks"]) for it in items])
 
     def arguments(self, words: str, voice: dict, seed: int) -> dict:
         family, name = self.entry.family, text.LANGUAGES[self.language]

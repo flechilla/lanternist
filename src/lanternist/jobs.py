@@ -84,11 +84,7 @@ class Progress:
         if not force and time.time() - self._last_write < 0.25:
             return
         self._last_write = time.time()
-        with self.db.session() as s:
-            job = s.get(Job, self.job_id)
-            if job:
-                job.progress = dict(self.snap)
-                s.commit()
+        self.db.update_job(self.job_id, progress=dict(self.snap))
 
 
 # A few seconds on a remote model each: they run in a lane of their own, beside the queue, so a voice
@@ -112,10 +108,7 @@ class Runner:
 
     # control ------------------------------------------------------------------------------------
     def start(self) -> None:
-        with self.db.session() as s:
-            for job in s.query(Job).filter(Job.status == "running"):
-                job.status = "queued"  # interrupted by a restart: run again, cached steps skip
-            s.commit()
+        self.db.requeue_running()  # interrupted by a restart: run again, cached steps skip
         self._event_loop = asyncio.get_running_loop()
         self._loops = [asyncio.create_task(self.loop(fast)) for fast in (False, True)]
 
@@ -141,17 +134,7 @@ class Runner:
         params: dict | None = None,
         estimate: dict | None = None,
     ) -> Job:
-        with self.db.session() as s:
-            job = Job(
-                story_id=story_id,
-                kind=kind,
-                version=version,
-                params=params or {},
-                progress={},
-                estimate=estimate,
-            )
-            s.add(job)
-            s.commit()
+        job = self.db.add_job(story_id, kind, version, params or {}, estimate)
         self._wake(kind in FAST)
         return job
 
@@ -161,13 +144,7 @@ class Runner:
                 self.cancel_requested.add(job_id)
                 running[1].cancel()
                 return True
-        with self.db.session() as s:
-            job = s.get(Job, job_id)
-            if job and job.status == "queued":
-                job.status, job.finished_at = "cancelled", now()
-                s.commit()
-                return True
-        return False
+        return self.db.cancel_queued(job_id)
 
     # loop -------------------------------------------------------------------------------------
     async def loop(self, fast: bool = False) -> None:
@@ -201,7 +178,7 @@ class Runner:
                 raise
             status = "cancelled"
         except BudgetExceeded as e:  # not a crash: the UI offers to raise the budget and carry on
-            status, result, error = "failed", {"budget": e.info()}, str(e)
+            status, result, error = "failed", {"budget": e.info()}, redact(str(e))
             progress.note(f"stopped before spending: {e}")
         except Exception as e:  # a failed job must not stop the queue
             log.exception("job %s failed", job_id)

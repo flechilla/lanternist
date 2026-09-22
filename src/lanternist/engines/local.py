@@ -22,7 +22,18 @@ from ..registry import ModelEntry
 from ..store import step_key
 from ..voices import Voice
 from . import fake, ffmpeg
-from .base import Engine, Estimate, Item, Maker, OnItem, Output, StepContext, TtsEngine, VideoEngine
+from .base import (
+    Engine,
+    Estimate,
+    Item,
+    Maker,
+    OnItem,
+    Output,
+    StepContext,
+    TtsEngine,
+    VideoEngine,
+    gpu_estimate,
+)
 from .ltx import ComfyClient, ensure_running, graph
 from .worker import run_worker
 
@@ -69,7 +80,7 @@ class LocalQwenTts(TtsEngine):
         )
 
     def estimate(self, items: list[Item]) -> Estimate:
-        return self.gpu_estimate(sum(it.params["seconds"] for it in items), len(items))
+        return gpu_estimate(self.entry, sum(it.params["seconds"] for it in items), len(items))
 
     async def run(self, items: list[Item], ctx: StepContext, on_item: OnItem) -> None:
         jobs = [
@@ -117,7 +128,7 @@ class LocalKlein(Engine):
         return step_key(kind, engine=KLEIN, steps=KLEIN_STEPS, guidance=KLEIN_GUIDANCE, **inputs)
 
     def estimate(self, items: list[Item]) -> Estimate:
-        return self.gpu_estimate(len(items), len(items))
+        return gpu_estimate(self.entry, len(items), len(items))
 
     async def run(self, items: list[Item], ctx: StepContext, on_item: OnItem) -> None:
         jobs = []
@@ -184,7 +195,7 @@ class LocalLtx(VideoEngine):
 
     def estimate(self, items: list[Item]) -> Estimate:
         seconds = sum(sum(it.params["shots"]) for it in items)
-        est = self.gpu_estimate(seconds, len(items))
+        est = gpu_estimate(self.entry, seconds, len(items))
         est.paid_seconds = round(seconds, 3)
         return est
 

@@ -30,17 +30,21 @@ class FalMmaudio(FalEngine):
     async def run(self, items: list[Item], ctx: StepContext, on_item: OnItem) -> None:
         await gather_all([self.score(it, ctx, on_item) for it in items])
 
-    async def score(self, item: Item, ctx: StepContext, on_item: OnItem) -> None:
+    def arguments(self, item: Item, video_url: str) -> dict:
         p = item.params
-        seconds = min(p["seconds"], MAX_SECONDS)
-        arguments = {
-            "video_url": await self.upload(ctx, p["video"]),
+        return {
+            "video_url": video_url,
             "prompt": p["prompt"],
             "negative_prompt": NEGATIVE,
             "seed": p["seed"] % (MAX_SEED + 1),
-            "duration": seconds,
+            "duration": min(p["seconds"], MAX_SECONDS),
             **self.options(),
         }
+
+    async def score(self, item: Item, ctx: StepContext, on_item: OnItem) -> None:
+        p = item.params
+        seconds = min(p["seconds"], MAX_SECONDS)
+        arguments = self.arguments(item, await self.upload(ctx, p["video"]))
         res = await self.request(ctx, item, arguments, estimate=self.micros(seconds))
         scored = await self.fetch(res.data["video"]["url"], ctx.work / f"{item.id}-scored.mp4")
         out = ctx.work / f"{item.id}.mp4"

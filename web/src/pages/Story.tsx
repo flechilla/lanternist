@@ -195,7 +195,10 @@ export default function Story() {
   // The last board or render, if it stopped before a stage that would have gone over the budget.
   const lastRun = jobs.find((j) => (j.kind === "board" || j.kind === "render") && !isActive(j));
   const stopped = lastRun?.status === "failed" ? lastRun.result?.budget : undefined;
-  const raiseTo = stopped && Math.ceil((stopped.spent_usd + stopped.need_usd) * 2) / 2;
+  // Enough for everything the job still has to make (what's made is cached and free), not just the
+  // stage that stopped it, so one raise carries it through: the next half dollar.
+  const left = estimates?.[lastRun?.kind === "board" ? "board" : "render"].total_usd ?? 0;
+  const raiseTo = stopped && Math.ceil((detail.budget.spent_usd + Math.max(left, stopped.need_usd)) * 2) / 2;
   const carryOn = () =>
     run(async () => {
       await api.setBudget(id, raiseTo!);

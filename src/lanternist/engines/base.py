@@ -84,6 +84,12 @@ class Estimate:
         )
 
 
+def gpu_estimate(entry: ModelEntry, units: float, items: int) -> Estimate:
+    """A local model's estimate: its registry GPU seconds per unit, and no money."""
+    per = entry.price.gpu_seconds or 0.0
+    return Estimate(items=items, units=Decimal(str(round(units, 3))), gpu_seconds=round(per * units, 1))
+
+
 def _unbound(item: Item) -> None:
     raise RuntimeError(f"{item.id} waits on {item.after}, but its stage gave no way to bind it")
 
@@ -129,11 +135,6 @@ class Engine(Maker):
 
     def estimate(self, items: list[Item]) -> Estimate:
         raise NotImplementedError
-
-    def gpu_estimate(self, units: float, items: int) -> Estimate:
-        """A local engine's estimate: its registry GPU seconds per unit, and no money."""
-        per = self.entry.price.gpu_seconds or 0.0
-        return Estimate(items=items, units=Decimal(str(round(units, 3))), gpu_seconds=round(per * units, 1))
 
 
 class TtsEngine(Engine):
