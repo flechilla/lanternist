@@ -20,7 +20,7 @@ def _clean(s: str) -> str:
     return s.strip().rstrip(".").strip()
 
 
-def _members(sb: Storyboard, scene: Scene, kind: CastKind) -> list[CastMember]:
+def members(sb: Storyboard, scene: Scene, kind: CastKind) -> list[CastMember]:
     by_id = {c.id: c for c in sb.cast}
     return [by_id[c] for c in scene.cast if c in by_id and by_id[c].kind == kind]
 
@@ -36,9 +36,9 @@ def scene_picture(sb: Storyboard, scene: Scene, numbered: bool = False) -> str:
     suffix. `numbered`: each character is drawn from their own reference picture, in the order they're
     listed, so they're named by it (FLUX.2 follows "image 1", "image 2") as well as by their look."""
     parts = [_clean(scene.visual)]
-    if characters := _members(sb, scene, "character"):
+    if characters := members(sb, scene, "character"):
         parts.append(f"Characters: {_looks(characters, numbered)}")
-    if things := _members(sb, scene, "object"):
+    if things := members(sb, scene, "object"):
         parts.append(f"Objects: {_looks(things)}")
     if place := next((p for p in sb.places if p.id == scene.place), None):
         parts.append(f"Setting: {_clean(place.look)}")
@@ -49,7 +49,7 @@ def keyframe(sb: Storyboard, scene: Scene, numbered: bool = False) -> str:
     prompt = scene_picture(sb, scene, numbered)
     if numbered:
         # Given a portrait per character, klein tends to draw one of them twice unless told the count.
-        names = [m.name for m in _members(sb, scene, "character")]
+        names = [m.name for m in members(sb, scene, "character")]
         if len(names) == 1:
             prompt += (
                 f". {names[0]} is the only character in the picture, shown once. Take only who they are "

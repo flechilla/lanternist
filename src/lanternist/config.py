@@ -118,6 +118,9 @@ class Defaults(BaseModel):
     video: str = "local/ltx-2.5-22b-nvfp4"
     # Scores video scenes whose model makes no sound of its own (Kling, Veo); "none" leaves them silent.
     ambience: str = "fal/mmaudio-v2"
+    # A vision model that checks every picture before video is made from it, and has a faulty one
+    # drawn again: openrouter/<id> or ollama/<tag>; empty skips the check.
+    checker: WriterId = ""
     budget_usd: float = 5.0  # per story, for remote models
 
 

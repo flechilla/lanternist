@@ -49,11 +49,17 @@ def sample(schema: dict, lengths: dict[str, int] | None = None):
     )
 
 
+def text_of(message: dict) -> str:
+    """A chat message's words: its content, or the text parts of content that also holds pictures."""
+    content = message.get("content") or ""
+    return content if isinstance(content, str) else " ".join(p.get("text", "") for p in content)
+
+
 def answer(messages: list[dict], schema: dict | None) -> str:
     """What the fake LLMs reply: a schema sample (one scene per '[n]' paragraph), else a short story."""
     if schema is None:
         return FAKE_STORY
-    prompt = (messages[-1].get("content") or "") if messages else ""
+    prompt = text_of(messages[-1]) if messages else ""
     paragraphs = len(re.findall(r"^\[\d+\]\s", prompt, flags=re.MULTILINE))
     return json.dumps(sample(schema, {"scenes": paragraphs} if paragraphs else None))
 
@@ -418,7 +424,7 @@ class FakeOpenRouter:
             else:
                 fmt = body.get("response_format")
                 text = answer(body["messages"], fmt["json_schema"]["schema"] if fmt else None)
-            prompt = sum(len(m.get("content") or "") for m in body["messages"]) // 4
+            prompt = sum(len(text_of(m)) for m in body["messages"]) // 4
             completion = max(len(text) // 4, 1)
             return _json(
                 {
@@ -453,7 +459,7 @@ class FakeOllama:
                 "model": body["model"],
                 "message": {"role": "assistant", "content": text},
                 "done": True,
-                "prompt_eval_count": sum(len(m["content"]) for m in body["messages"]) // 4,
+                "prompt_eval_count": sum(len(text_of(m)) for m in body["messages"]) // 4,
                 "eval_count": max(len(text) // 4, 1),
             }
         )

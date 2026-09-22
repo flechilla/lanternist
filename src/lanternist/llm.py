@@ -1,12 +1,14 @@
 """The writer's LLMs: the local model through Ollama, or any OpenRouter model with structured output.
 
-Both answer `chat(system, user, schema=None, temperature=0.8) -> Reply`. `session()` holds the GPU
-lease for the local model only, so a story written on OpenRouter never touches the GPU. When a
-`Calls` log is given, every call becomes a `step_runs` row (stage "write") with its tokens, time and,
-for OpenRouter, the cost it reports. The writer ids are `ollama/<tag>` and `openrouter/<model id>`.
+Both answer `chat(system, user, schema=None, temperature=0.8, images=None) -> Reply`; the picture
+check (check.py) sends a picture with its question. `session()` holds the GPU lease for the local
+model only, so a story written on OpenRouter never touches the GPU. When a `Calls` log is given,
+every call becomes a `step_runs` row (its stage, "write" for the writer) with its tokens, time and,
+for OpenRouter, the cost it reports. The model ids are `ollama/<tag>` and `openrouter/<model id>`.
 """
 
 import asyncio
+import base64
 import logging
 import time
 from contextlib import AbstractAsyncContextManager, nullcontext
@@ -75,6 +77,7 @@ class Calls:
     db: Database | None = None
     story_id: str | None = None
     job_id: str | None = None
+    stage: str = "write"  # a key of pipeline.LABELS
     replies: list[Reply] = field(default_factory=list)
 
     def start(self, llm: "LLM") -> int | None:
@@ -83,7 +86,7 @@ class Calls:
         return self.db.start_run(
             story_id=self.story_id,
             job_id=self.job_id,
-            stage="write",
+            stage=self.stage,
             model_id=llm.id,
             provider=llm.provider,
             status="running",
@@ -161,11 +164,13 @@ class LLM:
         schema: dict | None = None,
         temperature: float = 0.8,
         name: str = "answer",
+        images: list[bytes] | None = None,
     ) -> Reply:
+        """`images`: JPEG pictures the model looks at before reading `user`."""
         run_id = self.calls.start(self)
         t0 = time.monotonic()
         try:
-            reply = await self._chat(system, user, schema, temperature, name)
+            reply = await self._chat(system, user, schema, temperature, name, images or [])
         except BaseException as e:  # a cancel too: the row must not stay "running"
             self.calls.failed(run_id, e, time.monotonic() - t0)
             raise
@@ -174,9 +179,13 @@ class LLM:
         return reply
 
     async def _chat(
-        self, system: str, user: str, schema: dict | None, temperature: float, name: str
+        self, system: str, user: str, schema: dict | None, temperature: float, name: str, images: list[bytes]
     ) -> Reply:
         raise NotImplementedError
+
+
+def _b64(image: bytes) -> str:
+    return base64.b64encode(image).decode()
 
 
 class Ollama(LLM):
@@ -193,11 +202,14 @@ class Ollama(LLM):
 
     @override
     async def _chat(
-        self, system: str, user: str, schema: dict | None, temperature: float, name: str
+        self, system: str, user: str, schema: dict | None, temperature: float, name: str, images: list[bytes]
     ) -> Reply:
+        asked: dict[str, Any] = {"role": "user", "content": user}
+        if images:
+            asked["images"] = [_b64(i) for i in images]
         body: dict[str, Any] = {
             "model": self.model,
-            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            "messages": [{"role": "system", "content": system}, asked],
             "stream": False,
             "think": False,
             "keep_alive": "2m",
@@ -303,7 +315,7 @@ class OpenRouterLLM(LLM):
 
     @override
     async def _chat(
-        self, system: str, user: str, schema: dict | None, temperature: float, name: str
+        self, system: str, user: str, schema: dict | None, temperature: float, name: str, images: list[bytes]
     ) -> Reply:
         info = await self.info()
         effort = pick_effort(self.effort, info)
@@ -319,7 +331,11 @@ class OpenRouterLLM(LLM):
             reasoning = effort = None
         cap = ((info.get("top_provider") or {}).get("max_completion_tokens")) or FALLBACK_MAX_TOKENS
         max_tokens = min(cap, MAX_TOKENS) if "max_tokens" in send else None
-        messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+        pictures = [
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{_b64(i)}"}} for i in images
+        ]
+        asked: str | list[dict] = [*pictures, {"type": "text", "text": user}] if pictures else user
+        messages: list[dict] = [{"role": "system", "content": system}, {"role": "user", "content": asked}]
         wasted: list[dict] = []  # usage of attempts that were paid for but wrote nothing
         for attempt in range(2):
             try:
@@ -429,9 +445,14 @@ def _price(pricing: dict, key: str) -> Decimal:
     return Decimal(str(pricing.get(key) or "0"))
 
 
+def token_price(pricing: dict, tokens: dict) -> Decimal:
+    """USD for this many tokens in and out, at OpenRouter's prices."""
+    return _price(pricing, "prompt") * tokens["in"] + _price(pricing, "completion") * tokens["out"]
+
+
 def per_minute_micros(pricing: dict, tokens: dict) -> int:
-    """What a minute of story costs at these prices, for this many tokens in and out."""
-    return to_micros(_price(pricing, "prompt") * tokens["in"] + _price(pricing, "completion") * tokens["out"])
+    """What a minute of story costs at these prices, for its tokens in and out per minute."""
+    return to_micros(token_price(pricing, tokens))
 
 
 async def catalog(cfg: Settings, db: Database | None = None) -> dict:

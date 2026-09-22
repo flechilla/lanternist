@@ -20,9 +20,9 @@ from lanternist.writer import (
     Brief,
     RewrittenScene,
     WriterBoard,
-    _json_text,
     board_prompt,
     inline_schema,
+    json_text,
     rewrite_scene,
     write_storyboard,
 )
@@ -131,9 +131,9 @@ def test_the_writer_and_effort_are_checked_wherever_they_enter():
 
 
 def test_replies_are_unwrapped_before_validation():
-    assert _json_text('<think>which cat?</think>\n```json\n{"title": "T"}\n```') == '{"title": "T"}'
-    assert _json_text('```\n{"a": 1}\n```') == '{"a": 1}'
-    assert _json_text(' {"a": 1} ') == '{"a": 1}'
+    assert json_text('<think>which cat?</think>\n```json\n{"title": "T"}\n```') == '{"title": "T"}'
+    assert json_text('```\n{"a": 1}\n```') == '{"a": 1}'
+    assert json_text(' {"a": 1} ') == '{"a": 1}'
 
 
 def test_a_story_without_a_title_is_storyboarded_as_untitled():

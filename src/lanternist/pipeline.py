@@ -16,7 +16,8 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from . import prompts, registry, text, timing
+from . import check, prompts, registry, text, timing
+from . import llm as llms
 from .config import Settings
 from .db import Database, now
 from .engines import catalog, ffmpeg
@@ -40,6 +41,8 @@ from .writer import narration_seconds
 
 log = logging.getLogger(__name__)
 
+# A picture drawn again after its check moves its seed this far: past any other scene's (seed + n).
+RETAKE = 7919
 CLIP = "clip@1"
 MIX = "mix@3"  # 2: loudness normalised; 3: cuts are concats, not zero-length crossfades
 LABELS = {
@@ -48,6 +51,7 @@ LABELS = {
     "cast": "Cast sheet",
     "portraits": "Portraits",
     "keyframes": "Pictures",
+    "check": "Picture check",
     "motion": "Animation",
     "ambience": "Ambience",
     "clips": "Scene clips",
@@ -113,6 +117,9 @@ class Board:
     cast: str | None
     keyframes: list[str]
     timeline: timing.Timeline
+    # By scene, why the picture check had its picture drawn again: the storyboard now holds its new seed.
+    redrawn: dict[int, str] = field(default_factory=dict)
+    flagged: dict[int, str] = field(default_factory=dict)  # still failing after the last redraw
 
 
 @dataclass
@@ -132,6 +139,10 @@ def _narration(rec: dict) -> Narration:
 
 def _sid(sc: Scene) -> str:
     return f"s{sc.n:03d}"
+
+
+def _scenes(failed: dict[int, str]) -> str:
+    return "; ".join(f"scene {n}: {why}" for n, why in failed.items())
 
 
 def _pid(character: str) -> str:
@@ -453,9 +464,48 @@ class Pipeline:
         return timing.timeline(durations, r.gap, r.lead_in, r.tail, r.xfade, continues, r.chunk_gap)
 
     async def board(self, sb: Storyboard) -> Board:
+        """Narration and pictures. With a checker, a picture that fails its check is drawn again with a
+        new seed, set on its scene in `sb`, which the caller keeps as a new version of the story."""
         narration = await self.narrate(sb)
         cast, keyframes = await self.draw(sb)
-        return Board(narration, cast, keyframes, self.timeline(sb, [n.duration for n in narration]))
+        failed = await self.check(sb, keyframes)
+        redrawn: dict[int, str] = {}
+        for _ in range(check.MAX_REDRAWS):
+            if not failed:
+                break
+            for sc in sb.scenes:
+                if sc.n in failed:
+                    sc.seed = sb.scene_seed(sc) + RETAKE
+            redrawn |= failed
+            self.emit("check", "progress", message=f"drawing again: {_scenes(failed)}")
+            cast, keyframes = await self.draw(sb)
+            failed = await self.check(sb, keyframes)
+        tl = self.timeline(sb, [n.duration for n in narration])
+        return Board(narration, cast, keyframes, tl, redrawn, failed)
+
+    # ---------------------------------------------------------------- the picture check
+    def check_items(self, sb: Storyboard, keyframes: list[str], model: str) -> list[Item]:
+        items = []
+        for sc, image in zip(sb.scenes, keyframes, strict=True):
+            q = check.question(sb, sc)
+            key = step_key("check", engine=check.CHECK, model=model, question=q, image=image)
+            items.append(Item(_sid(sc), key, sc.n, {"image": image, "question": q}))
+        return items
+
+    async def check(self, sb: Storyboard, keyframes: list[str]) -> dict[int, str]:
+        """The scenes whose picture the checker fails, with why; nothing when no checker is set."""
+        model = self.cfg.defaults.checker
+        if not model:
+            return {}
+        calls = llms.Calls(self.db, self.story_id, self.job_id, stage="check")
+        checker = check.Checker(self.cfg, model, calls)
+        items = self.check_items(sb, keyframes, model)
+        pending = [it for it in items if not self.cached(it)]
+        if pending and checker.remote:
+            self._check_budget("check", await checker.estimate_micros(len(pending)))
+        records = await self._stage("check", checker, items, "verdict")
+        verdicts = {it.scene: records[it.id]["meta"] for it in items}
+        return {n: v["reason"] for n, v in verdicts.items() if n is not None and v["verdict"] == "fail"}
 
     # ---------------------------------------------------------------- motion
     def motion_items(
@@ -623,8 +673,9 @@ class Pipeline:
         return out
 
     # ---------------------------------------------------------------- all of it
-    async def render(self, sb: Storyboard) -> Film:
-        board = await self.board(sb)
+    async def render(self, sb: Storyboard, board: Board | None = None) -> Film:
+        """The film; from `board` when the caller already made it (and kept what its check changed)."""
+        board = board or await self.board(sb)
         motions = await self.ambience(sb, board, await self.motion(sb, board))
         clips = await self.clips(sb, board, motions)
         film = await self.mix(sb, board, clips)

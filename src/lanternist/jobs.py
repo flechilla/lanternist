@@ -18,7 +18,7 @@ from .config import Settings
 from .db import TERMINAL, Database, Job, now
 from .keys import redact
 from .llm import Calls
-from .pipeline import LABELS, BudgetExceeded, Event, Pipeline
+from .pipeline import LABELS, Board, BudgetExceeded, Event, Pipeline
 from .storyboard import Storyboard
 
 log = logging.getLogger(__name__)
@@ -257,10 +257,13 @@ class Runner:
                 "keyframes": b.keyframes,
                 "total": round(b.timeline.total, 2),
                 "poster": b.keyframes[0] if b.keyframes else None,
+                **self.checked(job.story_id, sb, b),
             }
 
         if job.kind == "render":
-            film = await pipeline.render(sb)
+            b = await pipeline.board(sb)
+            checked = self.checked(job.story_id, sb, b)
+            film = await pipeline.render(sb, b)
             dest = cfg.library / "films" / f"{story.slug}-v{job.version}.mp4"
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(pipeline.store.path(film.film), dest)
@@ -271,9 +274,23 @@ class Runner:
                 "duration": film.duration,
                 "path": str(dest),
                 "poster": film.poster,
+                **checked,
             }
 
         raise ValueError(f"unknown job kind {job.kind}")
+
+    def checked(self, story_id: str, sb: Storyboard, board: Board) -> dict:
+        """What the picture check did: the pictures it had drawn again become a new version of the
+        story, as a re-roll would, and those still failing are named for the user to look at."""
+        out: dict = {"flagged": board.flagged} if board.flagged else {}
+        if board.redrawn:
+            scenes = ", ".join(str(n) for n in board.redrawn)
+            note = f"the picture check drew scene{'s' if len(board.redrawn) > 1 else ''} {scenes} again"
+            out |= {
+                "version": self.db.add_version(story_id, sb.model_dump(), note=note),
+                "redrawn": board.redrawn,
+            }
+        return out
 
 
 def is_terminal(status: str) -> bool:

@@ -195,6 +195,11 @@ async def to_wav(src: Path, out: Path, rate: int) -> None:
     await run(["-i", str(src), "-ac", "1", "-ar", str(rate), "-c:a", "pcm_s16le", str(out)])
 
 
+async def thumbnail(src: Path, out: Path, width: int) -> None:
+    """A picture as a JPEG `width` wide: what a vision model is shown."""
+    await run(["-i", str(src), "-vf", f"scale={width}:-2", "-q:v", "4", str(out)])
+
+
 async def last_frame(src: Path, out: Path) -> None:
     await run(["-sseof", "-0.25", "-i", str(src), "-update", "1", "-q:v", "2", str(out)])
 

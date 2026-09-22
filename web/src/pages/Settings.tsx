@@ -133,6 +133,8 @@ function Defaults() {
   const [catalogs, setCatalogs] = useState<Partial<Record<Capability, MediaCatalog>>>({});
   const stages = modelSettings(rows ?? []);
   const [budget, setBudget] = useState("");
+  const [checker, setChecker] = useState("");
+  const checkerRow = rows?.find((r) => r.key === "defaults.checker");
   const { busy, error, setError, run } = useAction();
 
   // Each catalog names its stage's default, so they're fetched again after a save.
@@ -151,6 +153,7 @@ function Defaults() {
       (r) => {
         setRows(r);
         setBudget(text(r, "defaults.budget_usd"));
+        setChecker(text(r, "defaults.checker"));
         void loadCatalogs(r);
       },
       (e: unknown) => setError(errorMessage(e)),
@@ -207,6 +210,30 @@ function Defaults() {
           Save budget
         </button>
       </form>
+      {checkerRow && (
+        <form
+          className="key-form"
+          onSubmit={(e: FormEvent) => {
+            e.preventDefault();
+            void save({ "defaults.checker": checker.trim() });
+          }}
+        >
+          <label className="field" htmlFor="default-checker">
+            Picture check
+            <small>{checkerRow.label.replace(/^Picture check: /, "")}</small>
+          </label>
+          <input
+            id="default-checker"
+            type="text"
+            value={checker}
+            placeholder="No check"
+            onChange={(e) => setChecker(e.target.value)}
+          />
+          <button type="submit" disabled={busy}>
+            Save check
+          </button>
+        </form>
+      )}
       {error && <p className="error">{error}</p>}
     </section>
   );

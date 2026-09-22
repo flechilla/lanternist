@@ -6,11 +6,14 @@ import shutil
 import sys
 import time
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 
 from .config import settings
+
+if TYPE_CHECKING:
+    from .pipeline import Board
 from .storyboard import Effort, Mode, Storyboard, Subtitles, slugify
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
@@ -139,6 +142,17 @@ def write(
     )
 
 
+def _checked(path: Path, sb: Storyboard, b: "Board") -> None:
+    """Keep the new seeds of the pictures the check had drawn again, in the storyboard file."""
+    for n, why in b.redrawn.items():
+        print(f"  the picture check drew scene {n} again: {why}")
+    for n, why in b.flagged.items():
+        print(f"  scene {n} still fails its check: {why} Give it a new seed or change its picture.")
+    if b.redrawn:
+        path.write_text(sb.model_dump_json(indent=2), encoding="utf-8")
+        print(f"  new seeds saved in {path}")
+
+
 @app.command()
 def board(story: Path):
     """Narrate the story and draw the cast sheet and every keyframe."""
@@ -148,6 +162,7 @@ def board(story: Path):
     cfg, db = _effective()
     p = Pipeline(cfg, _printer(), db=db)
     b = asyncio.run(p.board(sb))
+    _checked(story, sb, b)
     print(f"board ready: {len(b.keyframes)} keyframes, {b.timeline.total:.1f}s of film")
     for sc, kf, nar in zip(sb.scenes, b.keyframes, b.narration, strict=True):
         print(f"  {sc.n:3d} {nar.duration:5.1f}s  {p.store.path(kf)}")
@@ -171,7 +186,13 @@ def render(
         sb.subtitles = subtitles
     cfg, db = _effective()
     p = Pipeline(cfg, _printer(), db=db)
-    film = asyncio.run(p.render(sb))
+
+    async def make():
+        b = await p.board(sb)
+        _checked(story, sb, b)
+        return await p.render(sb, b)
+
+    film = asyncio.run(make())
     out = out or cfg.library / "films" / f"{slugify(sb.title)}.mp4"
     out.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(p.store.path(film.film), out)
