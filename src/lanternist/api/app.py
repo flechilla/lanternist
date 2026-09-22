@@ -21,7 +21,7 @@ from ..estimate import Kind, estimate
 from ..jobs import Runner, is_terminal
 from ..pipeline import Pipeline
 from ..store import Store
-from ..storyboard import Storyboard, slugify
+from ..storyboard import Storyboard, next_seed, slugify
 from ..text import LANGUAGES
 from ..voices import find_voice
 from ..writer import AUDIENCES, KINDS, STYLES, Brief
@@ -356,21 +356,6 @@ def delete_story(story_id: str):
         s.commit()
 
 
-def _bump(story_id: str, change, note: str) -> int:
-    """Save a new version with `change(storyboard)` applied; returns the new version number."""
-    with db.session() as s:
-        st, row = db.storyboard(s, story_id)
-        sb = Storyboard.model_validate(row.storyboard)
-        change(sb)
-        new = db.save_version(s, st, sb.model_dump(), note=note)
-        s.commit()
-        return new.version
-
-
-def _next_seed(seed: int) -> int:
-    return (seed * 7919 + 104729) % 999_983
-
-
 @app.post("/api/stories/{story_id}/scenes/{n}/rewrite")
 def rewrite(story_id: str, n: int, instruction: str = Body(..., embed=True)):
     st, _ = _get(story_id)
@@ -385,10 +370,10 @@ def reroll(story_id: str, n: int):
         sc = next((x for x in sb.scenes if x.n == n), None)
         if sc is None:
             raise HTTPException(404, f"no scene {n}")
-        sc.seed = _next_seed(sb.scene_seed(sc))
+        sc.seed = next_seed(sb.scene_seed(sc))
 
     _get(story_id)
-    version = _bump(story_id, change, f"re-rolled scene {n}")
+    version = db.change_story(story_id, change, f"re-rolled scene {n}")
     return {"version": version, "job": _enqueue(story_id, "board", version)}
 
 
@@ -400,20 +385,20 @@ def retake(story_id: str, n: int):
         sc = next((x for x in sb.scenes if x.n == n), None)
         if sc is None or sc.mode != "video":
             raise HTTPException(404, f"no video scene {n}")
-        sc.video_seed = _next_seed(sb.video_seed(sc))
+        sc.video_seed = next_seed(sb.video_seed(sc))
 
     _get(story_id)
-    version = _bump(story_id, change, f"new take of scene {n}")
+    version = db.change_story(story_id, change, f"new take of scene {n}")
     return {"version": version, "job": _enqueue(story_id, "render", version)}
 
 
 @app.post("/api/stories/{story_id}/cast/reroll")
 def reroll_cast(story_id: str):
     def change(sb: Storyboard):
-        sb.seed = _next_seed(sb.seed)
+        sb.seed = next_seed(sb.seed)
 
     _get(story_id)
-    version = _bump(story_id, change, "re-rolled the cast sheet")
+    version = db.change_story(story_id, change, "re-rolled the cast sheet")
     return {"version": version, "job": _enqueue(story_id, "cast", version)}
 
 

@@ -36,13 +36,11 @@ from .engines.base import (
 )
 from .engines.local import Clips, Mix
 from .store import Store, step_key
-from .storyboard import Scene, Storyboard
+from .storyboard import Scene, Storyboard, next_seed
 from .writer import narration_seconds
 
 log = logging.getLogger(__name__)
 
-# A picture drawn again after its check moves its seed this far: past any other scene's (seed + n).
-RETAKE = 7919
 CLIP = "clip@1"
 MIX = "mix@3"  # 2: loudness normalised; 3: cuts are concats, not zero-length crossfades
 LABELS = {
@@ -123,6 +121,12 @@ class Board:
 
 
 @dataclass
+class Checked:
+    failed: dict[int, str]  # scene: why its picture failed
+    asked: set[int]  # the scenes whose verdict was given now, not read from the cache
+
+
+@dataclass
 class Film:
     film: str
     srt: str | None
@@ -153,6 +157,21 @@ def _portraits(sb: Storyboard) -> bool:
     """Whether the story's pictures are drawn from portraits: an imported cast sheet has its own
     layout, so its characters can't be picked out by their place in the row."""
     return sb.portraits and not sb.cast_sheet_prompt
+
+
+def picture_inputs(sb: Storyboard, sc: Scene) -> tuple:
+    """What a scene's picture is drawn from, as the storyboard decides it: whether an edit reached it."""
+    m = sb.models
+    keyframe = prompts.keyframe(sb, sc, numbered=_numbered(sb, sc))
+    return (
+        keyframe,
+        sb.scene_seed(sc),
+        prompts.cast_sheet(sb),
+        sb.seed,
+        sb.portraits,
+        m.image,
+        m.image_quality,
+    )
 
 
 def _characters_in(sb: Storyboard, sc: Scene) -> int:
@@ -267,9 +286,9 @@ class Pipeline:
             if bind:
                 ctx.bind = lambda it: bind(it, records)
             try:
-                if isinstance(maker, Engine) and maker.remote:
+                if maker.remote:
                     self._check_budget(stage, maker.estimate(pending).micros)
-                    if self.db is not None:
+                    if isinstance(maker, Engine) and self.db is not None:
                         await registry.ensure_synced(self.cfg, self.db)
                 await maker.run(pending, ctx, on_item)
             finally:
@@ -465,23 +484,27 @@ class Pipeline:
 
     async def board(self, sb: Storyboard) -> Board:
         """Narration and pictures. With a checker, a picture that fails its check is drawn again with a
-        new seed, set on its scene in `sb`, which the caller keeps as a new version of the story."""
+        new seed, set on its scene in `sb`, which the caller keeps as a new version of the story. Only
+        a verdict given in this board redraws: one the cache held was the last word on that picture."""
         narration = await self.narrate(sb)
         cast, keyframes = await self.draw(sb)
-        failed = await self.check(sb, keyframes)
+        checked = await self.check(sb, keyframes)
         redrawn: dict[int, str] = {}
         for _ in range(check.MAX_REDRAWS):
-            if not failed:
+            again = {n: why for n, why in checked.failed.items() if n in checked.asked}
+            if not again:
                 break
             for sc in sb.scenes:
-                if sc.n in failed:
-                    sc.seed = sb.scene_seed(sc) + RETAKE
-            redrawn |= failed
-            self.emit("check", "progress", message=f"drawing again: {_scenes(failed)}")
+                if sc.n in again:
+                    sc.seed = next_seed(sb.scene_seed(sc))
+            redrawn |= again
+            self.emit("check", "progress", message=f"drawing again: {_scenes(again)}")
             cast, keyframes = await self.draw(sb)
-            failed = await self.check(sb, keyframes)
+            checked = await self.check(sb, keyframes)
+        if checked.failed:
+            self.emit("check", "progress", message=f"still failing, to look at: {_scenes(checked.failed)}")
         tl = self.timeline(sb, [n.duration for n in narration])
-        return Board(narration, cast, keyframes, tl, redrawn, failed)
+        return Board(narration, cast, keyframes, tl, redrawn, checked.failed)
 
     # ---------------------------------------------------------------- the picture check
     def check_items(self, sb: Storyboard, keyframes: list[str], model: str) -> list[Item]:
@@ -492,20 +515,19 @@ class Pipeline:
             items.append(Item(_sid(sc), key, sc.n, {"image": image, "question": q}))
         return items
 
-    async def check(self, sb: Storyboard, keyframes: list[str]) -> dict[int, str]:
+    async def check(self, sb: Storyboard, keyframes: list[str]) -> Checked:
         """The scenes whose picture the checker fails, with why; nothing when no checker is set."""
         model = self.cfg.defaults.checker
         if not model:
-            return {}
-        calls = llms.Calls(self.db, self.story_id, self.job_id, stage="check")
-        checker = check.Checker(self.cfg, model, calls)
+            return Checked({}, set())
+        checker = check.Checker(
+            self.cfg, model, llms.Calls(self.db, self.story_id, self.job_id, stage="check")
+        )
+        await checker.price()
         items = self.check_items(sb, keyframes, model)
-        pending = [it for it in items if not self.cached(it)]
-        if pending and checker.remote:
-            self._check_budget("check", await checker.estimate_micros(len(pending)))
         records = await self._stage("check", checker, items, "verdict")
-        verdicts = {it.scene: records[it.id]["meta"] for it in items}
-        return {n: v["reason"] for n, v in verdicts.items() if n is not None and v["verdict"] == "fail"}
+        verdicts = {it.scene: records[it.id]["meta"] for it in items if it.scene is not None}
+        return Checked({n: v["reason"] for n, v in verdicts.items() if v["verdict"] == "fail"}, checker.asked)
 
     # ---------------------------------------------------------------- motion
     def motion_items(

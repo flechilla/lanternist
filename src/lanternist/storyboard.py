@@ -151,6 +151,11 @@ class Storyboard(BaseModel):
         return self
 
 
+def next_seed(seed: int) -> int:
+    """A re-roll's seed: a new picture, or a new take, from the one before."""
+    return (seed * 7919 + 104729) % 999_983
+
+
 def slugify(text: str) -> str:
     import unicodedata
 

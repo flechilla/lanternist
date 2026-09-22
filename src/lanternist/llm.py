@@ -72,7 +72,8 @@ def _paid(usages: list[dict]) -> int | None:
 
 @dataclass
 class Calls:
-    """The writer calls of one job (or of a CLI run, with no job), logged as step_runs rows."""
+    """The LLM calls of one job (or of a CLI run, with no job), the writer's or the picture check's,
+    logged as step_runs rows."""
 
     db: Database | None = None
     story_id: str | None = None

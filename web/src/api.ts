@@ -175,6 +175,10 @@ export interface Job {
           cast?: string | null;
           keyframes?: string[];
           budget?: BudgetStop;
+          /** By scene, why the picture check had its picture drawn again (saved as `version`). */
+          redrawn?: Record<string, string>;
+          /** By scene, why its picture still fails the check. */
+          flagged?: Record<string, string>;
           /** A voice sample job's line. */
           audio?: string;
         })

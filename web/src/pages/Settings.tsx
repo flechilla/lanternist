@@ -220,7 +220,11 @@ function Defaults() {
         >
           <label className="field" htmlFor="default-checker">
             Picture check
-            <small>{checkerRow.label.replace(/^Picture check: /, "")}</small>
+            <small>
+              A vision model looks at every picture before video is made from it, and has it drawn again when
+              a character appears twice or someone extra walks in: openrouter/&lt;model id&gt; or
+              ollama/&lt;name&gt;. Leave it empty for no check.
+            </small>
           </label>
           <input
             id="default-checker"

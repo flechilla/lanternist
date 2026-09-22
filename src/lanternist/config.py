@@ -5,6 +5,7 @@ Every key is optional; see lanternist.example.toml for the full set.
 """
 
 import os
+import re
 import tomllib
 from functools import lru_cache
 from pathlib import Path
@@ -120,8 +121,18 @@ class Defaults(BaseModel):
     ambience: str = "fal/mmaudio-v2"
     # A vision model that checks every picture before video is made from it, and has a faulty one
     # drawn again: openrouter/<id> or ollama/<tag>; empty skips the check.
-    checker: WriterId = ""
+    checker: str = ""
     budget_usd: float = 5.0  # per story, for remote models
+
+    @field_validator("checker", mode="after")
+    @classmethod
+    def _checker(cls, v: str) -> str:
+        v = v.strip()
+        if v and not re.fullmatch(r"(ollama|openrouter)/\S+", v):
+            raise ValueError(
+                "the picture check is ollama/<model> or openrouter/<model id>, or empty for none"
+            )
+        return v
 
 
 class OpenRouter(BaseModel):

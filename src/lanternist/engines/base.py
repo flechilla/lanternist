@@ -116,10 +116,14 @@ OnItem = Callable[[Output], None]
 
 
 class Maker:
-    """Whatever a stage hands its batch to: a model's engine, or ffmpeg for clips and the mix."""
+    """Whatever a stage hands its batch to: a model's engine, the picture check, or ffmpeg for clips
+    and the mix. A remote maker prices its batch, which the budget check reads before it runs."""
 
     remote = False
     model_id: str | None = None  # the registry id, for the step_runs rows of local models
+
+    def estimate(self, items: list[Item]) -> Estimate:
+        raise NotImplementedError
 
     async def run(self, items: list[Item], ctx: StepContext, on_item: OnItem) -> None:
         raise NotImplementedError
@@ -133,9 +137,6 @@ class Engine(Maker):
         self.model_id = entry.id
 
     def key(self, kind: str, **inputs) -> str:
-        raise NotImplementedError
-
-    def estimate(self, items: list[Item]) -> Estimate:
         raise NotImplementedError
 
 

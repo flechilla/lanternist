@@ -143,13 +143,18 @@ def write(
 
 
 def _checked(path: Path, sb: Storyboard, b: "Board") -> None:
-    """Keep the new seeds of the pictures the check had drawn again, in the storyboard file."""
+    """Keep the new seeds of the pictures the check had drawn again in the storyboard file, and
+    nothing else this run changed in memory (--mode, --subtitles)."""
     for n, why in b.redrawn.items():
         print(f"  the picture check drew scene {n} again: {why}")
     for n, why in b.flagged.items():
         print(f"  scene {n} still fails its check: {why} Give it a new seed or change its picture.")
     if b.redrawn:
-        path.write_text(sb.model_dump_json(indent=2), encoding="utf-8")
+        seeds = {sc.n: sc.seed for sc in sb.scenes if sc.n in b.redrawn}
+        saved = _load(path)
+        for sc in saved.scenes:
+            sc.seed = seeds.get(sc.n, sc.seed)
+        path.write_text(saved.model_dump_json(indent=2), encoding="utf-8")
         print(f"  new seeds saved in {path}")
 
 

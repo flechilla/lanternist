@@ -17,10 +17,7 @@ EDITABLE = {
     "defaults.image": "Pictures",
     "defaults.video": "Video",
     "defaults.ambience": "Ambience, for video models with no sound of their own",
-    "defaults.checker": "Picture check: a vision model looks at every picture before video is made from it, "
-    "and has it drawn again when a character appears twice or someone extra walks in. openrouter/<id> or "
-    "ollama/<name>; openrouter/openai/gpt-5.6-luna caught every such picture in our trials for under a tenth "
-    "of a cent each. Empty: no check.",
+    "defaults.checker": "Picture check: a vision model, openrouter/<id> or ollama/<name>; empty for none",
     "defaults.budget_usd": "Budget per story for remote models, in USD",
     "openrouter.recommended": "Writer models pinned at the top of the picker",
     "openrouter.data_collection": "allow or deny providers that store prompts",

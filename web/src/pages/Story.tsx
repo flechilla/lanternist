@@ -195,6 +195,8 @@ export default function Story() {
   // The last board or render, if it stopped before a stage that would have gone over the budget.
   const lastRun = jobs.find((j) => (j.kind === "board" || j.kind === "render") && !isActive(j));
   const stopped = lastRun?.status === "failed" ? lastRun.result?.budget : undefined;
+  const flagged = lastRun?.status === "done" ? Object.entries(lastRun.result?.flagged ?? {}) : [];
+  const redrawn = lastRun?.status === "done" ? Object.keys(lastRun.result?.redrawn ?? {}) : [];
   // Enough for everything the job still has to make, not just the stage that stopped it.
   const raiseTo = stopped && estimates?.[lastRun?.kind === "board" ? "board" : "render"].raise_to_usd;
   const carryOn = () =>
@@ -291,6 +293,28 @@ export default function Story() {
             <button className="small primary" onClick={carryOn} disabled={busy || !!current}>
               Raise the budget to {fmtUsd(raiseTo)} and carry on
             </button>
+          )}
+        </div>
+      )}
+
+      {(flagged.length > 0 || redrawn.length > 0) && (
+        <div className="panel stack" role="status">
+          {redrawn.length > 0 && (
+            <p>
+              The picture check drew scene{redrawn.length > 1 ? "s" : ""} {redrawn.join(", ")} again.
+            </p>
+          )}
+          {flagged.length > 0 && (
+            <>
+              <p>These pictures still fail the check. Re-roll them on the Board, or change what they show:</p>
+              <ul>
+                {flagged.map(([n, why]) => (
+                  <li key={n}>
+                    Scene {n}: {why}
+                  </li>
+                ))}
+              </ul>
+            </>
           )}
         </div>
       )}
