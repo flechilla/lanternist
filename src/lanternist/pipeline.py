@@ -16,7 +16,8 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from . import prompts, registry, text, timing
+from . import check, prompts, registry, text, timing
+from . import llm as llms
 from .config import Settings
 from .db import Database, now
 from .engines import catalog, ffmpeg
@@ -35,7 +36,7 @@ from .engines.base import (
 )
 from .engines.local import Clips, Mix
 from .store import Store, step_key
-from .storyboard import Scene, Storyboard
+from .storyboard import Scene, Storyboard, next_seed
 from .writer import narration_seconds
 
 log = logging.getLogger(__name__)
@@ -48,6 +49,7 @@ LABELS = {
     "cast": "Cast sheet",
     "portraits": "Portraits",
     "keyframes": "Pictures",
+    "check": "Picture check",
     "motion": "Animation",
     "ambience": "Ambience",
     "clips": "Scene clips",
@@ -113,6 +115,15 @@ class Board:
     cast: str | None
     keyframes: list[str]
     timeline: timing.Timeline
+    # By scene, why the picture check had its picture drawn again: the storyboard now holds its new seed.
+    redrawn: dict[int, str] = field(default_factory=dict)
+    flagged: dict[int, str] = field(default_factory=dict)  # still failing after the last redraw
+
+
+@dataclass
+class Checked:
+    failed: dict[int, str]  # scene: why its picture failed
+    asked: set[int]  # the scenes whose verdict was given now, not read from the cache
 
 
 @dataclass
@@ -132,6 +143,10 @@ def _narration(rec: dict) -> Narration:
 
 def _sid(sc: Scene) -> str:
     return f"s{sc.n:03d}"
+
+
+def _scenes(failed: dict[int, str]) -> str:
+    return "; ".join(f"scene {n}: {why}" for n, why in failed.items())
 
 
 def _pid(character: str) -> str:
@@ -171,6 +186,8 @@ class Pipeline:
         self.db, self.story_id, self.job_id = db, story_id, job_id
         self.user_cancelled = user_cancelled
         self.budget_micros = budget_micros  # the story's; None checks nothing (the CLI)
+        # By scene, why the picture check had it drawn again, from the moment its new seed is set.
+        self.redrawn: dict[int, str] = {}
 
     def emit(self, stage: str, status: str, **kw) -> None:
         self._emit(Event(stage, status, **kw))
@@ -256,9 +273,9 @@ class Pipeline:
             if bind:
                 ctx.bind = lambda it: bind(it, records)
             try:
-                if isinstance(maker, Engine) and maker.remote:
+                if maker.remote:
                     self._check_budget(stage, maker.estimate(pending).micros)
-                    if self.db is not None:
+                    if isinstance(maker, Engine) and self.db is not None:
                         await registry.ensure_synced(self.cfg, self.db)
                 await maker.run(pending, ctx, on_item)
             finally:
@@ -416,6 +433,11 @@ class Pipeline:
             keyframes = [self.keyframe_item(eng, sb, sc, [cast] if cast else []) for sc in sb.scenes]
         return sheet, portraits, keyframes
 
+    def keyframe_keys(self, sb: Storyboard) -> dict[int, str | None]:
+        """Each scene's picture key as the cache stands; None for one whose references aren't drawn."""
+        _, _, keyframes = self.picture_items(self.image(sb), sb)
+        return {it.scene: it.key for it in keyframes if it.scene is not None}
+
     def cached(self, it: Item) -> dict | None:
         """The item's step record if the cache holds it; an item without a key yet is never cached."""
         return self.store.get_step(it.key) if it.key else None
@@ -453,9 +475,72 @@ class Pipeline:
         return timing.timeline(durations, r.gap, r.lead_in, r.tail, r.xfade, continues, r.chunk_gap)
 
     async def board(self, sb: Storyboard) -> Board:
+        """Narration and pictures. With a checker, a picture that fails its check is drawn again with a
+        new seed, set on its scene in `sb`, which the caller keeps as a new version of the story; also
+        when the board fails later, from `self.redrawn`, so nothing drawn again is lost. Only a verdict
+        given in this board redraws: one the cache held was the last word on that picture."""
         narration = await self.narrate(sb)
         cast, keyframes = await self.draw(sb)
-        return Board(narration, cast, keyframes, self.timeline(sb, [n.duration for n in narration]))
+        checked = await self.check(sb, keyframes)
+        for tries in range(1, check.MAX_REDRAWS + 1):
+            again = {n: why for n, why in checked.failed.items() if n in checked.asked}
+            if not again:
+                break
+            self._redraw(sb, again)
+            self.emit("check", "progress", message=f"drawing again: {_scenes(again)}")
+            cast, keyframes = await self.draw(sb)
+            checked = await self.check(sb, keyframes, last=tries == check.MAX_REDRAWS)
+        if checked.failed:
+            n = len(sb.scenes)
+            self.emit("check", "finish", done=n, total=n, message=f"still failing: {_scenes(checked.failed)}")
+        tl = self.timeline(sb, [n.duration for n in narration])
+        return Board(narration, cast, keyframes, tl, dict(self.redrawn), checked.failed)
+
+    # ---------------------------------------------------------------- the picture check
+    def _redraw(self, sb: Storyboard, again: dict[int, str]) -> None:
+        """A new seed for each failing scene's picture, as a re-roll would, recorded in `self.redrawn`."""
+        for sc in sb.scenes:
+            if sc.n in again:
+                sc.seed = next_seed(sb.scene_seed(sc))
+        self.redrawn |= again
+
+    def check_items(self, sb: Storyboard, keyframes: list[str], model: str) -> list[Item]:
+        items = []
+        for sc, image in zip(sb.scenes, keyframes, strict=True):
+            q = check.question(sb, sc)
+            key = step_key("check", engine=check.CHECK, model=model, question=q, image=image)
+            items.append(Item(_sid(sc), key, sc.n, {"image": image, "question": q}))
+        return items
+
+    async def check(self, sb: Storyboard, keyframes: list[str], last: bool = False) -> Checked:
+        """The scenes whose picture the checker fails, with why; nothing when no checker is set. On the
+        board's `last` look a fail is only flagged, so one given before the check broke is too."""
+        model = self.cfg.defaults.checker
+        if not model:
+            return Checked({}, set())
+        checker = check.Checker(
+            self.cfg, model, llms.Calls(self.db, self.story_id, self.job_id, stage="check")
+        )
+        items = self.check_items(sb, keyframes, model)
+        if any(not self.cached(it) for it in items):
+            await checker.price()  # a board all cached asks nothing, so it needs no prices, nor the network
+        try:
+            records = await self._stage("check", checker, items, "verdict")
+        except BaseException:
+            # The verdicts given before it failed are cached, and a cached "fail" only flags: give those
+            # pictures their new seeds now, so the next board draws them again rather than keeping them.
+            if not last:
+                given = [
+                    (it.scene, rec["meta"])
+                    for it in items
+                    if it.scene in checker.asked and (rec := self.cached(it))
+                ]
+                self._redraw(
+                    sb, {n: v["reason"] for n, v in given if n is not None and v["verdict"] == "fail"}
+                )
+            raise
+        verdicts = {it.scene: records[it.id]["meta"] for it in items if it.scene is not None}
+        return Checked({n: v["reason"] for n, v in verdicts.items() if v["verdict"] == "fail"}, checker.asked)
 
     # ---------------------------------------------------------------- motion
     def motion_items(
@@ -623,8 +708,9 @@ class Pipeline:
         return out
 
     # ---------------------------------------------------------------- all of it
-    async def render(self, sb: Storyboard) -> Film:
-        board = await self.board(sb)
+    async def render(self, sb: Storyboard, board: Board | None = None) -> Film:
+        """The film; from `board` when the caller already made it (and kept what its check changed)."""
+        board = board or await self.board(sb)
         motions = await self.ambience(sb, board, await self.motion(sb, board))
         clips = await self.clips(sb, board, motions)
         film = await self.mix(sb, board, clips)

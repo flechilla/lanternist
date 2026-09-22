@@ -22,12 +22,12 @@ from .storyboard import (
     CastMember,
     Effort,
     Line,
+    LlmId,
     Mode,
     Models,
     Place,
     Scene,
     Storyboard,
-    WriterId,
     slugify,
 )
 from .text import LANGUAGES, sentences, word_count
@@ -110,7 +110,7 @@ class Brief(BaseModel):
     notes: str = ""
     mode: Literal["still", "video", "hybrid"] = "still"
     voice: str = "demo"
-    writer: WriterId = Field(
+    writer: LlmId = Field(
         "", description="ollama/<model> or openrouter/<model id>; empty is the default writer"
     )
     effort: Effort | None = Field(None, description="reasoning effort; None is the model's default")
@@ -367,7 +367,7 @@ async def write_storyboard(
             prompt = user if not error else f"{user}\n\nYour previous answer was invalid: {error}. Fix it."
             reply = await llm.chat(system, prompt, schema=schema, temperature=0.4, name="storyboard")
             try:
-                wb = WriterBoard.model_validate_json(_json_text(reply.text))
+                wb = WriterBoard.model_validate_json(json_text(reply.text))
                 if len(wb.scenes) != len(paras):
                     raise ValueError(f"returned {len(wb.scenes)} scenes for {len(paras)} paragraphs")
                 if empty := [ws.n for ws in wb.scenes if not ws.shots]:
@@ -388,7 +388,7 @@ async def write_storyboard(
     return sb
 
 
-def _json_text(text: str) -> str:
+def json_text(text: str) -> str:
     """The JSON object in a reply; a few models wrap structured output in a code fence anyway."""
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
     m = re.match(r"^```(?:json)?\s*(.*?)\s*```$", text, flags=re.DOTALL)
@@ -533,7 +533,7 @@ async def rewrite_scene(
         reply = await llm.chat(
             system, user, schema=inline_schema(RewrittenScene), temperature=0.6, name="scene"
         )
-    r = RewrittenScene.model_validate_json(_json_text(reply.text))
+    r = RewrittenScene.model_validate_json(json_text(reply.text))
     ids = {c.id for c in sb.cast}
     place = slugify(r.place)
     return scene.model_copy(

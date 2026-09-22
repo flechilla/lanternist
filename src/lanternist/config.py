@@ -12,7 +12,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .storyboard import WriterId
+from .storyboard import LlmId
 
 
 def _expand(v):
@@ -112,12 +112,15 @@ class Render(BaseModel):
 class Defaults(BaseModel):
     """The model each stage uses when a story doesn't pick one. Values saved on the Settings page win."""
 
-    writer: WriterId = ""  # empty: the local Ollama model above
+    writer: LlmId = ""  # empty: the local Ollama model above
     tts: str = "local/qwen3-tts-1.7b"
     image: str = "local/flux2-klein-9b"
     video: str = "local/ltx-2.5-22b-nvfp4"
     # Scores video scenes whose model makes no sound of its own (Kling, Veo); "none" leaves them silent.
     ambience: str = "fal/mmaudio-v2"
+    # A vision model that checks every picture before video is made from it, and has a faulty one
+    # drawn again: openrouter/<id> or ollama/<tag>; empty skips the check.
+    checker: LlmId = ""
     budget_usd: float = 5.0  # per story, for remote models
 
 

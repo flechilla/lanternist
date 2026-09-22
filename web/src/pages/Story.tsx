@@ -46,9 +46,16 @@ export default function Story() {
     setDirty(value);
   };
 
+  // The version the draft was taken from: a save is based on it, so a version saved meanwhile (a
+  // picture check's new seeds) makes the save a conflict instead of being overwritten.
+  const draftVersion = useRef<number | null>(null);
+
   const apply = useCallback((d: StoryDetail) => {
     setDetail(d);
-    if (!dirtyRef.current) setDraft(d.storyboard ? structuredClone(d.storyboard) : null);
+    if (!dirtyRef.current) {
+      setDraft(d.storyboard ? structuredClone(d.storyboard) : null);
+      draftVersion.current = d.version;
+    }
     setStarted((s) => s.filter((j) => !d.jobs.some((x) => x.id === j.id)));
   }, []);
   const load = useCallback(() => api.story(id).then(apply), [id, apply]);
@@ -134,7 +141,7 @@ export default function Story() {
 
   async function saveBoard(sb: Storyboard, note: string) {
     try {
-      await api.save(id, sb, detail!.version, note);
+      await api.save(id, sb, draftVersion.current ?? detail!.version, note);
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) setStale(true);
       throw e;
@@ -147,6 +154,7 @@ export default function Story() {
   const discard = () => {
     markDirty(false);
     setDraft(structuredClone(detail.storyboard));
+    draftVersion.current = detail.version;
   };
   const ensureSaved = async () => {
     if (dirtyRef.current && draft) await saveBoard(draft, "edited");
@@ -195,6 +203,8 @@ export default function Story() {
   // The last board or render, if it stopped before a stage that would have gone over the budget.
   const lastRun = jobs.find((j) => (j.kind === "board" || j.kind === "render") && !isActive(j));
   const stopped = lastRun?.status === "failed" ? lastRun.result?.budget : undefined;
+  const flagged = lastRun?.status === "done" ? Object.entries(lastRun.result?.flagged ?? {}) : [];
+  const redrawn = lastRun?.status === "done" ? Object.keys(lastRun.result?.redrawn ?? {}) : [];
   // Enough for everything the job still has to make, not just the stage that stopped it.
   const raiseTo = stopped && estimates?.[lastRun?.kind === "board" ? "board" : "render"].raise_to_usd;
   const carryOn = () =>
@@ -291,6 +301,28 @@ export default function Story() {
             <button className="small primary" onClick={carryOn} disabled={busy || !!current}>
               Raise the budget to {fmtUsd(raiseTo)} and carry on
             </button>
+          )}
+        </div>
+      )}
+
+      {(flagged.length > 0 || redrawn.length > 0) && (
+        <div className="panel stack" role="status">
+          {redrawn.length > 0 && (
+            <p>
+              The picture check drew scene{redrawn.length > 1 ? "s" : ""} {redrawn.join(", ")} again.
+            </p>
+          )}
+          {flagged.length > 0 && (
+            <>
+              <p>These pictures still fail the check. Re-roll them on the Board, or change what they show:</p>
+              <ul>
+                {flagged.map(([n, why]) => (
+                  <li key={n}>
+                    Scene {n}: {why}
+                  </li>
+                ))}
+              </ul>
+            </>
           )}
         </div>
       )}

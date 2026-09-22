@@ -17,6 +17,7 @@ EDITABLE = {
     "defaults.image": "Pictures",
     "defaults.video": "Video",
     "defaults.ambience": "Ambience, for video models with no sound of their own",
+    "defaults.checker": "Picture check: a vision model, openrouter/<id> or ollama/<name>; empty for none",
     "defaults.budget_usd": "Budget per story for remote models, in USD",
     "openrouter.recommended": "Writer models pinned at the top of the picker",
     "openrouter.data_collection": "allow or deny providers that store prompts",

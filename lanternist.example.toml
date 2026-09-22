@@ -17,6 +17,8 @@ tts = "local/qwen3-tts-1.7b"
 image = "local/flux2-klein-9b"
 video = "local/ltx-2.5-22b-nvfp4"
 ambience = "fal/mmaudio-v2"                       # for video models with no sound of their own; or "none"
+checker = ""                                      # a vision model that checks every picture and has a faulty
+                                                  # one drawn again, e.g. openrouter/openai/gpt-5.6-luna; empty: none
 budget_usd = 5.0                                  # per story, for remote models
 
 [openrouter]

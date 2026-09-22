@@ -1,6 +1,6 @@
 # Lanternist M2: OpenRouter and fal.ai
 
-> **Status, 21 Sep 2026: Phases A and B are built and checked against the live APIs.** 91 tests pass offline, and your library is migrated to `0002` (backup in `~/Lanternist/backups/`). Both keys work. A first real video was made end to end: GPT Luna wrote the story and MiniMax H3 Max rendered the shot on fal, for $0.80 as estimated. Stories can now be written by any OpenRouter model with structured output, picked on New story; Claude Opus 5 wrote a Spanish story in the app for $0.21, as estimated. **22 Sep: Phases C–F are built and pass offline** (162 tests): the engine interface; pictures on fal with five models (Nano Banana Pro, Seedream 5.0 Pro and FLUX.2 [max] among them); an estimate and a budget before anything is spent; video on fal with nine models, MiniMax H3 Max and its cheap Turbo among them, with MMAudio ambience; and narration on fal with voices you can hear before choosing. **A first live run through the app** (22 Sep, a throwaway library, $0.43 in all): GPT-5.6 Luna wrote a 1-minute Spanish story, two ElevenLabs voices were heard before Aria was chosen, ElevenLabs narrated it, klein drew the cast sheet and pictures, and MiniMax H3 Max Turbo animated one 15 s scene at 480P in 3 s of inference. Every fal charge matched its estimate within 3% (narration and video exactly), and the cast held between the pictures and the clip. What's left is the rest of the definition of done, live: Kling with MMAudio, a restart and a cancel mid-video, and a clone on fal Qwen3-TTS.
+> **Status, 21 Sep 2026: Phases A and B are built and checked against the live APIs.** 91 tests pass offline, and your library is migrated to `0002` (backup in `~/Lanternist/backups/`). Both keys work. A first real video was made end to end: GPT Luna wrote the story and MiniMax H3 Max rendered the shot on fal, for $0.80 as estimated. Stories can now be written by any OpenRouter model with structured output, picked on New story; Claude Opus 5 wrote a Spanish story in the app for $0.21, as estimated. **22 Sep: Phases C–F are built and pass offline** (162 tests): the engine interface; pictures on fal with five models (Nano Banana Pro, Seedream 5.0 Pro and FLUX.2 [max] among them); an estimate and a budget before anything is spent; video on fal with nine models, MiniMax H3 Max and its cheap Turbo among them, with MMAudio ambience; and narration on fal with voices you can hear before choosing. **A first live run through the app** (22 Sep, a throwaway library, $0.43 in all): GPT-5.6 Luna wrote a 1-minute Spanish story, two ElevenLabs voices were heard before Aria was chosen, ElevenLabs narrated it, klein drew the cast sheet and pictures, and MiniMax H3 Max Turbo animated one 15 s scene at 480P in 3 s of inference. Every fal charge matched its estimate within 3% (narration and video exactly), and the cast held between the pictures and the clip. What's left is the rest of the definition of done, live: Kling with MMAudio, a restart and a cancel mid-video, and a clone on fal Qwen3-TTS. **22 Sep, a film quality review (§6)** changed how pictures are referenced, how a paragraph is shot and how a film is mixed, and added a picture check.
 >
 > This is the blueprint's M2 ("fal, registry, estimator, your own key") with one change: the writer calls OpenRouter directly instead of going through fal's `openrouter/router`. Going direct gives the real cost of every request, the full list of models, and one hop fewer.
 > API facts below were read from the OpenRouter and fal docs, the per-model `llms.txt` pages and the fal-client 1.0.3 source on 21 Sep 2026. Anything marked **verify** was not confirmed and gets checked in Phase A.
@@ -647,8 +647,19 @@ the same pictures: it followed the camera direction, and morphed nothing where L
 together and merged a jug into a mug. It made 4¼ minutes of video in 90 s.
 
 **Still open:**
-- A character drawn twice in about one picture in ten, even told the count. A vision model catches
-  it (next item).
+- A character drawn twice in about one picture in ten, even told the count. **The picture check**
+  (`feat/picture-check`) shows a vision model each picture with who should be in it, and has a
+  failing one drawn again with a new seed, at most twice; a picture still failing is named on the
+  story page. GPT-5.6 Luna caught all 8 such pictures among 40, with no false alarm, for $0.0006 a
+  picture; Gemini 3.8 Flash matched it at five times the price; Claude Haiku 4.5 raised 6 false
+  alarms. The first lake story tripped the first question: reflections in the water counted as
+  second characters, and fish as intruders, so 9 of 37 pictures were drawn again for nothing. The
+  question now says a reflection doesn't count and animals in the scenery are fine. It's off until
+  `defaults.checker` is set.
+  - [ ] The estimate counts neither the checks (about $0.02 a film) nor the pictures they have
+    drawn again. The budget check before the check stage does, but when it's the check that stops a
+    board, "Raise the budget to $X" can offer too little. OpenRouter's prices need an async fetch,
+    which the estimate route doesn't do yet.
 - A small character drawn alone (a fox cub) loses its scale, and scenes then draw it adult-sized.
 - The demo voice narrates at about 185 words a minute against the 150 the writer plans for, so films
   run 10% short. Measuring each narrator's pace would fix the length.

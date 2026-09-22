@@ -11,6 +11,7 @@ are decimal strings, columns use SQLAlchemy's own types, and every query goes th
 """
 
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -37,6 +38,8 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 
 if TYPE_CHECKING:
     from alembic.config import Config
+
+    from .storyboard import Storyboard
 
 
 def now() -> datetime:
@@ -225,6 +228,25 @@ class Database:
         if row is None:
             raise KeyError(f"{story_id} v{v}")
         return story, row
+
+    def change_story(
+        self, story_id: str, change: "Callable[[Storyboard], str | None]", note: str = ""
+    ) -> int | None:
+        """Apply `change` to the story's latest version and save the result as its next, noted with what
+        `change` returns (what it found to change), else `note`; returns its number, or None when the
+        change left the story as it was."""
+        from .storyboard import Storyboard
+
+        with self.session() as s:
+            story, row = self.storyboard(s, story_id)
+            sb = Storyboard.model_validate(row.storyboard)
+            was = sb.model_dump()
+            said = change(sb)
+            if sb.model_dump() == was:
+                return None
+            new = self.save_version(s, story, sb.model_dump(), note=said or note)
+            s.commit()
+            return new.version
 
     def create_story(self, title: str, language: str, storyboard: dict | None = None) -> Story:
         """A new story; with a storyboard (an import) it starts at version 1, else at 0 until it's written."""
