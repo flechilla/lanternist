@@ -13,6 +13,7 @@ import traceback
 
 from .config import Settings
 from .db import TERMINAL, Database, Job, now
+from .keys import redact
 from .pipeline import Event, Pipeline
 from .storyboard import Storyboard
 
@@ -92,6 +93,11 @@ class Runner:
         self.wake = asyncio.Event()
         self.current: tuple[str, asyncio.Task] | None = None
         self._loop: asyncio.Task | None = None
+        # Jobs the user cancelled, as opposed to a shutdown: only these cancel remote requests.
+        self.cancel_requested: set[str] = set()
+
+    def user_cancelled(self, job_id: str) -> bool:
+        return job_id in self.cancel_requested
 
     # control ------------------------------------------------------------------------------------
     def start(self) -> None:
@@ -117,6 +123,7 @@ class Runner:
 
     def cancel(self, job_id: str) -> bool:
         if self.current and self.current[0] == job_id:
+            self.cancel_requested.add(job_id)
             self.current[1].cancel()
             return True
         with self.db.session() as s:
@@ -159,10 +166,11 @@ class Runner:
             status = "cancelled"
         except Exception as e:  # a failed job must not stop the queue
             log.exception("job %s failed", job_id)
-            status, error = "failed", f"{e}\n\n{traceback.format_exc()[-3000:]}"
-            progress.note(f"failed: {str(e).splitlines()[0][:200]}")
+            status, error = "failed", redact(f"{e}\n\n{traceback.format_exc()[-3000:]}")
+            progress.note(f"failed: {(redact(str(e)) or repr(e)).splitlines()[0][:200]}")
         finally:
             self.current = None
+            self.cancel_requested.discard(job_id)
             with self.db.session() as s:
                 job = s.get(Job, job_id)
                 job.status, job.result, job.error, job.finished_at = status, result, error, now()

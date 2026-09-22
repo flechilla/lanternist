@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 
+from .. import keys, prefs
 from ..config import settings
 from ..db import Database, Job, Story, StoryVersion
 from ..jobs import Runner, is_terminal
@@ -76,7 +77,60 @@ def health():
 async def doctor():
     from ..doctor import run_checks
 
-    return [c.dict() for c in await run_checks(cfg)]
+    return [c.dict() for c in await run_checks(prefs.effective(cfg, db))]
+
+
+# ---------------------------------------------------------------------------------- providers & settings
+@app.get("/api/providers")
+async def providers():
+    from ..doctor import provider_rows
+
+    return await provider_rows(prefs.effective(cfg, db))
+
+
+class KeyBody(BaseModel):
+    key: str
+
+
+def _provider(name: str) -> str:
+    if name not in keys.PROVIDERS:
+        raise HTTPException(404, f"unknown provider '{name}'")
+    return name
+
+
+@app.put("/api/providers/{name}/key")
+async def set_provider_key(name: str, body: KeyBody):
+    from ..doctor import provider_rows
+
+    try:
+        stored = keys.set_key(_provider(name), body.key)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from None
+    row = next(r for r in await provider_rows(prefs.effective(cfg, db)) if r["name"] == name)
+    return row | {"stored_in": stored}
+
+
+@app.delete("/api/providers/{name}/key", status_code=204)
+def clear_provider_key(name: str):
+    keys.clear_key(_provider(name))
+
+
+@app.get("/api/settings")
+def get_settings():
+    return prefs.describe(cfg, db)
+
+
+class SettingsBody(BaseModel):
+    changes: dict
+
+
+@app.put("/api/settings")
+def put_settings(body: SettingsBody):
+    try:
+        prefs.update(cfg, db, body.changes)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from None
+    return prefs.describe(cfg, db)
 
 
 @app.get("/api/options")

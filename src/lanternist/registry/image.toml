@@ -1,0 +1,42 @@
+# Cast sheet and keyframes. Prices are list prices read from each fal endpoint page on 21 Sep 2026;
+# `lanternist models --sync` refreshes the base price from fal's pricing API.
+
+[[model]]
+id = "local/flux2-klein-9b"
+label = "FLUX.2 [klein] 9B"
+capability = "image.keyframe"
+provider = "local"
+engine_id = "flux2-klein-9b@1"          # part of every step key: changing it redraws the library
+references = 4
+commercial_use = false
+licence = "FLUX Non-Commercial v2.1 (personal use)"
+price = { unit = "image", gpu_seconds = 15 }
+
+[[model]]
+id = "fal/flux-2-klein-9b"
+label = "FLUX.2 [klein] 9B · fal"
+capability = "image.keyframe"
+provider = "fal"
+family = "klein"
+endpoint = "fal-ai/flux-2/klein/9b/edit"                   # keyframes, with the cast sheet as reference
+endpoints = { text_to_image = "fal-ai/flux-2/klein/9b" }   # the cast sheet itself
+references = 4
+commercial_use = true
+licence = "fal commercial terms; confirm on the endpoint page"
+defaults = { num_inference_steps = 4, output_format = "png", enable_safety_checker = true }
+notes = "Same model as the local worker. Input and output megapixels both count; inputs are resized to 1 MP."
+price = { unit = "megapixel", usd = "0.011", tiers = { text_to_image = "0.006" }, synced = "2026-09-21" }
+
+[[model]]
+id = "fal/nano-banana-2"
+label = "Nano Banana 2 · fal"
+capability = "image.keyframe"
+provider = "fal"
+family = "nano_banana"
+endpoint = "fal-ai/nano-banana-2/edit"   # also draws the cast sheet, with no reference
+references = 4
+commercial_use = true
+licence = "fal commercial terms; confirm on the endpoint page"
+defaults = { resolution = "2K", aspect_ratio = "16:9", output_format = "png" }
+notes = "Follows long prompts and references well. Priced per image by resolution."
+price = { unit = "image", usd = "0.08", tiers = { "0.5K" = "0.06", "2K" = "0.12", "4K" = "0.16" }, synced = "2026-09-21" }

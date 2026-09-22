@@ -1,0 +1,14 @@
+# Ambience for video models run with their own audio off.
+
+[[model]]
+id = "fal/mmaudio-v2"
+label = "MMAudio v2 · fal"
+capability = "audio.ambience"
+provider = "fal"
+family = "mmaudio"
+endpoint = "fal-ai/mmaudio-v2"
+commercial_use = true
+licence = "fal commercial terms; confirm on the endpoint page"
+durations = { min = 1, max = 30, step = 1 }
+notes = "Takes the scene's clip and its sound line; returns the same video with sound."
+price = { unit = "output_second", usd = "0.001", synced = "2026-09-21" }

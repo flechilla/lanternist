@@ -8,6 +8,7 @@ import os
 import tomllib
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -104,12 +105,42 @@ class Render(BaseModel):
     bitrate: str = "12M"
 
 
+class Defaults(BaseModel):
+    """The model each stage uses when a story doesn't pick one. Values saved on the Settings page win."""
+    writer: str = ""                          # empty: the local Ollama model above
+    tts: str = "local/qwen3-tts-1.7b"
+    image: str = "local/flux2-klein-9b"
+    video: str = "local/ltx-2.5-22b-nvfp4"
+    ambience: str = "none"                    # or a registry id such as "fal/mmaudio-v2"
+    budget_usd: float = 5.0                   # per story, for remote models
+
+
+class OpenRouter(BaseModel):
+    url: str = "https://openrouter.ai/api/v1"
+    recommended: list[str] = []               # model ids pinned at the top of the writer picker
+    data_collection: Literal["allow", "deny"] = "deny"   # route only to providers that don't store prompts
+    title: str = "Lanternist"                 # attribution headers OpenRouter shows for the app
+    referer: str = "https://github.com/lanternist/lanternist"
+
+
+class Fal(BaseModel):
+    queue_url: str = "https://queue.fal.run"
+    api_url: str = "https://api.fal.ai"
+    rest_url: str = "https://rest.fal.ai"     # storage tokens for uploads
+    max_concurrency: int = 4                  # requests running at once; fal queues the rest
+    media_ttl_hours: float = 24               # fal keeps media public forever unless told otherwise
+    voice_ttl_hours: float = 1                # reference voice clips we upload
+
+
 class Settings(BaseModel):
     paths: Paths = Paths()
     ollama: Ollama = Ollama()
     comfyui: ComfyUI = ComfyUI()
     engines: Engines = Engines()
     render: Render = Render()
+    defaults: Defaults = Defaults()
+    openrouter: OpenRouter = OpenRouter()
+    fal: Fal = Fal()
     fake_engines: bool = Field(default_factory=lambda: os.environ.get("LANTERNIST_FAKE_ENGINES") == "1")
 
     @property
@@ -126,8 +157,12 @@ def config_path() -> Path | None:
     return None
 
 
+def file_data() -> dict:
+    """The config file as written, without defaults filled in."""
+    path = config_path()
+    return tomllib.loads(path.read_text()) if path else {}
+
+
 @lru_cache
 def settings() -> Settings:
-    path = config_path()
-    data = tomllib.loads(path.read_text()) if path else {}
-    return Settings.model_validate(data)
+    return Settings.model_validate(file_data())
