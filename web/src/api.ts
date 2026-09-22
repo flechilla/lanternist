@@ -88,6 +88,9 @@ export interface StageState {
   secs?: number;
   /** How far through its one item it is, 0 to 1, when it says: the mix, from ffmpeg. */
   at?: number;
+  /** What makes its items: a model's name, or ffmpeg; and whether that's on this machine. */
+  model?: string;
+  local?: boolean;
 }
 
 /** Where one scene's step in a stage, or one character's portrait, has got to in a job. */
@@ -111,8 +114,10 @@ export interface Progress {
   stages?: Record<string, StageState>;
   /** By scene number, then by stage. */
   scenes?: Record<string, Record<string, Step>>;
-  /** Each character's portrait, by character id. */
+  /** Each character's portrait, by character id: a board's or render's are here from its start. */
   cast?: Record<string, Step>;
+  /** A board or render draws the story's cast sheet. */
+  sheet?: boolean;
   /** What the job has paid for so far. */
   spent_usd?: number;
   /** A board's or render's time left, in seconds, as a range: never a countdown. */
@@ -249,6 +254,8 @@ export interface StoryListItem extends StoryMeta {
 
 export interface BoardScene {
   n: number;
+  /** The first sentence of its narration. */
+  line: string;
   audio: string | null;
   duration: number | null;
   keyframe: string | null;

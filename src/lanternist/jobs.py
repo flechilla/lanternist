@@ -52,7 +52,9 @@ class Progress:
     each stage, and each character's portrait, as they move from queued to done; what the job has
     spent, in all and by stage; and a short log.
 
-    For a board or render, told what its stages should take (`expect`), it also says how long is left
+    A stage row names what makes its items (`model`, and `local` when that's this machine). For a
+    board or render, `sheet` says whether it draws a cast sheet, and the portraits it will draw are in
+    `cast` from the start. Told what its stages should take (`expect`), it also says how long is left
     as a range (`eta_s`), each stage's share of the time (`phases`) and how far through it is
     (`fraction`, by time). A stage row says how long it has worked (`secs`), and the mix how far
     through the film it is (`at`).
@@ -104,6 +106,8 @@ class Progress:
             st["asset"] = e.asset
         if e.at is not None:
             st["at"] = e.at
+        if e.model:
+            st["model"], st["local"] = e.model, e.local
         if e.status in ITEM:
             self._move(e)
         if e.message or e.status in ("start", "done", "finish"):
@@ -140,6 +144,13 @@ class Progress:
             step["tries"] = step.get("tries", 0) + 1
             if (began := self._began.pop((e.stage, whose), None)) is not None:
                 step["secs"] = round(time.time() - began, 1)
+
+    def plan_cast(self, sheet: bool, portraits: list[str]) -> None:
+        """What a board or render will draw of its cast, so the page shows it from the start: whether
+        there's a cast sheet, and whose portraits (queued, until their stage reports them)."""
+        self.snap["sheet"] = sheet
+        for who in portraits:
+            self.snap["cast"].setdefault(who, {"state": "queued"})
 
     def note(self, message: str, flush: bool = True) -> None:
         self.snap["message"] = message
@@ -360,6 +371,8 @@ class Runner:
         sb = Storyboard.model_validate(row.storyboard)
         if job.kind in ("board", "render"):
             progress.expect = pace.plan(cfg, self.db, job.estimate, job.kind, len(sb.scenes))
+            sheet, portraits, _ = pipeline.picture_items(pipeline.image(sb), sb)
+            progress.plan_cast(bool(sheet), [it.who for it in portraits if it.who])
 
         if job.kind == "rewrite":
             from .writer import rewrite_scene

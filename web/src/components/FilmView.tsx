@@ -1,5 +1,7 @@
 import { useRef } from "react";
 import { asset, fmtSeconds, isActive, withPrice, type Job, type StoryDetail } from "../api";
+import { reveal } from "../reel";
+import { Log, Stages } from "./JobProgress";
 import Reel from "./Reel";
 
 interface Props {
@@ -26,29 +28,43 @@ export default function FilmView({ detail, jobs, finished, busy, renderUsd, onRe
   const result = film?.result;
   const name = detail.story.slug || "film";
   const reel = running ?? finished;
+  // The reel draws the render over the story as it is now, so only while they're the same version.
+  const sameVersion = reel?.version === detail.version;
 
   function watch() {
     const v = player.current;
     if (!v) return;
-    v.scrollIntoView({
-      block: "center",
-      behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
-    });
+    reveal(v, "center");
     void v.play().catch(() => undefined);
   }
 
   return (
     <div className="stack">
-      {reel && detail.storyboard && (
+      {reel && sameVersion && detail.storyboard && (
         <Reel
           key={reel.id}
           sb={detail.storyboard}
           board={detail.board}
           job={reel}
-          budget={detail.budget}
           onCancel={() => onCancel(reel)}
           onWatch={watch}
         />
+      )}
+      {running && !sameVersion && (
+        <section className="panel stack" aria-live="polite">
+          <div className="row">
+            <h2>Rendering version {running.version}</h2>
+            <span className="spacer" />
+            <button className="small danger" onClick={() => onCancel(running)}>
+              Cancel render
+            </button>
+          </div>
+          <p className="muted">
+            The script has changed since this render started, so it's shown as its stages.
+          </p>
+          <Stages job={running} />
+          <Log job={running} />
+        </section>
       )}
 
       {failed && (

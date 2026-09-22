@@ -1,6 +1,6 @@
 import { Fragment } from "react";
 import { fmtSeconds, fmtUsd, type Job, type Step } from "../api";
-import type { SceneState } from "../reel";
+import { stageCount, stageShare, type SceneState } from "../reel";
 import { Log } from "./JobProgress";
 
 // A cell of the grid: where one scene's step in one stage has got to.
@@ -22,10 +22,6 @@ interface Props {
  * step in every stage; and the log. */
 export default function Behind({ job, scenes, onScene }: Props) {
   const stages = Object.entries(job.progress?.stages ?? {});
-  // The estimate names each stage's model; the cast sheet and portraits are drawn by the pictures' one.
-  const lines = Object.fromEntries((job.estimate?.lines ?? []).map((l) => [l.stage, l]));
-  const lineOf = (stage: string) =>
-    lines[stage] ?? (stage === "cast" || stage === "portraits" ? lines.keyframes : undefined);
   const perScene = stages.filter(([key]) => scenes.some((s) => s.steps[key]));
   return (
     <div className="behind">
@@ -39,30 +35,20 @@ export default function Behind({ job, scenes, onScene }: Props) {
             <span className="tmh">Time</span>
             <span>Spent</span>
           </div>
-          {stages.map(([key, st]) => {
-            const line = lineOf(key);
-            const pct = st.total ? (100 * st.done) / st.total : st.status === "done" ? 100 : 0;
-            return (
-              <div key={key} className={`srow ${st.status}`}>
-                <div className="nm">
-                  <b>{st.label ?? key}</b>
-                  {line && (
-                    <span>{line.local ? `${line.model_label} · this machine` : line.model_label}</span>
-                  )}
-                </div>
-                <div className="bar">
-                  <i style={{ width: `${pct}%` }} />
-                </div>
-                <span className="n">
-                  {st.total ? `${st.done}/${st.total}` : st.status === "done" ? "done" : "…"}
-                </span>
-                <span className="tm">{st.secs ? fmtSeconds(st.secs) : ""}</span>
-                <span className="usd">
-                  {st.spent_usd ? fmtUsd(st.spent_usd) : line && !line.local ? "…" : "free"}
-                </span>
+          {stages.map(([key, st]) => (
+            <div key={key} className={`srow ${st.status}`}>
+              <div className="nm">
+                <b>{st.label ?? key}</b>
+                {st.model && <span>{st.local ? `${st.model} · this machine` : st.model}</span>}
               </div>
-            );
-          })}
+              <div className="bar">
+                <i style={{ width: `${stageShare(st) * 100}%` }} />
+              </div>
+              <span className="n">{stageCount(st)}</span>
+              <span className="tm">{st.secs ? fmtSeconds(st.secs) : ""}</span>
+              <span className="usd">{st.spent_usd ? fmtUsd(st.spent_usd) : st.local ? "free" : ""}</span>
+            </div>
+          ))}
         </div>
       </div>
       {perScene.length > 0 && (

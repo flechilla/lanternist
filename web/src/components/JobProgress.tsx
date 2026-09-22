@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Job } from "../api";
+import { stageCount, stageShare } from "../reel";
 
 function jobTitle(job: Job): string {
   switch (job.kind) {
@@ -29,7 +30,7 @@ export function Stages({ job }: { job: Job }) {
     <div className="stages">
       {shown.map(([key, st]) => {
         const name = st.label ?? key;
-        const pct = st.total ? Math.round((100 * st.done) / st.total) : st.status === "done" ? 100 : 0;
+        const pct = Math.round(stageShare(st) * 100);
         const unknown = !st.total && st.status === "running";
         return (
           <div key={key} className={`stage ${st.status}`}>
@@ -50,9 +51,7 @@ export function Stages({ job }: { job: Job }) {
                 <i style={{ width: `${pct}%` }} />
               </span>
             )}
-            <span className="count">
-              {st.total ? `${st.done}/${st.total}` : st.status === "done" ? "done" : "working"}
-            </span>
+            <span className="count">{stageCount(st)}</span>
           </div>
         );
       })}

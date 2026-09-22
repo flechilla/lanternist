@@ -177,3 +177,15 @@ async def test_each_row_of_a_batch_counts_its_own_time_and_a_redraw_adds_to_it(d
     stages = progress.snap["stages"]
     assert (stages["cast"]["secs"], stages["keyframes"]["secs"]) == (10, 48)
     assert "secs" not in stages["write"]
+
+
+def test_the_portraits_to_draw_are_on_the_snapshot_before_they_start(db):
+    progress = Progress(db, db.add_job(None, "board", None, {}, None).id)
+    progress.plan_cast(True, ["a", "bo"])
+    progress.stage(Event("portraits", "done", who="a", done=1, total=2, asset="a.png"))
+    progress.plan_cast(True, ["a", "bo"])  # planned again (a job run twice): what's made stays made
+    assert progress.snap["sheet"] is True
+    assert {who: step["state"] for who, step in progress.snap["cast"].items()} == {
+        "a": "done",
+        "bo": "queued",
+    }

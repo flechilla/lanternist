@@ -1,11 +1,20 @@
-import { asset, CAMERA_NAMES, fmtUsd, thumb, type CastMember, type Step, type Storyboard } from "../api";
+import {
+  asset,
+  CAMERA_NAMES,
+  fmtSeconds,
+  fmtUsd,
+  thumb,
+  type CastMember,
+  type Step,
+  type Storyboard,
+} from "../api";
 import { sceneWords, type SceneState } from "../reel";
 import { Wave } from "./ReelSlide";
 
 // How long a step took and what it cost: "in 16.2 s · $0.08".
 function took(step: Step | undefined): string {
   const parts = [
-    step?.secs != null && `in ${step.secs.toFixed(1)} s`,
+    step?.secs != null && `in ${fmtSeconds(step.secs)}`,
     step?.cost_usd && fmtUsd(step.cost_usd),
   ];
   return parts.filter(Boolean).join(" · ");
@@ -22,14 +31,16 @@ const capital = (s: string) => s[0].toUpperCase() + s.slice(1);
 interface SceneProps {
   sb: Storyboard;
   s: SceneState;
-  seconds: number;
+  seconds: number | null;
+  /** Motion is allowed and not paused: a clip may play on its own. */
+  moving: boolean;
   playing: boolean;
   onListen: () => void;
 }
 
 /** A scene on the reel, looked at closely: its picture or clip, its line, and how far each of its
  * steps has got, with the time and money each took. */
-export function SceneCard({ sb, s, seconds, playing, onListen }: SceneProps) {
+export function SceneCard({ sb, s, seconds, moving, playing, onListen }: SceneProps) {
   const sc = sb.scenes.find((x) => x.n === s.n)!;
   const st = s.steps;
   const place = sb.places.find((p) => p.id === sc.place)?.name;
@@ -42,9 +53,10 @@ export function SceneCard({ sb, s, seconds, playing, onListen }: SceneProps) {
         src={asset(s.video)}
         poster={thumb(s.image, 768)}
         muted
-        loop
+        loop={moving}
+        autoPlay={moving}
+        controls={!moving}
         playsInline
-        autoPlay
       />
     ) : s.image ? (
       <img src={thumb(s.image, 768)} alt="" />
@@ -56,7 +68,9 @@ export function SceneCard({ sb, s, seconds, playing, onListen }: SceneProps) {
 
   const voice =
     s.voice === "done"
-      ? `${seconds.toFixed(1)} s of narration`
+      ? seconds != null
+        ? `${fmtSeconds(seconds)} of narration`
+        : "narrated"
       : s.voice === "working"
         ? "being recorded now"
         : "waiting its turn";
@@ -131,7 +145,7 @@ export function SceneCard({ sb, s, seconds, playing, onListen }: SceneProps) {
         )}
         {s.audio && (
           <div className="acts">
-            <button className="hbtn" onClick={onListen} aria-pressed={playing}>
+            <button className="hbtn" onClick={onListen}>
               {playing ? "Stop" : "Listen"}
             </button>
           </div>

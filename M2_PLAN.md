@@ -702,13 +702,17 @@ mini reel in the dock everywhere else; no sound; streaming the writer's prose co
   on a winding thread, with the cast sheet and portraits above: a waveform when it's narrated, then its
   picture warming in, a stamp while the check has it drawn again, and four pips for voice, picture,
   motion and cut. One sentence says what's happening ("Recording the narrator", then the scene and its
-  first line), with time left as a range and what the render has spent of the story's budget.
-  Hovering or focusing a slide opens its card (the picture or clip, the line, each step's time and
-  cost, a Listen button); a portrait draws threads to its scenes. Behind the scenes holds the stages
-  with their models, time and spend, a scene-by-step grid, and the log; it's closed until opened, and
-  the browser remembers. During the mix a spark runs the thread; at the finish, a summary with the
-  pictures that still fail the check. Loops run only with motion allowed and not paused ("Pause
-  motion"), and only what changes while someone watches animates. No new dependencies. Not done: a
-  View Transition from the reel to the film.
+  first line), with time left as a range and what the render has spent so far. Hovering or focusing a
+  slide opens its card (the picture or clip, the line, each step's time and cost, a Listen button); a
+  portrait draws threads to its scenes. From the keyboard, Tab stops at one slide, the arrows move
+  between them, Tab goes on into the open card and Escape closes it. Behind the scenes holds the
+  stages with what makes them, their time and spend, a scene-by-step grid, and the log; it's closed
+  until opened, and the browser remembers. During the mix a spark runs the thread; at the finish, a
+  summary with the pictures that still fail the check. Loops (a card's clip too) run only with motion
+  allowed and not paused ("Pause motion"), and only what changes while someone watches animates. The
+  snapshot says what makes each stage, whether there's a cast sheet and whose portraits are coming,
+  and the board each scene's first sentence, so the page guesses none of them. A render of a version
+  the script has since moved on from is shown as its stages. No new dependencies. Not done: a View
+  Transition from the reel to the film.
 - [ ] **Progress everywhere** (`feat/progress-everywhere`): the dock's mini reel, the tab title, a
   notification when asked for, and the Library.

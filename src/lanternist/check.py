@@ -97,7 +97,7 @@ class Checker(Maker):
     holds the scenes it gave a verdict on in this run, as against verdicts the cache already held."""
 
     def __init__(self, cfg: Settings, model: str, calls: llms.Calls):
-        self.model = model
+        self.model = self.label = model
         self.llm = llms.make(cfg, model, None, calls)
         self.remote = isinstance(self.llm, llms.OpenRouterLLM)
         self.per_check = 0  # micro-dollars, once `price()` has read the model's prices

@@ -253,6 +253,7 @@ class Clips(Maker):
     """Every scene's normalised clip: a still with its camera move, or a generated clip fitted to its slot."""
 
     CONCURRENT = 3  # ffmpeg encodes at once; more only queue on the encoder
+    label = "ffmpeg"
 
     async def run(self, items: list[Item], ctx: StepContext, on_item: OnItem) -> None:
         sem = asyncio.Semaphore(self.CONCURRENT)
@@ -275,6 +276,8 @@ class Clips(Maker):
 
 class Mix(Maker):
     """The film: the clips crossfaded, the narration laid on top, and the subtitle files."""
+
+    label = "ffmpeg"
 
     async def run(self, items: list[Item], ctx: StepContext, on_item: OnItem) -> None:
         for it in items:

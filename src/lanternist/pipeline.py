@@ -126,6 +126,8 @@ class Event:
     ahead: int | None = None  # waiting: the requests ahead of it in the provider's queue
     failed: str | None = None  # a verdict: why the picture check failed the item's picture
     at: float | None = None  # working: how far through the item it is, when it says (the mix), 0 to 1
+    model: str = ""  # start: what makes the stage's items
+    local: bool | None = None  # start: whether that runs on this machine
 
     def dict(self) -> dict:
         return asdict(self)
@@ -264,7 +266,9 @@ class Pipeline:
         total = {row: sum((it.stage or stage) == row for it in items) for row in rows}
         done = {row: sum((it.stage or stage) == row for it in items if it.id in records) for row in rows}
         for row in sorted(rows, key=lambda r: r == stage):  # the stage's own row last, as it was
-            self.emit(row, "start", done=done[row], total=total[row])
+            self.emit(
+                row, "start", done=done[row], total=total[row], model=maker.label, local=not maker.remote
+            )
 
         def told(it: Item, status: str, **kw) -> None:
             self.emit(it.stage or stage, status, scene=it.scene, who=it.who, **kw)
@@ -720,8 +724,17 @@ class Pipeline:
     # ---------------------------------------------------------------- what's already made
     def peek(self, sb: Storyboard) -> dict:
         """What the cache already holds for this storyboard, without running anything."""
+        # With each scene's first sentence: what the pages quote to say which scene it is.
         scenes: list[dict[str, Any]] = [
-            {"n": sc.n, "audio": None, "duration": None, "keyframe": None, "motion": None} for sc in sb.scenes
+            {
+                "n": sc.n,
+                "line": next(iter(text.sentences(sc.text)), ""),
+                "audio": None,
+                "duration": None,
+                "keyframe": None,
+                "motion": None,
+            }
+            for sc in sb.scenes
         ]
         out: dict = {"cast": None, "scenes": scenes, "total": None, "voice_ok": True}
         try:

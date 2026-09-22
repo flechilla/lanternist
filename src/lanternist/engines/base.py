@@ -127,6 +127,7 @@ class Maker:
 
     remote = False
     model_id: str | None = None  # the registry id, for the step_runs rows of local models
+    label = ""  # what the progress calls what makes it: a model's name
 
     def estimate(self, items: list[Item]) -> Estimate:
         raise NotImplementedError
@@ -140,7 +141,7 @@ class Engine(Maker):
 
     def __init__(self, cfg: Settings, entry: ModelEntry):
         self.cfg, self.entry = cfg, entry
-        self.model_id = entry.id
+        self.model_id, self.label = entry.id, entry.label
 
     def key(self, kind: str, **inputs) -> str:
         raise NotImplementedError

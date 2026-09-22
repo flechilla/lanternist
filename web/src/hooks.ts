@@ -169,3 +169,17 @@ function onVisibility(change: () => void) {
 export function useVisible(): boolean {
   return useSyncExternalStore(onVisibility, () => document.visibilityState === "visible");
 }
+
+function onMotionPreference(change: () => void) {
+  const query = matchMedia("(prefers-reduced-motion: reduce)");
+  query.addEventListener("change", change);
+  return () => query.removeEventListener("change", change);
+}
+
+/** Whether the viewer asked their system for less motion. */
+export function useReducedMotion(): boolean {
+  return useSyncExternalStore(
+    onMotionPreference,
+    () => matchMedia("(prefers-reduced-motion: reduce)").matches,
+  );
+}

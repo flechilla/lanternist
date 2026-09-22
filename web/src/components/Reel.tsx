@@ -1,32 +1,41 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import {
-  asset,
-  fmtSeconds,
-  fmtUsd,
-  thumb,
-  type BoardPeek,
-  type Budget,
-  type Job,
-  type Storyboard,
-} from "../api";
-import { usePlayer, useStored, useVisible, useWidth } from "../hooks";
-import { duration, headline, layout, sceneStates, slideEvents, timeLeft, type SceneState } from "../reel";
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type FocusEvent,
+  type KeyboardEvent,
+} from "react";
+import { asset, fmtSeconds, fmtUsd, thumb, type BoardPeek, type Job, type Storyboard } from "../api";
+import { usePlayer, useReducedMotion, useStored, useVisible, useWidth } from "../hooks";
+import {
+  duration,
+  headline,
+  layout,
+  reveal,
+  sceneStates,
+  slideEvents,
+  stageShare,
+  timeLeft,
+  type SceneState,
+} from "../reel";
 import Behind from "./Behind";
 import ReelSlide from "./ReelSlide";
 import { CastCard, SceneCard } from "./SceneCard";
 
-type Pick = { kind: "scene"; n: number } | { kind: "cast"; id: string | null }; // null: the cast sheet
-type Card = Pick & { pinned: boolean; x: number; y: number };
+type Target = { kind: "scene"; n: number } | { kind: "cast"; id: string | null }; // null: the cast sheet
+type Card = Target & { pinned: boolean; x: number; y: number };
 
 const OPEN_MS = 90; // a pointer only passing over the reel opens nothing
 const CLOSE_MS = 160; // time to move the pointer onto the card
 const CARD_WIDTH = 300;
+const ARROWS: Record<string, number> = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
 
 interface Props {
   sb: Storyboard;
   board: BoardPeek | null;
   job: Job;
-  budget: Budget;
   onCancel: () => void;
   onWatch: () => void;
 }
@@ -34,37 +43,39 @@ interface Props {
 /** A render as its story: every scene a slide on one reel, filling in as its voice, picture and motion
  * arrive, with the cast above it and one plain sentence of what's happening. Hover or focus a slide
  * for its details; the stages, models, spend and log are under Behind the scenes. */
-export default function Reel({ sb, board, job, budget, onCancel, onWatch }: Props) {
+export default function Reel({ sb, board, job, onCancel, onWatch }: Props) {
   const scenes = useMemo(() => sceneStates(sb, board, job), [sb, board, job]);
-  const { doing, detail } = headline(sb, job, scenes);
+  const { doing, detail } = headline(job, scenes, Object.fromEntries(sb.cast.map((c) => [c.id, c.name])));
   const [still, setStill] = useStored("reel.still", false);
   const [behind, setBehind] = useStored("reel.behind", false);
+  const reduced = useReducedMotion();
   const [card, setCard] = useState<Card | null>(null);
   const [threads, setThreads] = useState<string[]>([]);
+  const [tabbable, setTabbable] = useState(1); // the one slide Tab stops at; arrows move between them
   const [now, setNow] = useState(() => Date.now());
   const [firstStatus] = useState(job.status);
   const wrap = useRef<HTMLDivElement>(null);
   const reel = useRef<HTMLDivElement>(null);
+  const cardBox = useRef<HTMLDivElement>(null);
   const thread = useRef<SVGPathElement>(null);
   const spark = useRef<SVGCircleElement>(null);
   const slides = useRef(new Map<number, HTMLButtonElement>());
   const timers = useRef({ open: 0, close: 0 });
+  const returning = useRef(false); // focus is going back to a slide whose card Escape closed
   const shape = layout(scenes.length, useWidth(reel));
   const { audio, playing, play } = usePlayer<number>();
 
   const progress = job.progress ?? {};
   const stages = progress.stages ?? {};
   const done = job.status === "done";
-  const at = done ? 1 : stages.mix?.status === "done" ? 1 : (stages.mix?.at ?? 0);
-  const seconds = (n: number) => board?.scenes.find((b) => b.n === n)?.duration ?? 4;
-  const characters = sb.cast.filter((c) => c.kind === "character");
-  // Each character gets a portrait when the story draws from portraits and has more than one of them,
-  // as `pipeline.portrait_items` decides; they're on the reel from the start, like the scenes.
-  const portraits =
-    sb.portraits && !sb.cast_sheet_prompt && characters.length > 1
-      ? characters
-      : characters.filter((c) => progress.cast?.[c.id]);
+  const at = done || stages.mix?.status === "done" ? 1 : (stages.mix?.at ?? 0);
+  const seconds = (n: number) => board?.scenes.find((b) => b.n === n)?.duration ?? null;
+  // The cast as the job plans it: the backend says whether there's a sheet, and whose portraits.
   const sheet = stages.cast?.asset ?? board?.cast ?? null;
+  const hasSheet = !!progress.sheet || !!sheet;
+  const sheetDrawing = !sheet && stages.cast?.status === "running";
+  const portraits = sb.cast.filter((c) => progress.cast?.[c.id]);
+  const drawing = (id: string) => ["working", "waiting"].includes(progress.cast?.[id]?.state ?? "");
   const picked =
     card?.kind === "cast" && card.id
       ? new Set(sb.scenes.filter((s) => s.cast.includes(card.id!)).map((s) => s.n))
@@ -72,7 +83,12 @@ export default function Reel({ sb, board, job, budget, onCancel, onWatch }: Prop
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 15_000);
-    return () => clearInterval(t);
+    const pending = timers.current;
+    return () => {
+      clearInterval(t);
+      clearTimeout(pending.open);
+      clearTimeout(pending.close);
+    };
   }, []);
 
   // The spark sits on the thread where the mix has got to.
@@ -85,16 +101,23 @@ export default function Reel({ sb, board, job, budget, onCancel, onWatch }: Prop
     dot.setAttribute("cy", String(p.y));
   }, [at, shape.path]);
 
-  // A card opened by a click stays until a click elsewhere, or Escape.
+  // A card opened by a click or from elsewhere on the page takes the focus, and stays until a click
+  // elsewhere or Escape.
+  const pinnedTo = card?.pinned ? (card.kind === "scene" ? `s${card.n}` : `c${card.id}`) : null;
   useEffect(() => {
-    if (!card?.pinned) return;
+    if (!pinnedTo) return;
+    cardBox.current?.focus({ preventScroll: true });
     const away = (e: PointerEvent) => {
-      const t = e.target as Element;
-      if (!t.closest(".scene-card, .node, .cnode")) setCard(null);
+      if (!(e.target as Element).closest(".scene-card, .node, .cnode")) close();
     };
     document.addEventListener("pointerdown", away);
     return () => document.removeEventListener("pointerdown", away);
-  }, [card?.pinned]);
+  }, [pinnedTo]);
+
+  function close() {
+    setCard(null);
+    setThreads([]);
+  }
 
   function place(el: HTMLElement) {
     const wr = wrap.current!.getBoundingClientRect();
@@ -126,25 +149,27 @@ export default function Reel({ sb, board, job, budget, onCancel, onWatch }: Prop
     });
   }
 
-  function open(what: Pick, el: HTMLElement, pinned: boolean) {
+  function open(what: Target, el: HTMLElement, pinned: boolean) {
+    clearTimeout(timers.current.open);
     clearTimeout(timers.current.close);
+    if (!pinned && returning.current) {
+      returning.current = false;
+      return;
+    }
+    if (what.kind === "scene") setTabbable(what.n);
     if (pinned && card?.pinned && sameAs(card, what)) {
-      setCard(null);
-      setThreads([]);
+      close();
       return;
     }
     setCard({ ...what, pinned, ...place(el) });
     setThreads(what.kind === "cast" && what.id ? threadsFrom(what.id, el) : []);
   }
 
-  function hover(what: Pick | null, el: HTMLElement | null) {
+  function hover(what: Target | null, el: HTMLElement | null) {
     clearTimeout(timers.current.open);
     if (card?.pinned) return;
     if (!what || !el) {
-      timers.current.close = window.setTimeout(() => {
-        setCard(null);
-        setThreads([]);
-      }, CLOSE_MS);
+      timers.current.close = window.setTimeout(close, CLOSE_MS);
       return;
     }
     clearTimeout(timers.current.close);
@@ -153,28 +178,31 @@ export default function Reel({ sb, board, job, budget, onCancel, onWatch }: Prop
 
   function onKey(e: KeyboardEvent) {
     if (e.key === "Escape" && card) {
-      const n = card.kind === "scene" ? card.n : null;
-      setCard(null);
-      setThreads([]);
-      if (n) slides.current.get(n)?.focus({ preventScroll: true });
+      const back = card.kind === "scene" ? slides.current.get(card.n) : null;
+      close();
+      if (back && back !== document.activeElement) {
+        returning.current = true; // its focus mustn't open the card again
+        back.focus({ preventScroll: true });
+      }
       return;
     }
     const n = Number((e.target as HTMLElement).dataset.n);
-    const step = ({ ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 } as Record<string, number>)[
-      e.key
-    ];
-    if (!n || !step) return;
+    if (!n || !ARROWS[e.key]) return;
     e.preventDefault();
-    slides.current.get(Math.min(scenes.length, Math.max(1, n + step)))?.focus();
+    const next = Math.min(scenes.length, Math.max(1, n + ARROWS[e.key]));
+    setTabbable(next);
+    slides.current.get(next)?.focus();
+  }
+
+  // Focus leaving the reel and its card for elsewhere on the page takes the card with it.
+  function onBlur(e: FocusEvent) {
+    if (!wrap.current?.contains(e.relatedTarget)) close();
   }
 
   function showScene(n: number) {
     const el = slides.current.get(n);
     if (!el) return;
-    el.scrollIntoView({
-      block: "nearest",
-      behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
-    });
+    reveal(el);
     open({ kind: "scene", n }, el, true);
   }
 
@@ -184,7 +212,7 @@ export default function Reel({ sb, board, job, budget, onCancel, onWatch }: Prop
   const flagged = Object.entries(job.result?.flagged ?? {});
   const since = [
     started && `started ${duration(Math.max(0, (now - started) / 1000))} ago`,
-    spent > 0 && `${fmtUsd(spent)} of your ${fmtUsd(budget.usd)} budget`,
+    spent > 0 && `${fmtUsd(spent)} spent so far`,
   ].filter(Boolean);
 
   const cardScene = card?.kind === "scene" ? scenes.find((s) => s.n === card.n) : undefined;
@@ -263,7 +291,7 @@ export default function Reel({ sb, board, job, budget, onCancel, onWatch }: Prop
               </div>
               <div className="reel-actions">
                 <button className="hbtn" aria-pressed={still} onClick={() => setStill(!still)}>
-                  {still ? "Resume motion" : "Pause motion"}
+                  Pause motion
                 </button>
                 {behindButton}
                 <button className="hbtn quiet" onClick={onCancel}>
@@ -276,27 +304,24 @@ export default function Reel({ sb, board, job, budget, onCancel, onWatch }: Prop
       </div>
 
       {progress.phases && progress.phases.length > 0 && (
-        <div className="phases" aria-hidden="true">
+        <div
+          className="phases"
+          role="progressbar"
+          aria-label="How far the render has got"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={done ? 100 : Math.round((progress.fraction ?? 0) * 100)}
+        >
           {progress.phases.map(({ stage, label, share }) => {
             const st = stages[stage];
-            const fill =
-              !st || done
-                ? done
-                  ? 1
-                  : 0
-                : st.status === "done"
-                  ? 1
-                  : stage === "mix"
-                    ? at
-                    : st.total
-                      ? st.done / st.total
-                      : 0;
+            const fill = done ? 1 : !st ? 0 : stage === "mix" && st.status !== "done" ? at : stageShare(st);
             return (
               <div
                 key={stage}
                 className={`ph${fill >= 1 ? " done" : st?.status === "running" ? " now" : ""}`}
                 style={{ flex: `${share} 1 0` }}
                 title={label}
+                aria-hidden="true"
               >
                 <div className="track">
                   <div className="fill" style={{ width: `${fill * 100}%` }} />
@@ -308,42 +333,42 @@ export default function Reel({ sb, board, job, budget, onCancel, onWatch }: Prop
         </div>
       )}
 
-      <div className="stagewrap" ref={wrap} onKeyDown={onKey}>
+      <div className="stagewrap" ref={wrap} onKeyDown={onKey} onBlur={onBlur}>
         <svg className={`edges${threads.length ? " draw" : ""}`} aria-hidden="true">
           {threads.map((d) => (
             <path key={d} d={d} pathLength={1} />
           ))}
         </svg>
-        {characters.length > 0 && (
-          <div
-            className={`castrow${card?.kind === "cast" ? " focusing" : ""}`}
-            role="list"
-            aria-label="The cast"
-          >
-            <span className="castlab">Cast</span>
-            <CastSlide
-              label="Cast sheet"
-              image={sheet}
-              drawing={!sheet && stages.cast?.status === "running"}
-              open={card?.kind === "cast" && card.id === null}
-              onOpen={(el, pin) => open({ kind: "cast", id: null }, el, pin)}
-              onHover={(el) => hover(el && { kind: "cast", id: null }, el)}
-            />
-            {portraits.length > 0 && <Arrow />}
-            {portraits.map((c) => {
-              const step = progress.cast?.[c.id];
-              return (
+        {(hasSheet || portraits.length > 0) && (
+          <div className={`castrow${card?.kind === "cast" ? " focusing" : ""}`}>
+            <span className="castlab" aria-hidden="true">
+              Cast
+            </span>
+            <div className="castlist" role="list" aria-label="The cast">
+              {hasSheet && (
+                <CastSlide
+                  sheet
+                  label="Cast sheet"
+                  image={sheet}
+                  drawing={sheetDrawing}
+                  open={card?.kind === "cast" && card.id === null}
+                  onOpen={(el, pin) => open({ kind: "cast", id: null }, el, pin)}
+                  onHover={(el) => hover(el && { kind: "cast", id: null }, el)}
+                />
+              )}
+              {hasSheet && portraits.length > 0 && <Arrow />}
+              {portraits.map((c) => (
                 <CastSlide
                   key={c.id}
                   label={c.name}
-                  image={step?.asset ?? null}
-                  drawing={step?.state === "working" || step?.state === "waiting"}
+                  image={progress.cast?.[c.id]?.asset ?? null}
+                  drawing={drawing(c.id)}
                   open={card?.kind === "cast" && card.id === c.id}
                   onOpen={(el, pin) => open({ kind: "cast", id: c.id }, el, pin)}
                   onHover={(el) => hover(el && { kind: "cast", id: c.id }, el)}
                 />
-              );
-            })}
+              ))}
+            </div>
           </div>
         )}
         <div
@@ -385,6 +410,7 @@ export default function Reel({ sb, board, job, budget, onCancel, onWatch }: Prop
                       "--k": i,
                     } as CSSProperties
                   }
+                  tabbable={s.n === tabbable}
                   lit={lit(scenes, s.n, at)}
                   run={done && firstStatus !== "done"}
                   open={card?.kind === "scene" && card.n === s.n}
@@ -398,13 +424,12 @@ export default function Reel({ sb, board, job, budget, onCancel, onWatch }: Prop
         </div>
         {card && (cardScene || card.kind === "cast") && (
           <div
-            className={`scene-card${card.kind === "cast" ? " tall" : ""}`}
+            ref={cardBox}
+            className="scene-card"
             role="dialog"
             aria-label={cardScene ? `Scene ${cardScene.n}` : (cardMember?.name ?? "Cast sheet")}
-            style={{
-              left: card.x,
-              top: card.y,
-            }}
+            tabIndex={-1}
+            style={{ left: card.x, top: card.y }}
             onPointerEnter={() => clearTimeout(timers.current.close)}
             onPointerLeave={() => hover(null, null)}
           >
@@ -413,6 +438,7 @@ export default function Reel({ sb, board, job, budget, onCancel, onWatch }: Prop
                 sb={sb}
                 s={cardScene}
                 seconds={seconds(cardScene.n)}
+                moving={!still && !reduced}
                 playing={playing === cardScene.n}
                 onListen={() => cardScene.audio && play(cardScene.n, asset(cardScene.audio)!)}
               />
@@ -421,7 +447,7 @@ export default function Reel({ sb, board, job, budget, onCancel, onWatch }: Prop
                 member={cardMember ?? null}
                 step={cardMember ? progress.cast?.[cardMember.id] : undefined}
                 image={cardMember ? (progress.cast?.[cardMember.id]?.asset ?? null) : sheet}
-                drawing={cardMember ? progress.cast?.[cardMember.id]?.state === "working" : !sheet}
+                drawing={cardMember ? drawing(cardMember.id) : sheetDrawing}
                 scenes={cardMember ? sb.scenes.filter((s) => s.cast.includes(cardMember.id)).length : 0}
                 total={scenes.length}
               />
@@ -438,7 +464,7 @@ export default function Reel({ sb, board, job, budget, onCancel, onWatch }: Prop
   );
 }
 
-function sameAs(a: Pick, b: Pick): boolean {
+function sameAs(a: Target, b: Target): boolean {
   return a.kind === "scene" ? b.kind === "scene" && a.n === b.n : b.kind === "cast" && a.id === b.id;
 }
 
@@ -449,6 +475,7 @@ function lit(scenes: SceneState[], n: number, at: number): boolean {
 
 interface CastSlideProps {
   label: string;
+  sheet?: boolean;
   image: string | null;
   drawing: boolean;
   open: boolean;
@@ -457,7 +484,7 @@ interface CastSlideProps {
 }
 
 /** A portrait, or the cast sheet, above the reel. */
-function CastSlide({ label, image, drawing, open, onOpen, onHover }: CastSlideProps) {
+function CastSlide({ label, sheet, image, drawing, open, onOpen, onHover }: CastSlideProps) {
   const visible = useVisible();
   const [first, setFirst] = useState(image);
   if (!visible && first !== image) setFirst(image);
@@ -465,9 +492,11 @@ function CastSlide({ label, image, drawing, open, onOpen, onHover }: CastSlidePr
     <div role="listitem">
       <button
         type="button"
-        className={`cnode${label === "Cast sheet" ? " sheet" : ""}${open ? " on" : ""}${image && !first ? " a-pic" : ""}`}
+        className={`cnode${sheet ? " sheet" : ""}${open ? " on" : ""}${image && !first ? " a-pic" : ""}`}
         data-drawing={drawing || undefined}
         aria-label={`${label}: ${image ? "drawn" : drawing ? "being drawn" : "not drawn yet"}`}
+        aria-haspopup="dialog"
+        aria-expanded={open}
         {...slideEvents(onOpen, onHover)}
       >
         <span className="glass">

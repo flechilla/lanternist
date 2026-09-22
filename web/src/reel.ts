@@ -3,13 +3,15 @@
 // the backend's (`pipeline.LABELS`), as `jobs.Progress` reports them.
 
 import type { FocusEvent, MouseEvent, PointerEvent } from "react";
-import type { BoardPeek, Job, Step, Storyboard } from "./api";
+import type { BoardPeek, Job, StageState, Step, Storyboard } from "./api";
 
 /** Where one thing a scene needs has got to. */
 export type Phase = "planned" | "waiting" | "working" | "done";
 
 export interface SceneState {
   n: number;
+  /** Its narration's first sentence, as the backend splits sentences: enough to tell which scene it is. */
+  line: string;
   voice: Phase;
   audio: string | null;
   picture: Phase;
@@ -56,6 +58,7 @@ export function sceneStates(sb: Storyboard, board: BoardPeek | null, job: Job | 
     const image = steps.keyframes?.asset ?? peek?.keyframe ?? null;
     return {
       n: sc.n,
+      line: peek?.line ?? "",
       voice: phase(steps.narration, !!peek?.audio),
       audio: steps.narration?.asset ?? peek?.audio ?? null,
       picture: phase(steps.keyframes, !!image),
@@ -127,33 +130,24 @@ export function layout(scenes: number, reelWidth: number): Layout {
   return { points, width, height, total: rows * height + Math.max(rows - 1, 0) * rowGap, path, segments };
 }
 
-/** The first sentence of a scene's narration: enough to tell which scene it is. */
-export function firstSentence(text: string): string {
-  const m = /^.+?[.!?…](?=\s|$)/u.exec(text.trim());
-  return m ? m[0] : text.trim();
-}
-
 const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 /** What's happening now, in two lines: the stage in plain words, and the scene or character it's on. */
-export function headline(sb: Storyboard, job: Job, scenes: SceneState[]): { doing: string; detail: string } {
+export function headline(
+  job: Job,
+  scenes: SceneState[],
+  names: Record<string, string>,
+): { doing: string; detail: string } {
   if (job.status === "queued") return { doing: "Waiting its turn", detail: "Another job is running first." };
   const stages = Object.entries(job.progress?.stages ?? {});
   if (!stages.length) return { doing: "Getting ready", detail: "" };
   const [key, st] = stages.find(([, s]) => s.status === "running") ?? stages[stages.length - 1];
   const doing = st.doing || st.label || key;
-  const narration = (n: number) =>
-    sb.scenes
-      .find((s) => s.n === n)
-      ?.narration.map((l) => l.text)
-      .join(" ") ?? "";
-
   if (key === "cast" || key === "portraits") {
     const who = Object.entries(job.progress?.cast ?? {}).find(
       ([, s]) => s.state === "working" || s.state === "waiting",
     )?.[0];
-    const member = sb.cast.find((c) => c.id === who);
-    if (member) return { doing, detail: `Now ${member.name}, drawn from the cast sheet.` };
+    if (who) return { doing, detail: `Now ${names[who] ?? who}, drawn from the cast sheet.` };
     return { doing, detail: "First the cast sheet, with everyone together: every picture is drawn from it." };
   }
   const again = scenes.filter((s) => s.again !== null);
@@ -174,7 +168,7 @@ export function headline(sb: Storyboard, job: Job, scenes: SceneState[]): { doin
   if (working.length === 1 && !waiting.length)
     return {
       doing,
-      detail: `Scene ${working[0].n} of ${scenes.length} · “${firstSentence(narration(working[0].n))}”`,
+      detail: `Scene ${working[0].n} of ${scenes.length}${working[0].line ? ` · “${working[0].line}”` : ""}`,
     };
   const parts = [
     working.length > 1 && `${working.length} being made`,
@@ -214,4 +208,22 @@ export function slideEvents(
       e.pointerType !== "touch" && onHover(e.currentTarget),
     onPointerLeave: () => onHover(null),
   };
+}
+
+/** How far a stage row has got, 0 to 1: its items made, or all of it once it's done. */
+export function stageShare(st: StageState): number {
+  return st.total ? st.done / st.total : st.status === "done" ? 1 : 0;
+}
+
+/** A stage row's count as the progress shows it: "12/37", "done" or "working". */
+export function stageCount(st: StageState): string {
+  return st.total ? `${st.done}/${st.total}` : st.status === "done" ? "done" : "working";
+}
+
+/** Bring an element into view, smoothly unless the viewer asked for less motion. */
+export function reveal(el: Element, block: ScrollLogicalPosition = "nearest") {
+  el.scrollIntoView({
+    block,
+    behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+  });
 }

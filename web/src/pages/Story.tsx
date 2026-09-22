@@ -106,6 +106,13 @@ export default function Story() {
   const active = jobs.filter(isActive).sort((a, b) => (a.created_at ?? "").localeCompare(b.created_at ?? ""));
   const current = active.find((j) => j.status === "running") ?? active[0];
 
+  // A picture check saves its new seeds as a version while the job runs: load it, so the page (and the
+  // reel, which shows a render over its own version) keeps up.
+  const ahead = !!detail && !!current?.version && current.version > detail.version;
+  useEffect(() => {
+    if (ahead) load().catch(() => undefined);
+  }, [ahead, load]);
+
   // What jobs for this exact version have produced so far, before the next refetch shows it.
   const liveAssets = useMemo(() => {
     const keyframes: Record<string, string> = {};

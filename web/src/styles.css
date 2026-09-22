@@ -1500,7 +1500,8 @@ details > summary {
   stroke-dasharray: 1;
 }
 
-.castrow {
+.castrow,
+.castlist {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
@@ -1806,7 +1807,7 @@ details > summary {
 }
 .spark {
   fill: #fff6df;
-  filter: drop-shadow(0 0 6px #f0b14a) drop-shadow(0 0 14px #f0b14a);
+  filter: drop-shadow(0 0 6px var(--h-lamp)) drop-shadow(0 0 14px var(--h-lamp));
   opacity: 0;
   transition: opacity var(--t-mid);
 }
@@ -2100,7 +2101,11 @@ details > summary {
 .drawer {
   display: grid;
   grid-template-rows: 0fr;
-  transition: grid-template-rows var(--t-slow) var(--ease-out);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .drawer {
+    transition: grid-template-rows var(--t-slow) var(--ease-out);
+  }
 }
 .drawer.open {
   grid-template-rows: 1fr;

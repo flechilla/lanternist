@@ -29,6 +29,7 @@ def test_story_lifecycle(client, wait):
     sid = created["story"]["id"]
     story = client.get(f"/api/stories/{sid}").json()
     assert story["version"] == 1 and story["board"]["scenes"][0]["keyframe"] is None
+    assert story["board"]["scenes"][0]["line"] == "Scene 1 says a few words out loud."
     assert story["writer"] is None  # imported: nobody here wrote it
 
     wait(client.post(f"/api/stories/{sid}/board").json()["id"])
@@ -61,6 +62,9 @@ def test_story_lifecycle(client, wait):
     assert all(steps["clips"]["state"] == "done" for steps in scenes.values())
     assert scenes["1"]["narration"]["state"] == "cached" and "motion" not in scenes["1"]  # a still
     assert job["progress"]["spent_usd"] == 0 and stages["keyframes"]["doing"] == "Painting the scenes"
+    # What makes each stage, and whether it's this machine: the page doesn't guess.
+    assert (stages["clips"]["model"], stages["clips"]["local"]) == ("ffmpeg", True)
+    assert stages["keyframes"]["model"] == "FLUX.2 [klein] 9B" and job["progress"]["sheet"] is True
     r = client.get(f"/api/assets/{film}", headers={"Range": "bytes=0-99"})
     assert r.status_code == 206 and len(r.content) == 100
     assert client.get(f"/api/assets/{job['result']['vtt']}").headers["content-type"].startswith("text/vtt")
