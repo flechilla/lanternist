@@ -1,0 +1,49 @@
+# Every gate is defined once, in scripts/check; this file only provides the machines.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: ffmpeg (the fake engines render real test media)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - uses: astral-sh/setup-uv@v10.2.0   # no major-version tags since v7; reads required-version from pyproject.toml
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - run: scripts/check python
+
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v5   # v6 needs pnpm 11; web/package.json pins pnpm 10
+        with:
+          package_json_file: web/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: web/package.json
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm --dir web install --frozen-lockfile
+      - run: scripts/check web
+      - run: scripts/check dup

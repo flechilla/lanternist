@@ -14,8 +14,16 @@ from ..config import Settings
 class ProviderError(RuntimeError):
     """A failed call to a remote provider, with what's needed to decide whether to retry."""
 
-    def __init__(self, message: str, *, status: int | None = None, type: str | None = None,
-                 retryable: bool = False, retry_after: float | None = None, meta: dict | None = None):
+    def __init__(
+        self,
+        message: str,
+        *,
+        status: int | None = None,
+        type: str | None = None,
+        retryable: bool = False,
+        retry_after: float | None = None,
+        meta: dict | None = None,
+    ):
         super().__init__(message)
         self.status, self.type, self.retryable = status, type, retryable
         self.retry_after, self.meta = retry_after, meta or {}
@@ -50,7 +58,7 @@ def backoff(attempt: int, retry_after: float | None = None, cap: float = 30.0) -
     """Seconds to wait before retry number `attempt` (0-based), honouring a Retry-After."""
     if retry_after is not None:
         return min(max(retry_after, 0.0), cap * 2)
-    return min(cap, 0.5 * 2 ** attempt) * random.uniform(0.8, 1.2)
+    return min(cap, 0.5 * 2**attempt) * random.uniform(0.8, 1.2)
 
 
 def retry_after(r: httpx.Response) -> float | None:

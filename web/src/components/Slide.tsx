@@ -2,12 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import { asset } from "../api";
 
 interface Props {
-  image?: string | null;       // asset id
-  video?: string | null;       // asset id, shown as a still frame (thumbnail)
-  label?: string;              // the paper label on the frame
-  mark?: string;               // a note painted on the right of the frame
+  image?: string | null; // asset id
+  video?: string | null; // asset id, shown as a still frame (thumbnail)
+  label?: string; // the paper label on the frame
+  mark?: string; // a note painted on the right of the frame
   square?: boolean;
-  empty?: string;              // text on dark glass when there is no picture
+  empty?: string; // text on dark glass when there is no picture
   drawing?: boolean;
   alt?: string;
 }
@@ -25,11 +25,19 @@ export default function Slide({ image, video, label, mark, square, empty, drawin
     <div className={`slide${square ? " square" : ""}`}>
       <div className="aperture">
         {image ? (
-          <img key={image} src={asset(image)} alt={alt} loading="lazy" className={fresh ? "fresh" : undefined} />
+          <img
+            key={image}
+            src={asset(image)}
+            alt={alt}
+            loading="lazy"
+            className={fresh ? "fresh" : undefined}
+          />
         ) : video ? (
           <video src={`${asset(video)}#t=2`} preload="metadata" muted playsInline aria-label={alt} />
         ) : (
-          <div className={`empty${drawing ? " drawing" : ""}`}>{drawing ? "Drawing…" : empty ?? "Not drawn yet"}</div>
+          <div className={`empty${drawing ? " drawing" : ""}`}>
+            {drawing ? "Drawing…" : (empty ?? "Not drawn yet")}
+          </div>
         )}
       </div>
       {label && <span className="slide-label">{label}</span>}

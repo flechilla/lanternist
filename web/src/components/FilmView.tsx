@@ -25,7 +25,9 @@ export default function FilmView({ detail, jobs, busy, onRender, onCancel }: Pro
           <div className="row">
             <h2>Rendering version {running.version}</h2>
             <span className="spacer" />
-            <button className="small danger" onClick={() => onCancel(running)}>Cancel render</button>
+            <button className="small danger" onClick={() => onCancel(running)}>
+              Cancel render
+            </button>
           </div>
           <Stages job={running} />
           <Log job={running} />
@@ -44,28 +46,53 @@ export default function FilmView({ detail, jobs, busy, onRender, onCancel }: Pro
 
       {result?.film ? (
         <section className="hall">
-          <video key={result.film} controls preload="metadata" playsInline poster={asset(detail.board?.scenes[0]?.keyframe)}>
+          <video
+            key={result.film}
+            controls
+            preload="metadata"
+            playsInline
+            poster={asset(detail.board?.scenes[0]?.keyframe)}
+          >
             <source src={asset(result.film)} type="video/mp4" />
-            {result.vtt && <track kind="subtitles" src={asset(result.vtt)} srcLang={detail.story.language} label="Subtitles" default />}
+            {result.vtt && (
+              <track
+                kind="subtitles"
+                src={asset(result.vtt)}
+                srcLang={detail.story.language}
+                label="Subtitles"
+                default
+              />
+            )}
           </video>
           <div className="caption">
             <span>{fmtSeconds(result.duration)}</span>
             <a href={asset(result.film, `${name}-v${film!.version}.mp4`)}>Download MP4</a>
-            {result.srt && <a href={asset(result.srt, `${name}-v${film!.version}.srt`)}>Download subtitles</a>}
+            {result.srt && (
+              <a href={asset(result.srt, `${name}-v${film!.version}.srt`)}>Download subtitles</a>
+            )}
             <span className="spacer" />
-            <button className="small" onClick={onRender} disabled={busy || !!running}>Render again</button>
+            <button className="small" onClick={onRender} disabled={busy || !!running}>
+              Render again
+            </button>
           </div>
           <p className="note" style={{ marginTop: 10 }}>
             Made from version {film!.version}
-            {film!.version !== detail.version ? `. The script is now at version ${detail.version}; render again to include the changes.` : "."}
+            {film!.version !== detail.version
+              ? `. The script is now at version ${detail.version}; render again to include the changes.`
+              : "."}
             {result.path && <> Saved at {result.path}</>}
           </p>
         </section>
       ) : !running ? (
         <section className="hall empty">
           <h2 style={{ marginBottom: 10 }}>No film yet</h2>
-          <p>Rendering animates the video scenes, gives stills their camera moves, and mixes the narration with each scene's ambience.</p>
-          <button className="primary" onClick={onRender} disabled={busy}>Approve and render</button>
+          <p>
+            Rendering animates the video scenes, gives stills their camera moves, and mixes the narration with
+            each scene's ambience.
+          </p>
+          <button className="primary" onClick={onRender} disabled={busy}>
+            Approve and render
+          </button>
         </section>
       ) : null}
     </div>

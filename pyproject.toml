@@ -21,11 +21,19 @@ dependencies = [
 lanternist = "lanternist.cli:app"
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.6"]
+dev = [
+    "mypy>=2.3.1",
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.6",
+]
 
 [build-system]
 requires = ["uv_build>=0.11.12,<0.12.0"]
 build-backend = "uv_build"
+
+[tool.uv]
+required-version = ">=0.11.12"   # CI installs the same uv
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -35,3 +43,58 @@ addopts = "-m 'not gpu and not live'"
 
 [tool.ruff]
 line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F", "I", "UP",   # pycodestyle, pyflakes, isort, pyupgrade
+    "B", "BLE", "S",            # likely bugs, blind excepts, security
+    "ASYNC", "PT", "LOG", "G",  # asyncio, pytest, logging
+    "SIM", "C4", "PIE", "RET", "FURB", "PERF", "RUF",   # simpler, idiomatic code
+    "ARG", "ERA", "T10",        # unused arguments, commented-out code, debugger calls
+    "C90",                      # complexity ceiling, below
+]
+ignore = [
+    "E501",      # the formatter wraps code; a long string or comment is fine
+    "ISC001",    # conflicts with the formatter
+    "S603", "S607",   # subprocess with list args is how every engine runs
+    "S311",      # `random` picks story seeds, not secrets
+    "ASYNC109",  # polling loops take an explicit deadline
+    "ASYNC240",  # local-disk Path calls take microseconds; to_thread would cost more
+    "PERF401",   # an append loop is often the clearer form
+    "PT018",     # `assert a and b` in tests reads as one fact
+    "RUF001",    # narration is multilingual: « » „ “ … are intended
+    "ARG005",    # event callbacks take arguments they may ignore
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "ARG001"]   # asserts are the point; some fixtures are requested for their effect
+
+[tool.ruff.lint.mccabe]
+max-complexity = 15   # the worst function today; lower it as stages move behind the engine interface
+
+[tool.mypy]
+python_version = "3.12"
+packages = ["lanternist"]
+mypy_path = "src"
+plugins = ["pydantic.mypy"]
+warn_unused_ignores = true
+warn_redundant_casts = true
+strict_equality = true
+exclude = ["src/lanternist/workers/"]   # they run in other venvs, against libraries this one lacks
+
+[[tool.mypy.overrides]]
+module = ["pynvml"]
+ignore_missing_imports = true   # NVIDIA ships it without type hints or stubs
+
+# Modules that failed when mypy was added. Touching one? Make it pass and delete it from this list.
+# Never add a module to it.
+[[tool.mypy.overrides]]
+module = [
+    "lanternist.cli",
+    "lanternist.jobs",
+    "lanternist.pipeline",
+    "lanternist.providers.fal",
+    "lanternist.writer",
+]
+ignore_errors = true

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type Check } from "../api";
+import { api, errorMessage, type Check } from "../api";
 
 const MARK = { ok: "✓", warn: "!", fail: "✗" } as const;
 const WORD = { ok: "ready", warn: "warning", fail: "problem" } as const;
@@ -7,14 +7,25 @@ const WORD = { ok: "ready", warn: "warning", fail: "problem" } as const;
 export default function Doctor() {
   const [checks, setChecks] = useState<Check[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [running, setRunning] = useState(false);
+  const [running, setRunning] = useState(true);
 
-  const load = useCallback(() => {
+  const check = useCallback(
+    () =>
+      api
+        .doctor()
+        .then(setChecks, (e: unknown) => setError(errorMessage(e)))
+        .finally(() => setRunning(false)),
+    [],
+  );
+  useEffect(() => {
+    void check();
+  }, [check]);
+
+  function again() {
     setRunning(true);
     setError(null);
-    api.doctor().then(setChecks, (e) => setError(e.message)).finally(() => setRunning(false));
-  }, []);
-  useEffect(load, [load]);
+    void check();
+  }
 
   const fails = checks?.filter((c) => c.status === "fail").length ?? 0;
   const warns = checks?.filter((c) => c.status === "warn").length ?? 0;
@@ -33,14 +44,18 @@ export default function Doctor() {
           </p>
         </div>
         <div className="spacer" />
-        <button onClick={load} disabled={running}>{running ? "Checking…" : "Check again"}</button>
+        <button onClick={again} disabled={running}>
+          {running ? "Checking…" : "Check again"}
+        </button>
       </div>
       {error && <p className="error">{error}</p>}
       {checks && (
         <div className="checklist">
           {checks.map((c) => (
             <div key={c.name} className={`checkrow ${c.status}`}>
-              <span className="mark" aria-label={WORD[c.status]}>{MARK[c.status]}</span>
+              <span className="mark" aria-label={WORD[c.status]}>
+                {MARK[c.status]}
+              </span>
               <b>{c.name}</b>
               <span className="detail">{c.detail}</span>
             </div>

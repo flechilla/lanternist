@@ -5,8 +5,16 @@ import unicodedata
 
 # Qwen3-TTS takes the language as an English name.
 LANGUAGES = {
-    "en": "English", "es": "Spanish", "pt": "Portuguese", "fr": "French", "de": "German",
-    "it": "Italian", "ru": "Russian", "zh": "Chinese", "ja": "Japanese", "ko": "Korean",
+    "en": "English",
+    "es": "Spanish",
+    "pt": "Portuguese",
+    "fr": "French",
+    "de": "German",
+    "it": "Italian",
+    "ru": "Russian",
+    "zh": "Chinese",
+    "ja": "Japanese",
+    "ko": "Korean",
 }
 
 # Every engine has a per-request ceiling and quality drifts on long passages.

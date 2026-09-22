@@ -14,8 +14,8 @@ from .text import MAX_CUE, pack
 
 @dataclass
 class Timeline:
-    speech_starts: list[float]   # when each scene's narration starts
-    bounds: list[float]          # scene boundaries b0=0 .. bN=total
+    speech_starts: list[float]  # when each scene's narration starts
+    bounds: list[float]  # scene boundaries b0=0 .. bN=total
     xfade: float
 
     @property
@@ -45,7 +45,7 @@ def timeline(durations: list[float], gap: float, lead_in: float, tail: float, xf
         starts.append(round(t, 3))
         t += d + gap
     end = starts[-1] + durations[-1] + tail
-    bounds = [0.0] + starts[1:] + [round(end, 3)]
+    bounds = [0.0, *starts[1:], round(end, 3)]
     return Timeline(speech_starts=starts, bounds=bounds, xfade=xfade)
 
 
@@ -67,15 +67,19 @@ class Cue:
     text: str
 
 
-def cues(scene_texts: list[list[str]], chunk_durations: list[list[float]], speech_starts: list[float],
-         chunk_gap: float) -> list[Cue]:
+def cues(
+    scene_texts: list[list[str]],
+    chunk_durations: list[list[float]],
+    speech_starts: list[float],
+    chunk_gap: float,
+) -> list[Cue]:
     """Subtitle cues from the synthesis chunks' real durations, split into sentence-sized pieces.
 
     Within a chunk, pieces share its duration in proportion to their length.
     """
     out = []
-    for chunks, durs, t in zip(scene_texts, chunk_durations, speech_starts):
-        for chunk, d in zip(chunks, durs):
+    for chunks, durs, t in zip(scene_texts, chunk_durations, speech_starts, strict=True):
+        for chunk, d in zip(chunks, durs, strict=True):
             parts = pack(chunk, MAX_CUE)
             chars = sum(len(p) for p in parts) or 1
             c = t
@@ -94,7 +98,9 @@ def _ts(t: float, sep: str) -> str:
 
 
 def srt(cs: list[Cue]) -> str:
-    return "\n".join(f"{i}\n{_ts(c.start, ',')} --> {_ts(c.end, ',')}\n{c.text}\n" for i, c in enumerate(cs, 1))
+    return "\n".join(
+        f"{i}\n{_ts(c.start, ',')} --> {_ts(c.end, ',')}\n{c.text}\n" for i, c in enumerate(cs, 1)
+    )
 
 
 def vtt(cs: list[Cue]) -> str:

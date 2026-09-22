@@ -34,7 +34,11 @@ def sample(schema: dict):
         return {k: sample(v) for k, v in (schema.get("properties") or {}).items()}
     if t == "array":
         return [sample(schema.get("items") or {}) for _ in range(max(schema.get("minItems", 1), 1))]
-    return {"string": "text", "integer": 1, "number": 1.0, "boolean": False}.get(t)
+    return (
+        {"string": "text", "integer": 1, "number": 1.0, "boolean": False}.get(t)
+        if isinstance(t, str)
+        else None
+    )
 
 
 def _json(data, status: int = 200, headers: dict | None = None) -> httpx.Response:
@@ -65,13 +69,15 @@ class FakeRequest:
 @dataclass
 class FakeFal:
     polls_before_done: int = 2
-    billable_units_on: str = "result"          # which response carries X-Fal-Billable-Units: result | status | none
+    billable_units_on: str = "result"  # which response carries X-Fal-Billable-Units: result | status | none
     bad_keys: set[str] = field(default_factory=lambda: {"bad"})
     deprecated: set[str] = field(default_factory=set)
-    prices: dict[str, tuple[str, str]] = field(default_factory=dict)   # endpoint -> (unit_price, unit)
-    unpriced: set[str] = field(default_factory=set)    # asking for any of these 404s the whole batch, as fal does
+    prices: dict[str, tuple[str, str]] = field(default_factory=dict)  # endpoint -> (unit_price, unit)
+    unpriced: set[str] = field(
+        default_factory=set
+    )  # asking for any of these 404s the whole batch, as fal does
     fail_submit: list[tuple[int, dict]] = field(default_factory=list)  # next submits answer these
-    fail_result: dict[str, str] = field(default_factory=dict)          # endpoint -> error on completion
+    fail_result: dict[str, str] = field(default_factory=dict)  # endpoint -> error on completion
     requests: dict[str, FakeRequest] = field(default_factory=dict)
     submits: list[str] = field(default_factory=list)
     cancels: list[str] = field(default_factory=list)
@@ -85,7 +91,7 @@ class FakeFal:
         if host == "v3.fal.media" and request.method == "GET":
             body, ctype = self.media.get(str(request.url).split("?")[0], (b"", ""))
             return httpx.Response(200 if body else 404, content=body, headers={"content-type": ctype})
-        if host in ("storage.googleapis.com",):
+        if host == "storage.googleapis.com":
             return httpx.Response(200)
         if host == "v3.fal.media":
             return self._upload(request)
@@ -94,21 +100,43 @@ class FakeFal:
         if host == "queue.fal.run":
             return await self._queue(request, path.lstrip("/"))
         if host == "rest.fal.ai" and path.endswith("/storage/auth/token"):
-            return _json({"token": "fake-token", "token_type": "Bearer", "base_url": "https://v3.fal.media",
-                          "expires_at": "2099-01-01T00:00:00+00:00"})
+            return _json(
+                {
+                    "token": "fake-token",
+                    "token_type": "Bearer",
+                    "base_url": "https://v3.fal.media",
+                    "expires_at": "2099-01-01T00:00:00+00:00",
+                }
+            )
         if host == "rest.fal.ai" and path.endswith("/storage/upload/initiate"):
             name = json.loads(request.content)["file_name"]
-            return _json({"upload_url": f"https://storage.googleapis.com/fake/{name}",
-                          "file_url": f"https://v3.fal.media/files/gcs/{name}"})
+            return _json(
+                {
+                    "upload_url": f"https://storage.googleapis.com/fake/{name}",
+                    "file_url": f"https://v3.fal.media/files/gcs/{name}",
+                }
+            )
         if host == "api.fal.ai" and path == "/v1/models/pricing":
             wanted = request.url.params.get_list("endpoint_id")
             if self.unpriced & set(wanted):
                 return _json({"error": {"type": "not_found", "message": "Endpoint(s) not found"}}, 404)
             return _json({"prices": [self._price(e) for e in wanted]})
         if host == "api.fal.ai" and path == "/v1/models":
-            return _json({"models": [{"endpoint_id": e, "metadata": {
-                "status": "deprecated" if e in self.deprecated else "active", "display_name": e}}
-                for e in request.url.params.get_list("endpoint_id")], "has_more": False})
+            return _json(
+                {
+                    "models": [
+                        {
+                            "endpoint_id": e,
+                            "metadata": {
+                                "status": "deprecated" if e in self.deprecated else "active",
+                                "display_name": e,
+                            },
+                        }
+                        for e in request.url.params.get_list("endpoint_id")
+                    ],
+                    "has_more": False,
+                }
+            )
         return _json({"detail": f"fake fal has no route for {request.method} {request.url}"}, 404)
 
     def _price(self, endpoint: str) -> dict:
@@ -122,8 +150,12 @@ class FakeFal:
                 for role, ep in e.all_endpoints().items():
                     if ep == endpoint and e.price.usd is not None:
                         price = str(e.price.tiers.get(role, e.price.usd) if role else e.price.usd)
-                        unit = {"output_second": "seconds", "megapixel": "megapixels", "image": "images",
-                                "1k_chars": "1000 characters"}.get(e.price.unit, e.price.unit)
+                        unit = {
+                            "output_second": "seconds",
+                            "megapixel": "megapixels",
+                            "image": "images",
+                            "1k_chars": "1000 characters",
+                        }.get(e.price.unit, e.price.unit)
         return {"endpoint_id": endpoint, "unit_price": float(price), "unit": unit, "currency": "USD"}
 
     def _upload(self, request: httpx.Request) -> httpx.Response:
@@ -146,9 +178,15 @@ class FakeFal:
             rid = f"req-{next(self._ids)}"
             self.requests[rid] = FakeRequest(rid, path, json.loads(request.content or b"{}"))
             self.submits.append(rid)
-            return _json({"request_id": rid, "status_url": f"{base}/{path}/requests/{rid}/status",
-                          "response_url": f"{base}/{path}/requests/{rid}",
-                          "cancel_url": f"{base}/{path}/requests/{rid}/cancel", "queue_position": 0})
+            return _json(
+                {
+                    "request_id": rid,
+                    "status_url": f"{base}/{path}/requests/{rid}/status",
+                    "response_url": f"{base}/{path}/requests/{rid}",
+                    "cancel_url": f"{base}/{path}/requests/{rid}/cancel",
+                    "queue_position": 0,
+                }
+            )
         _endpoint, rest = path.split("/requests/", 1)
         rid, _, action = rest.partition("/")
         req = self.requests.get(rid)
@@ -165,8 +203,13 @@ class FakeFal:
             if req.polls <= self.polls_before_done:
                 return _json({"status": "IN_PROGRESS", "logs": []})
             if req.endpoint in self.fail_result:
-                return _json({"status": "COMPLETED", "error": self.fail_result[req.endpoint],
-                              "error_type": "content_policy_violation"})
+                return _json(
+                    {
+                        "status": "COMPLETED",
+                        "error": self.fail_result[req.endpoint],
+                        "error_type": "content_policy_violation",
+                    }
+                )
             await self._make(req)
             headers = {"x-fal-billable-units": str(req.units)} if self.billable_units_on == "status" else None
             return _json({"status": "COMPLETED", "metrics": {"inference_time": 1.5}}, headers=headers)
@@ -198,17 +241,24 @@ class FakeFal:
             path = out.with_suffix(".wav")
             await asyncio.to_thread(media.tts, {"id": req.id, "chunks": [text or "hello"], "out": str(path)})
             url = self._store(path.name, path.read_bytes(), "audio/wav")
-            req.output, req.units = {"audio": {"url": url, "content_type": "audio/wav"}}, round(len(text) / 1000, 4)
+            req.output, req.units = (
+                {"audio": {"url": url, "content_type": "audio/wav"}},
+                round(len(text) / 1000, 4),
+            )
         else:
             size = a.get("image_size")
             w, h = (size["width"], size["height"]) if isinstance(size, dict) else (512, 288)
             path = out.with_suffix(".png")
-            await media.image({"id": req.id, "seed": a.get("seed") or 1, "width": w, "height": h, "out": str(path)})
+            await media.image(
+                {"id": req.id, "seed": a.get("seed") or 1, "width": w, "height": h, "out": str(path)}
+            )
             url = self._store(path.name, path.read_bytes(), "image/png")
             refs = len(a.get("image_urls") or [])
             units = round(w * h / 1e6 + refs, 4) if "klein" in ep else 1.0
-            req.output = {"images": [{"url": url, "content_type": "image/png", "width": w, "height": h}],
-                          "seed": a.get("seed")}
+            req.output = {
+                "images": [{"url": url, "content_type": "image/png", "width": w, "height": h}],
+                "seed": a.get("seed"),
+            }
             req.units = units
 
     def _store(self, name: str, body: bytes, ctype: str) -> str:
@@ -217,26 +267,37 @@ class FakeFal:
         return url
 
 
-FAKE_STORY = ("TITLE: The Fake Lantern\n\n"
-              + "\n\n".join(f"Paragraph {i} tells a small part of the story with enough words to read aloud."
-                            for i in range(1, 5)))
+FAKE_STORY = "TITLE: The Fake Lantern\n\n" + "\n\n".join(
+    f"Paragraph {i} tells a small part of the story with enough words to read aloud." for i in range(1, 5)
+)
 
 
 @dataclass
 class FakeOpenRouter:
     bad_keys: set[str] = field(default_factory=lambda: {"bad"})
-    replies: list = field(default_factory=list)      # next answers: a string, or (status, error body)
+    replies: list = field(default_factory=list)  # next answers: a string, or (status, error body)
     chats: list[dict] = field(default_factory=list)
     usage: float = 1.25
     limit: float | None = 10.0
-    models: list[dict] = field(default_factory=lambda: [
-        {"id": "fake/frontier", "name": "Fake Frontier", "context_length": 200000,
-         "pricing": {"prompt": "0.000003", "completion": "0.000015"},
-         "supported_parameters": ["structured_outputs", "response_format", "reasoning", "temperature"],
-         "reasoning": {"mandatory": False}},
-        {"id": "fake/cheap", "name": "Fake Cheap", "context_length": 128000,
-         "pricing": {"prompt": "0.0000001", "completion": "0.0000004"},
-         "supported_parameters": ["structured_outputs", "response_format", "temperature"]}])
+    models: list[dict] = field(
+        default_factory=lambda: [
+            {
+                "id": "fake/frontier",
+                "name": "Fake Frontier",
+                "context_length": 200000,
+                "pricing": {"prompt": "0.000003", "completion": "0.000015"},
+                "supported_parameters": ["structured_outputs", "response_format", "reasoning", "temperature"],
+                "reasoning": {"mandatory": False},
+            },
+            {
+                "id": "fake/cheap",
+                "name": "Fake Cheap",
+                "context_length": 128000,
+                "pricing": {"prompt": "0.0000001", "completion": "0.0000004"},
+                "supported_parameters": ["structured_outputs", "response_format", "temperature"],
+            },
+        ]
+    )
 
     async def handle(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -246,9 +307,17 @@ class FakeOpenRouter:
         if not _authorized(request, "Bearer", self.bad_keys):
             return _json({"error": {"code": 401, "message": "No auth credentials found"}}, 401)
         if path.endswith("/key"):
-            return _json({"data": {"label": "fake", "usage": self.usage, "limit": self.limit,
-                                   "limit_remaining": None if self.limit is None else self.limit - self.usage,
-                                   "is_free_tier": False}})
+            return _json(
+                {
+                    "data": {
+                        "label": "fake",
+                        "usage": self.usage,
+                        "limit": self.limit,
+                        "limit_remaining": None if self.limit is None else self.limit - self.usage,
+                        "is_free_tier": False,
+                    }
+                }
+            )
         if path.endswith("/chat/completions"):
             body = json.loads(request.content)
             self.chats.append(body)
@@ -263,11 +332,20 @@ class FakeOpenRouter:
                 text = FAKE_STORY
             prompt = sum(len(m.get("content") or "") for m in body["messages"]) // 4
             completion = max(len(text) // 4, 1)
-            return _json({"id": f"gen-{len(self.chats)}", "model": body["model"], "provider": "FakeProvider",
-                          "choices": [{"message": {"role": "assistant", "content": text}, "finish_reason": "stop"}],
-                          "usage": {"prompt_tokens": prompt, "completion_tokens": completion,
-                                    "total_tokens": prompt + completion,
-                                    "cost": round(prompt * 3e-6 + completion * 15e-6, 8)}})
+            return _json(
+                {
+                    "id": f"gen-{len(self.chats)}",
+                    "model": body["model"],
+                    "provider": "FakeProvider",
+                    "choices": [{"message": {"role": "assistant", "content": text}, "finish_reason": "stop"}],
+                    "usage": {
+                        "prompt_tokens": prompt,
+                        "completion_tokens": completion,
+                        "total_tokens": prompt + completion,
+                        "cost": round(prompt * 3e-6 + completion * 15e-6, 8),
+                    },
+                }
+            )
         return _json({"error": {"code": 404, "message": f"no route for {path}"}}, 404)
 
 

@@ -9,19 +9,26 @@ from lanternist.storyboard import CastMember, Line, Scene, Storyboard
 
 
 @pytest.fixture
-def cfg(tmp_path):
-    voices = tmp_path / "voices"
-    voices.mkdir()
-    (voices / "demo.wav").write_bytes(b"RIFF fake")
+def cfg(tmp_path, voices):
     return Settings(paths=Paths(library=tmp_path / "lib", voices=[voices]), fake_engines=True)
 
 
 def story(modes=("still", "video", "still")) -> Storyboard:
     return Storyboard(
-        title="Test", cast=[CastMember(id="a", name="Ann", look="girl in a red coat")],
-        scenes=[Scene(n=i, narration=[Line(text=f"Scene {i} has a few words to say out loud here.")],
-                      visual=f"picture {i}", cast=["a"], mode=m) for i, m in enumerate(modes, 1)],
-        subtitles="burned")
+        title="Test",
+        cast=[CastMember(id="a", name="Ann", look="girl in a red coat")],
+        scenes=[
+            Scene(
+                n=i,
+                narration=[Line(text=f"Scene {i} has a few words to say out loud here.")],
+                visual=f"picture {i}",
+                cast=["a"],
+                mode=m,
+            )
+            for i, m in enumerate(modes, 1)
+        ],
+        subtitles="burned",
+    )
 
 
 async def test_render_then_cache_then_edit(cfg):

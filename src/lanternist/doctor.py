@@ -14,14 +14,22 @@ from .gpu import vram
 from .keys import LABELS, get_key
 from .pipeline import find_voice
 
-LTX_NODES = ["LTXVImgToVideoInplace", "LTXVConcatAVLatent", "LTXVDualCFGGuider", "LTXVLatentUpsampler",
-             "LTXVAudioVAEDecode", "LTXVEmptyLatentAudio", "SaveVideo", "CreateVideo"]
+LTX_NODES = [
+    "LTXVImgToVideoInplace",
+    "LTXVConcatAVLatent",
+    "LTXVDualCFGGuider",
+    "LTXVLatentUpsampler",
+    "LTXVAudioVAEDecode",
+    "LTXVEmptyLatentAudio",
+    "SaveVideo",
+    "CreateVideo",
+]
 
 
 @dataclass
 class Check:
     name: str
-    status: str   # ok | warn | fail
+    status: str  # ok | warn | fail
     detail: str
 
     def dict(self):
@@ -35,8 +43,9 @@ def _out(cmd: list[str]) -> str:
 async def _py(python, code: str, timeout: float = 120) -> tuple[bool, str]:
     if not python.is_file():
         return False, f"no interpreter at {python}"
-    proc = await asyncio.create_subprocess_exec(str(python), "-c", code, stdout=subprocess.PIPE,
-                                                stderr=subprocess.PIPE)
+    proc = await asyncio.create_subprocess_exec(
+        str(python), "-c", code, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
     try:
         out, err = await asyncio.wait_for(proc.communicate(), timeout)
     except TimeoutError:
@@ -51,11 +60,18 @@ def needs(cfg: Settings) -> dict[str, bool]:
     """Which engines and providers the default models use; the checks for the rest are advisory."""
     d = cfg.defaults
     media = (d.tts, d.image, d.video, d.ambience)
-    local = {"qwen3tts": d.tts.startswith("local/"), "klein": d.image.startswith("local/"),
-             "comfyui": d.video.startswith("local/"), "ollama": not d.writer or d.writer.startswith("ollama/")}
-    return local | {"gpu": any(local.values()), "ram": local["klein"],
-                    "openrouter": d.writer.startswith("openrouter/"),
-                    "fal": any(m.startswith("fal/") for m in media)}
+    local = {
+        "qwen3tts": d.tts.startswith("local/"),
+        "klein": d.image.startswith("local/"),
+        "comfyui": d.video.startswith("local/"),
+        "ollama": not d.writer or d.writer.startswith("ollama/"),
+    }
+    return local | {
+        "gpu": any(local.values()),
+        "ram": local["klein"],
+        "openrouter": d.writer.startswith("openrouter/"),
+        "fal": any(m.startswith("fal/") for m in media),
+    }
 
 
 async def provider_rows(cfg: Settings) -> list[dict]:
@@ -67,8 +83,17 @@ async def provider_rows(cfg: Settings) -> list[dict]:
 
     async def one(name: str) -> dict:
         key = get_key(name, fake=cfg.fake_engines)
-        row = {"name": name, "label": LABELS[name], "configured": bool(key.value), "source": key.source,
-               "last4": key.last4, "ok": None, "detail": "", "needed": need[name], "usage": None}
+        row = {
+            "name": name,
+            "label": LABELS[name],
+            "configured": bool(key.value),
+            "source": key.source,
+            "last4": key.last4,
+            "ok": None,
+            "detail": "",
+            "needed": need[name],
+            "usage": None,
+        }
         if not key.value:
             row["detail"] = "no key"
             return row
@@ -81,6 +106,17 @@ async def provider_rows(cfg: Settings) -> list[dict]:
         return row
 
     return list(await asyncio.gather(one("openrouter"), one("fal")))
+
+
+def _ram() -> tuple[str, str]:
+    """(status, detail) for the RAM that klein's CPU offload needs."""
+    mem = re.search(r"MemAvailable:\s+(\d+)", Path("/proc/meminfo").read_text())
+    if mem is None:
+        return "warn", "couldn't read MemAvailable from /proc/meminfo"
+    avail = int(mem.group(1)) / 1e6
+    if avail < 40:
+        return "warn", f"{avail:.0f} GB available; klein's CPU offload wants about 40 GB"
+    return "ok", f"{avail:.0f} GB available"
 
 
 async def run_checks(cfg: Settings) -> list[Check]:
@@ -97,38 +133,54 @@ async def run_checks(cfg: Settings) -> list[Check]:
     if info is None:
         add("gpu", "fail", "no NVIDIA GPU visible through NVML")
     else:
-        holders = ", ".join(f"{p.used_gb:.1f} GB {p.cmd.split()[0].rsplit('/', 1)[-1] if p.cmd else '?'}"
-                            for p in sorted(info.procs, key=lambda p: -p.used_gb)[:4])
-        add("gpu", "ok", f"{info.name}, {info.free_gb:.1f} of {info.total_gb:.1f} GB free"
-            + (f" (held: {holders}; freed per stage)" if holders else ""))
-    meminfo = Path("/proc/meminfo").read_text()
-    avail = int(re.search(r"MemAvailable:\s+(\d+)", meminfo).group(1)) / 1e6
-    add("ram", "ok" if avail >= 40 else "warn",
-        f"{avail:.0f} GB available" + ("" if avail >= 40 else "; klein's CPU offload wants about 40 GB"))
+        holders = ", ".join(
+            f"{p.used_gb:.1f} GB {p.cmd.split()[0].rsplit('/', 1)[-1] if p.cmd else '?'}"
+            for p in sorted(info.procs, key=lambda p: -p.used_gb)[:4]
+        )
+        add(
+            "gpu",
+            "ok",
+            f"{info.name}, {info.free_gb:.1f} of {info.total_gb:.1f} GB free"
+            + (f" (held: {holders}; freed per stage)" if holders else ""),
+        )
+    add("ram", *_ram())
 
     # ffmpeg
     if not shutil.which("ffmpeg"):
         add("ffmpeg", "fail", "ffmpeg not on PATH")
     else:
-        enc, flt = await asyncio.gather(asyncio.to_thread(_out, ["ffmpeg", "-hide_banner", "-encoders"]),
-                                        asyncio.to_thread(_out, ["ffmpeg", "-hide_banner", "-filters"]))
+        enc, flt = await asyncio.gather(
+            asyncio.to_thread(_out, ["ffmpeg", "-hide_banner", "-encoders"]),
+            asyncio.to_thread(_out, ["ffmpeg", "-hide_banner", "-filters"]),
+        )
         missing = [f for f in ("xfade", "zoompan", "subtitles", "amix", "adelay") if f" {f} " not in flt]
         ok_enc = cfg.render.encoder in enc
-        add("ffmpeg", "ok" if ok_enc and not missing else "fail",
+        add(
+            "ffmpeg",
+            "ok" if ok_enc and not missing else "fail",
             f"encoder {cfg.render.encoder} {'found' if ok_enc else 'MISSING (set render.encoder = libx264)'}"
-            + (f"; missing filters: {', '.join(missing)}" if missing else "; filters ok"))
+            + (f"; missing filters: {', '.join(missing)}" if missing else "; filters ok"),
+        )
     fonts = await asyncio.to_thread(_out, ["fc-list"]) if shutil.which("fc-list") else ""
-    add("fonts", "ok" if "Noto Sans" in fonts else "warn",
-        "Noto Sans found for subtitles" if "Noto Sans" in fonts else "Noto Sans not found; subtitles use a fallback font")
+    add(
+        "fonts",
+        "ok" if "Noto Sans" in fonts else "warn",
+        "Noto Sans found for subtitles"
+        if "Noto Sans" in fonts
+        else "Noto Sans not found; subtitles use a fallback font",
+    )
 
     async with httpx.AsyncClient(timeout=5) as client:
         # Ollama
         try:
             tags = (await client.get(f"{cfg.ollama.url}/api/tags")).json()
             names = [m["name"] for m in tags.get("models", [])]
-            add("ollama", "ok" if cfg.ollama.model in names else "fail",
+            add(
+                "ollama",
+                "ok" if cfg.ollama.model in names else "fail",
                 f"{cfg.ollama.model} {'present' if cfg.ollama.model in names else 'NOT pulled'} "
-                f"({len(names)} models at {cfg.ollama.url})")
+                f"({len(names)} models at {cfg.ollama.url})",
+            )
         except httpx.HTTPError as e:
             add("ollama", "fail", f"not reachable at {cfg.ollama.url}: {e.__class__.__name__}")
 
@@ -136,8 +188,12 @@ async def run_checks(cfg: Settings) -> list[Check]:
         try:
             stats = (await client.get(f"{cfg.comfyui.url}/system_stats")).json()
             version = stats.get("system", {}).get("comfyui_version", "?")
-            want = {"diffusion_models": cfg.engines.ltx.unet, "text_encoders": cfg.engines.ltx.text_encoder,
-                    "vae": cfg.engines.ltx.vae, "latent_upscale_models": cfg.engines.ltx.upscaler}
+            want = {
+                "diffusion_models": cfg.engines.ltx.unet,
+                "text_encoders": cfg.engines.ltx.text_encoder,
+                "vae": cfg.engines.ltx.vae,
+                "latent_upscale_models": cfg.engines.ltx.upscaler,
+            }
             missing = []
             for folder, name in want.items():
                 files = (await client.get(f"{cfg.comfyui.url}/models/{folder}")).json()
@@ -148,27 +204,51 @@ async def run_checks(cfg: Settings) -> list[Check]:
             nodes = (await client.get(f"{cfg.comfyui.url}/object_info", timeout=30)).json()
             missing_nodes = [n for n in LTX_NODES if n not in nodes]
             bad = missing or missing_nodes
-            add("comfyui", "fail" if bad else "ok",
+            add(
+                "comfyui",
+                "fail" if bad else "ok",
                 f"ComfyUI {version} at {cfg.comfyui.url}; "
-                + (f"missing: {', '.join(missing + missing_nodes)}" if bad else "LTX-2.5 weights and nodes present"))
+                + (
+                    f"missing: {', '.join(missing + missing_nodes)}"
+                    if bad
+                    else "LTX-2.5 weights and nodes present"
+                ),
+            )
         except httpx.HTTPError as e:
-            add("comfyui", "fail", f"not reachable at {cfg.comfyui.url}: {e.__class__.__name__}. Start it with: "
-                f"cd {cfg.comfyui.root} && .venv/bin/python main.py --listen 127.0.0.1 --port 8199")
+            add(
+                "comfyui",
+                "fail",
+                f"not reachable at {cfg.comfyui.url}: {e.__class__.__name__}. Start it with: "
+                f"cd {cfg.comfyui.root} && .venv/bin/python main.py --listen 127.0.0.1 --port 8199",
+            )
 
     # Worker venvs
     tts, klein = cfg.engines.qwen3tts, cfg.engines.klein
     ok, out = await _py(tts.python, "import qwen_tts, soundfile, torch; print(torch.cuda.is_available())")
-    add("qwen3tts", "ok" if ok and out.endswith("True") and tts.weights.is_dir() else "fail",
-        f"venv {'imports ok' if ok else out}; weights {'found' if tts.weights.is_dir() else 'MISSING'} at {tts.weights}")
-    ok, out = await _py(klein.python, "from diffusers import Flux2KleinPipeline; import torch; print(torch.cuda.is_available())")
+    add(
+        "qwen3tts",
+        "ok" if ok and out.endswith("True") and tts.weights.is_dir() else "fail",
+        f"venv {'imports ok' if ok else out}; weights {'found' if tts.weights.is_dir() else 'MISSING'} at {tts.weights}",
+    )
+    ok, out = await _py(
+        klein.python,
+        "from diffusers import Flux2KleinPipeline; import torch; print(torch.cuda.is_available())",
+    )
     has_w = (klein.weights / "model_index.json").is_file()
-    add("klein", "ok" if ok and out.endswith("True") and has_w else "fail",
-        f"venv {'imports ok' if ok else out}; weights {'found' if has_w else 'MISSING'} at {klein.weights}")
+    add(
+        "klein",
+        "ok" if ok and out.endswith("True") and has_w else "fail",
+        f"venv {'imports ok' if ok else out}; weights {'found' if has_w else 'MISSING'} at {klein.weights}",
+    )
 
     # Voice and library
     try:
         v = find_voice(cfg, "demo")
-        add("voice", "ok", f"default voice 'demo' at {v.wav}" + ("" if v.text else " (no transcript: embedding-only clone)"))
+        add(
+            "voice",
+            "ok",
+            f"default voice 'demo' at {v.wav}" + ("" if v.text else " (no transcript: embedding-only clone)"),
+        )
     except FileNotFoundError as e:
         add("voice", "fail", str(e))
     cfg.library.mkdir(parents=True, exist_ok=True)
@@ -180,8 +260,11 @@ async def run_checks(cfg: Settings) -> list[Check]:
         where = f" (key from {row['source']}, …{row['last4']})" if row["configured"] else ""
         if not row["configured"]:
             status = "fail" if row["needed"] else "ok"
-            detail = ("no key, and a default model needs one: add it in Settings" if row["needed"]
-                      else "no key (optional): add one in Settings to use its models")
+            detail = (
+                "no key, and a default model needs one: add it in Settings"
+                if row["needed"]
+                else "no key (optional): add one in Settings to use its models"
+            )
         else:
             status, detail = ("ok" if row["ok"] else "fail"), row["detail"]
         add(row["name"], status, detail + where)

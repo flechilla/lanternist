@@ -50,8 +50,14 @@ def main():
             generator=torch.Generator("cuda").manual_seed(item["seed"]),
         ).images[0]
         image.save(item["out"])
-        emit(event="item", id=item["id"], out=item["out"], width=image.width, height=image.height,
-             secs=round(time.time() - t, 1))
+        emit(
+            event="item",
+            id=item["id"],
+            out=item["out"],
+            width=image.width,
+            height=image.height,
+            secs=round(time.time() - t, 1),
+        )
 
     emit(event="done", peak_vram_gb=round(torch.cuda.max_memory_allocated() / 1e9, 1))
 

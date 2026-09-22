@@ -26,7 +26,10 @@ export default function BoardView(p: Props) {
     const stop = () => setPlaying(null);
     a.addEventListener("ended", stop);
     a.addEventListener("pause", stop);
-    return () => { a.removeEventListener("ended", stop); a.removeEventListener("pause", stop); };
+    return () => {
+      a.removeEventListener("ended", stop);
+      a.removeEventListener("pause", stop);
+    };
   }, []);
 
   function play(n: number, src: string) {
@@ -36,7 +39,10 @@ export default function BoardView(p: Props) {
       return;
     }
     a.src = src;
-    a.play().then(() => setPlaying(n), () => setPlaying(null));
+    a.play().then(
+      () => setPlaying(n),
+      () => setPlaying(null),
+    );
   }
 
   const scenes = p.draft.scenes.map((s) => {
@@ -50,10 +56,18 @@ export default function BoardView(p: Props) {
 
   let summary: string;
   if (p.dirty) summary = "You have unsaved script changes. They're saved before anything is drawn.";
-  else if (ready) summary = `Every scene is voiced and drawn. ${videos ? `${videos} of ${scenes.length} scenes will be animated.` : "All scenes are stills with camera moves."}`;
-  else if (missing === scenes.length && unvoiced === scenes.length) summary = "Nothing is drawn yet. Preparing the board records the narration and draws every scene.";
-  else summary = [missing && `${missing} ${missing === 1 ? "scene needs" : "scenes need"} a picture`,
-                  unvoiced && `${unvoiced} ${unvoiced === 1 ? "needs" : "need"} narration`].filter(Boolean).join(", ") + ".";
+  else if (ready)
+    summary = `Every scene is voiced and drawn. ${videos ? `${videos} of ${scenes.length} scenes will be animated.` : "All scenes are stills with camera moves."}`;
+  else if (missing === scenes.length && unvoiced === scenes.length)
+    summary = "Nothing is drawn yet. Preparing the board records the narration and draws every scene.";
+  else
+    summary =
+      [
+        missing && `${missing} ${missing === 1 ? "scene needs" : "scenes need"} a picture`,
+        unvoiced && `${unvoiced} ${unvoiced === 1 ? "needs" : "need"} narration`,
+      ]
+        .filter(Boolean)
+        .join(", ") + ".";
 
   return (
     <>
@@ -63,36 +77,66 @@ export default function BoardView(p: Props) {
         <button onClick={p.onBoard} disabled={p.busy || p.jobActive || (ready && !p.dirty)}>
           {ready ? "Board is ready" : "Prepare board"}
         </button>
-        <button className="primary" onClick={p.onRender} disabled={p.busy || p.jobActive}>Approve and render</button>
+        <button className="primary" onClick={p.onRender} disabled={p.busy || p.jobActive}>
+          Approve and render
+        </button>
       </div>
       {!p.board.voice_ok && (
-        <p className="error">The narrator voice “{p.draft.voice}” isn't in your voices. Pick another on the Script step or add it on Voices.</p>
+        <p className="error">
+          The narrator voice “{p.draft.voice}” isn't in your voices. Pick another on the Script step or add it
+          on Voices.
+        </p>
       )}
       <audio ref={audio} hidden />
       <div className="board">
         {scenes.map(({ s, peek, keyframe }) => (
           <article key={s.n} className="card" aria-label={`Scene ${s.n}`}>
-            <Slide image={keyframe} label={`No. ${s.n}`}
-                   mark={[s.mode === "video" ? (peek?.motion ? "animated" : "to animate") : "",
-                          peek?.duration ? `${peek.duration.toFixed(1)} s` : ""].filter(Boolean).join(", ") || undefined}
-                   drawing={!keyframe && p.drawing} alt={s.visual} />
+            <Slide
+              image={keyframe}
+              label={`No. ${s.n}`}
+              mark={
+                [
+                  s.mode === "video" ? (peek?.motion ? "animated" : "to animate") : "",
+                  peek?.duration ? `${peek.duration.toFixed(1)} s` : "",
+                ]
+                  .filter(Boolean)
+                  .join(", ") || undefined
+              }
+              drawing={!keyframe && p.drawing}
+              alt={s.visual}
+            />
             <p className="line">{s.narration.map((l) => l.text).join(" ")}</p>
             <div className="tools">
               <div className="segmented" role="group" aria-label={`Scene ${s.n}: still or video`}>
                 {(["still", "video"] as const).map((m) => (
-                  <button key={m} aria-pressed={s.mode === m} disabled={p.busy}
-                          onClick={() => s.mode !== m && p.onMode(s.n, m)}>{m === "still" ? "Still" : "Video"}</button>
+                  <button
+                    key={m}
+                    aria-pressed={s.mode === m}
+                    disabled={p.busy}
+                    onClick={() => s.mode !== m && p.onMode(s.n, m)}
+                  >
+                    {m === "still" ? "Still" : "Video"}
+                  </button>
                 ))}
               </div>
               <span className="spacer" />
               {peek?.audio && (
-                <button className="quiet small" onClick={() => play(s.n, asset(peek.audio)!)}
-                        aria-label={`${playing === s.n ? "Stop" : "Play"} narration for scene ${s.n}`}>
+                <button
+                  className="quiet small"
+                  onClick={() => play(s.n, asset(peek.audio)!)}
+                  aria-label={`${playing === s.n ? "Stop" : "Play"} narration for scene ${s.n}`}
+                >
                   {playing === s.n ? "Stop" : "Listen"}
                 </button>
               )}
-              <button className="quiet small" onClick={() => p.onReroll(s.n)} disabled={p.busy || p.jobActive}
-                      title="Draw this scene again with a new seed">Redraw</button>
+              <button
+                className="quiet small"
+                onClick={() => p.onReroll(s.n)}
+                disabled={p.busy || p.jobActive}
+                title="Draw this scene again with a new seed"
+              >
+                Redraw
+              </button>
             </div>
           </article>
         ))}

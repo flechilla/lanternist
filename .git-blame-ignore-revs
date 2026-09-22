@@ -1,0 +1,5 @@
+# Commits `git blame` skips. GitHub reads this file; locally run once:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# Format Python with ruff and the web app with Prettier
+d8f753b41fce2f438d376457b2e39044b75fa8ba

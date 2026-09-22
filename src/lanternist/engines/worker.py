@@ -10,6 +10,7 @@ import asyncio
 import json
 from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 MARK = "@@LX "
 WORKERS = Path(__file__).resolve().parent.parent / "workers"
@@ -19,8 +20,9 @@ class EngineError(RuntimeError):
     pass
 
 
-async def run_worker(python: Path, script: str, job: dict, workdir: Path,
-                     on_event: Callable[[dict], None] | None = None) -> list[dict]:
+async def run_worker(
+    python: Path, script: str, job: dict, workdir: Path, on_event: Callable[[dict], None] | None = None
+) -> list[dict]:
     """Run workers/<script> with `job`; returns the 'item' events in order."""
     workdir.mkdir(parents=True, exist_ok=True)
     job_path = workdir / f"{Path(script).stem}-job.json"
@@ -30,15 +32,19 @@ async def run_worker(python: Path, script: str, job: dict, workdir: Path,
     items, error = [], None
     with open(log_path, "wb") as log:  # noqa: ASYNC230 - the worker's stderr, handed to the subprocess
         proc = await asyncio.create_subprocess_exec(
-            str(python), str(WORKERS / script), str(job_path),
-            stdout=asyncio.subprocess.PIPE, stderr=log, limit=1 << 20,
+            str(python),
+            str(WORKERS / script),
+            str(job_path),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=log,
+            limit=1 << 20,
         )
         try:
-            async for raw in proc.stdout:
+            async for raw in cast(asyncio.StreamReader, proc.stdout):  # stdout=PIPE, so never None
                 line = raw.decode(errors="replace").rstrip("\n")
                 if not line.startswith(MARK):
                     continue
-                event = json.loads(line[len(MARK):])
+                event = json.loads(line[len(MARK) :])
                 if event.get("event") == "item":
                     items.append(event)
                 elif event.get("event") == "error":

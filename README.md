@@ -56,11 +56,13 @@ The models don't fit on the 32 GB card together. Before each stage, Lanternist u
 ## Develop
 
 ```bash
+scripts/check                               # every gate CI runs: format, lint, types, tests, build, duplication
 uv run pytest                               # unit tests + the whole pipeline with fake engines
 LANTERNIST_FAKE_ENGINES=1 uv run lanternist serve   # UI work without the GPU
 cd web && pnpm dev                          # Vite on :5173, proxying /api to :8420
 ```
 
-`MVP_PLAN.md` has the plan this was built from.
+`MVP_PLAN.md` has the plan this was built from; `M2_PLAN.md` is the one in progress. `CLAUDE.md` holds the
+conventions every change follows.
 
 Licences: FLUX.2 [klein] 9B is non-commercial, so it's for personal use. Qwen3-TTS and Ollama's Qwen models are Apache 2.0. LTX-2.5 is free under the LTX Community licence below $10M annual revenue.

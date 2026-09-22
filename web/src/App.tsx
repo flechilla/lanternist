@@ -11,7 +11,10 @@ import Voices from "./pages/Voices";
 export default function App() {
   const [fake, setFake] = useState(false);
   useEffect(() => {
-    api.health().then((h) => setFake(h.fake_engines), () => setFake(false));
+    api.health().then(
+      (h) => setFake(h.fake_engines),
+      () => setFake(false),
+    );
   }, []);
 
   return (
@@ -22,7 +25,9 @@ export default function App() {
           <span>Lanternist</span>
         </Link>
         <nav className="nav" aria-label="Main">
-          <NavLink to="/" end>Stories</NavLink>
+          <NavLink to="/" end>
+            Stories
+          </NavLink>
           <NavLink to="/new">New story</NavLink>
           <NavLink to="/voices">Voices</NavLink>
           <NavLink to="/check">System check</NavLink>
@@ -32,7 +37,10 @@ export default function App() {
       {fake && (
         <div className="testmode" role="status">
           <b>Test mode.</b>
-          <span>Every model is replaced by test patterns and tones, so films render in seconds and show nothing real.</span>
+          <span>
+            Every model is replaced by test patterns and tones, so films render in seconds and show nothing
+            real.
+          </span>
         </div>
       )}
       <main>
@@ -44,7 +52,14 @@ export default function App() {
           <Route path="/voices" element={<Voices />} />
           <Route path="/check" element={<Doctor />} />
           <Route path="/settings" element={<Settings />} />
-          <Route path="*" element={<p>There is nothing at this address. <Link to="/">Go to your stories</Link>.</p>} />
+          <Route
+            path="*"
+            element={
+              <p>
+                There is nothing at this address. <Link to="/">Go to your stories</Link>.
+              </p>
+            }
+          />
         </Routes>
       </main>
     </>

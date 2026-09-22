@@ -35,8 +35,9 @@ def main():
     model = Qwen3TTSModel.from_pretrained(job["weights"], device_map="cuda:0", dtype=torch.bfloat16)
     ref_text = job.get("ref_text")
     # Building the clone prompt once keeps the reference encode out of the per-chunk loop.
-    prompt = model.create_voice_clone_prompt(ref_audio=job["ref_audio"], ref_text=ref_text,
-                                             x_vector_only_mode=ref_text is None)
+    prompt = model.create_voice_clone_prompt(
+        ref_audio=job["ref_audio"], ref_text=ref_text, x_vector_only_mode=ref_text is None
+    )
     emit(event="loaded", secs=round(time.time() - t0, 1))
 
     for item in job["items"]:
@@ -44,8 +45,9 @@ def main():
         torch.manual_seed(item.get("seed", 0))
         clips, sr = [], 24000
         for text in item["chunks"]:
-            wavs, sr = model.generate_voice_clone(text=text, language=job["language"],
-                                                  voice_clone_prompt=prompt)
+            wavs, sr = model.generate_voice_clone(
+                text=text, language=job["language"], voice_clone_prompt=prompt
+            )
             clips.append(np.asarray(wavs[0], dtype=np.float32).reshape(-1))
         gap = np.zeros(int(sr * job.get("chunk_gap", 0.25)), dtype=np.float32)
         parts = []
@@ -55,10 +57,15 @@ def main():
             parts.append(clip)
         audio = np.concatenate(parts)
         sf.write(item["out"], audio, sr)
-        emit(event="item", id=item["id"], out=item["out"], sample_rate=sr,
-             duration=round(len(audio) / sr, 3),
-             chunk_durations=[round(len(c) / sr, 3) for c in clips],
-             secs=round(time.time() - t, 1))
+        emit(
+            event="item",
+            id=item["id"],
+            out=item["out"],
+            sample_rate=sr,
+            duration=round(len(audio) / sr, 3),
+            chunk_durations=[round(len(c) / sr, 3) for c in clips],
+            secs=round(time.time() - t, 1),
+        )
 
     emit(event="done", peak_vram_gb=round(torch.cuda.max_memory_allocated() / 1e9, 1))
 

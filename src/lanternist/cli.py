@@ -28,7 +28,7 @@ def _printer():
     t0 = time.time()
 
     def emit(e):
-        if e.status in ("cached",) and e.scene is not None:
+        if e.status == "cached" and e.scene is not None:
             return
         where = f" scene {e.scene}" if e.scene is not None else ""
         count = f" {e.done}/{e.total}" if e.total else ""
@@ -96,8 +96,16 @@ def write(
     """Write a storyboard from a one-line idea with the local LLM."""
     from .writer import Brief, write_storyboard
 
-    brief = Brief(idea=idea, language=language, audience=audience, kind=kind, minutes=minutes, style=style,
-                  notes=notes, mode=mode)
+    brief = Brief(
+        idea=idea,
+        language=language,
+        audience=audience,
+        kind=kind,
+        minutes=minutes,
+        style=style,
+        notes=notes,
+        mode=mode,
+    )
     sb = asyncio.run(write_storyboard(settings(), brief, emit=lambda m: print(f"  {m}", flush=True)))
     out = out or Path(f"{slugify(sb.title)}.json")
     out.write_text(sb.model_dump_json(indent=2), encoding="utf-8")
@@ -113,7 +121,7 @@ def board(story: Path):
     p = Pipeline(settings(), _printer())
     b = asyncio.run(p.board(sb))
     print(f"board ready: {len(b.keyframes)} keyframes, {b.timeline.total:.1f}s of film")
-    for sc, kf, nar in zip(sb.scenes, b.keyframes, b.narration):
+    for sc, kf, nar in zip(sb.scenes, b.keyframes, b.narration, strict=True):
         print(f"  {sc.n:3d} {nar.duration:5.1f}s  {p.store.path(kf)}")
 
 
@@ -169,8 +177,10 @@ def schema():
 
 # ---------------------------------------------------------------------------------- keys
 @keys_app.command("set")
-def keys_set(provider: Annotated[str, typer.Argument(help="openrouter | fal")],
-             key: Annotated[str, typer.Option(prompt=True, hide_input=True, help="the API key")]):
+def keys_set(
+    provider: Annotated[str, typer.Argument(help="openrouter | fal")],
+    key: Annotated[str, typer.Option(prompt=True, hide_input=True, help="the API key")],
+):
     """Store a key in the OS keychain (or a 0600 file when there is no keychain)."""
     from .keys import PROVIDERS, set_key
 
@@ -190,8 +200,10 @@ def keys_clear(provider: Annotated[str, typer.Argument(help="openrouter | fal")]
         raise typer.BadParameter(f"one of: {', '.join(PROVIDERS)}")
     clear_key(provider)
     left = get_key(provider)
-    print(f"{provider} key removed" + (f"; {PROVIDERS[provider]} in the environment still sets one"
-                                       if left.source == "env" else ""))
+    print(
+        f"{provider} key removed"
+        + (f"; {PROVIDERS[provider]} in the environment still sets one" if left.source == "env" else "")
+    )
 
 
 @keys_app.command("status")
@@ -203,16 +215,22 @@ def keys_status():
         if not r["configured"]:
             print(f" · {r['label']:<11} no key")
             continue
-        print(f" {MARK['ok' if r['ok'] else 'fail']} {r['label']:<11} {r['detail']} "
-              f"(from {r['source']}, …{r['last4']})")
+        print(
+            f" {MARK['ok' if r['ok'] else 'fail']} {r['label']:<11} {r['detail']} "
+            f"(from {r['source']}, …{r['last4']})"
+        )
 
 
 # ---------------------------------------------------------------------------------- models
 @app.command()
 def models(
-    capability: Annotated[str | None, typer.Option(help="tts.speak | image.keyframe | video.image_to_video | "
-                                                        "audio.ambience | writer.chat")] = None,
-    sync: Annotated[bool, typer.Option(help="refresh fal prices and status first (needs the fal key)")] = False,
+    capability: Annotated[
+        str | None,
+        typer.Option(help="tts.speak | image.keyframe | video.image_to_video | audio.ambience | writer.chat"),
+    ] = None,
+    sync: Annotated[
+        bool, typer.Option(help="refresh fal prices and status first (needs the fal key)")
+    ] = False,
 ):
     """List the models each stage can use, with today's prices."""
     from . import registry
@@ -240,14 +258,22 @@ def models(
         print(cap)
         for e in registry.by_capability(cap, cfg.library, db):
             p = e.price
-            price = (f"${p.usd}/{p.unit}" if p.usd is not None else f"{p.gpu_seconds} GPU-s/{p.unit}")
+            price = f"${p.usd}/{p.unit}" if p.usd is not None else f"{p.gpu_seconds} GPU-s/{p.unit}"
             when = f" · list {p.synced}" if p.synced else ""
             if b := e.billing.get(""):
                 when += f" · fal bills ${b.unit_price} per {b.unit} ({b.synced})"
-            flags = " ".join(f for f in ("default" if e.id in defaults else "",
-                                         "" if e.status == "active" else e.status,
-                                         "personal use" if e.commercial_use is False else "") if f)
-            print(f"  {'*' if e.id in defaults else ' '} {e.id:<30} {price:<28}{when}{f'  [{flags}]' if flags else ''}")
+            flags = " ".join(
+                f
+                for f in (
+                    "default" if e.id in defaults else "",
+                    "" if e.status == "active" else e.status,
+                    "personal use" if e.commercial_use is False else "",
+                )
+                if f
+            )
+            print(
+                f"  {'*' if e.id in defaults else ' '} {e.id:<30} {price:<28}{when}{f'  [{flags}]' if flags else ''}"
+            )
         print()
     if not capability:
         _writer_models(cfg)
@@ -278,6 +304,10 @@ def _writer_models(cfg) -> None:
         pr = m.get("pricing") or {}
         mid = f"openrouter/{m['id']}"
         per_m = [float(pr.get(k) or 0) * 1e6 for k in ("prompt", "completion")]
-        print(f"  {'*' if mid == current else ' '} {mid:<30} ${per_m[0]:.2f} in / ${per_m[1]:.2f} out per 1M tokens")
-    print(f"    {len(listed)} OpenRouter models support structured output"
-          + ("; pin favourites with openrouter.recommended" if not shown else ""))
+        print(
+            f"  {'*' if mid == current else ' '} {mid:<30} ${per_m[0]:.2f} in / ${per_m[1]:.2f} out per 1M tokens"
+        )
+    print(
+        f"    {len(listed)} OpenRouter models support structured output"
+        + ("; pin favourites with openrouter.recommended" if not shown else "")
+    )
