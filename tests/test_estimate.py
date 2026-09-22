@@ -26,6 +26,7 @@ async def test_a_board_on_fal_is_priced_step_by_step_then_free_once_made(
     assert lines(before)["narration"]["local"] and lines(before)["narration"]["cost_micros"] == 0
     assert before["total_micros"] == pics["cost_micros"] and not before["measured"]
     assert before["price_date"] == "2026-09-21" and before["budget_micros"] == to_micros("5")
+    assert before["raise_to_micros"] == 500_000  # $0.074 of pictures fits the next half dollar
 
     await p.board(sb)
     after = estimate(p, sb, "board")
@@ -78,6 +79,7 @@ def test_the_estimate_and_the_budget_through_the_api(client, wait, make_story):
 
     quote = client.get(f"/api/stories/{sid}/estimate", params={"kind": "board"}).json()
     assert quote["total_usd"] == 0.36  # three pictures at 2K, $0.12 each
+    assert quote["raise_to_usd"] == 0.5
     assert client.get(f"/api/stories/{sid}").json()["budget"] == {"usd": 5.0, "default": True, "spent_usd": 0}
 
     assert client.put(f"/api/stories/{sid}/budget", json={"usd": 0.2}).json()["usd"] == 0.2

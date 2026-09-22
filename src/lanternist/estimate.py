@@ -17,6 +17,7 @@ from .pipeline import LABELS, Pipeline
 from .storyboard import Storyboard
 
 Kind = Literal["board", "render"]
+RAISE_STEP = 500_000  # a raised budget is a round half dollar
 
 
 @dataclass
@@ -110,5 +111,7 @@ def estimate(p: Pipeline, sb: Storyboard, kind: Kind) -> dict:
             "budget_micros": budget,
             "spent_micros": spent,
             "short_micros": max(spent + total - budget, 0),
+            # What to raise the budget to so all of it fits, if it doesn't: the next half dollar.
+            "raise_to_micros": -(-(spent + total) // RAISE_STEP) * RAISE_STEP,
         }
     return out

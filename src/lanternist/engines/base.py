@@ -182,10 +182,7 @@ class FalEngine(Engine):
         return self.entry.defaults | ({q.param: self.quality} if q else {})
 
     def unit_price(self, tier: str | None = None) -> Decimal:
-        price = self.entry.price.on().per_unit(tier)
-        if price is None:
-            raise ValueError(f"{self.entry.id} has no list price{f' for {tier}' if tier else ''}")
-        return price
+        return self.entry.list_price(tier)
 
     def micros(self, units: Decimal | float, tier: str | None = None) -> int:
         return to_micros(Decimal(str(units)) * self.unit_price(tier))

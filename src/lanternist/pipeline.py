@@ -187,8 +187,12 @@ class Pipeline:
             if rec := self.cached(it):
                 records[it.id] = rec
         pending = [it for it in items if it.id not in records]
-        total = len(items)
-        self.emit(stage, "start", done=len(records), total=total)
+        # Each progress row counts its own items: the cast sheet reports apart from the pictures.
+        rows = {it.stage or stage for it in items}
+        total = {row: sum((it.stage or stage) == row for it in items) for row in rows}
+        done = {row: sum((it.stage or stage) == row for it in items if it.id in records) for row in rows}
+        for row in sorted(rows, key=lambda r: r == stage):  # the stage's own row last, as it was
+            self.emit(row, "start", done=done[row], total=total[row])
         if pending:
             work = self.store.tmp()
             waited_on = {it.after for it in pending if it.after}
@@ -203,10 +207,10 @@ class Pipeline:
                 records[it.id] = self.store.put_step(
                     it.key, {"assets": assets, "meta": out.meta, "secs": out.secs}
                 )
-                self._log_local(maker, it.stage or stage, it, out)
-                self.emit(
-                    it.stage or stage, "done", scene=it.scene, done=len(records), total=total, asset=main
-                )
+                row = it.stage or stage
+                self._log_local(maker, row, it, out)
+                done[row] += 1
+                self.emit(row, "done", scene=it.scene, done=done[row], total=total[row], asset=main)
 
             ctx = StepContext(
                 self.cfg,
@@ -218,7 +222,12 @@ class Pipeline:
                 self.job_id,
                 self.user_cancelled,
                 note=lambda message, scene: self.emit(
-                    stage, "progress", scene=scene, message=message, done=len(records), total=total
+                    stage,
+                    "progress",
+                    scene=scene,
+                    message=message,
+                    done=done.get(stage, 0),
+                    total=total.get(stage, 0),
                 ),
             )
             if bind:
@@ -231,7 +240,8 @@ class Pipeline:
                 await maker.run(pending, ctx, on_item)
             finally:
                 shutil.rmtree(work, ignore_errors=True)
-        self.emit(stage, "finish", done=total, total=total)
+        for row in rows:
+            self.emit(row, "finish", done=total[row], total=total[row])
         return records
 
     def _check_budget(self, stage: str, need: int) -> None:
@@ -278,7 +288,8 @@ class Pipeline:
     async def narrate(self, sb: Storyboard) -> list[Narration]:
         if sb.language not in text.LANGUAGES:
             raise ValueError(
-                f"stories can't be narrated in '{sb.language}' yet (the languages: {', '.join(text.LANGUAGES)})"
+                f"stories can't be narrated in '{sb.language}' yet: set the story's language to one of "
+                f"{', '.join(text.LANGUAGES)}"
             )
         eng = self.tts(sb)
         languages = eng.entry.languages

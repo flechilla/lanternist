@@ -11,6 +11,7 @@ are decimal strings, columns use SQLAlchemy's own types, and every query goes th
 """
 
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -175,6 +176,17 @@ class Upload(Base):
     created_at: Mapped[datetime] = mapped_column(default=now)
 
 
+@dataclass
+class LibraryRow:
+    """A story as the library lists it."""
+
+    story: Story
+    storyboard: dict  # the current version's
+    film: Job | None  # the latest finished render
+    drawn: Job | None  # the latest finished board or render, for the poster
+    active: int  # jobs queued or running
+
+
 class Database:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -227,9 +239,8 @@ class Database:
             s.commit()
             return story
 
-    def library(self) -> list[dict]:
-        """Every story, newest edit first, with what the library shows of it: its latest film, the
-        poster of its latest board or render, how many scenes it has and whether a job is working on it."""
+    def library(self) -> list["LibraryRow"]:
+        """Every story, newest edit first, with what the library shows of it."""
         with self.session() as s:
             out = []
             for st in s.scalars(select(Story).order_by(Story.updated_at.desc())):
@@ -248,15 +259,7 @@ class Database:
                         StoryVersion.story_id == st.id, StoryVersion.version == st.version
                     )
                 ).first()
-                out.append(
-                    {
-                        "story": st,
-                        "storyboard": row.storyboard if row else {},
-                        "film": film,
-                        "drawn": drawn,
-                        "active": active,
-                    }
-                )
+                out.append(LibraryRow(st, row.storyboard if row else {}, film, drawn, active or 0))
             return out
 
     def get_story(self, story_id: str) -> Story | None:

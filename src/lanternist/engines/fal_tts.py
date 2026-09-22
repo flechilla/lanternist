@@ -56,9 +56,7 @@ def chars_estimate(entry: ModelEntry, chars: list[int]) -> Estimate:
     est = Estimate()
     for n in chars:
         thousands = Decimal(n) / 1000
-        est = est + Estimate(
-            items=1, units=thousands, micros=to_micros(thousands * (entry.price.on().usd or 0))
-        )
+        est = est + Estimate(items=1, units=thousands, micros=to_micros(thousands * entry.list_price()))
     return est
 
 
@@ -103,10 +101,11 @@ class FalTts(FalEngine, TtsEngine):
         if family == "minimax":
             setting = options.pop("voice_setting", {}) | {"voice_id": self.preset}
             return {"prompt": words, "voice_setting": setting, "language_boost": name, **options}
+        seeded = {"seed": seed} if self.entry.seed else {}  # sent exactly when `key` hashes it
         if family == "chatterbox":
             a = {"text": words, "voice": voice["clip_url"], "custom_audio_language": name.lower(), **options}
-            return a | {"seed": seed}
-        a = {"text": words, "language": name, **options}  # qwen_tts
+            return a | seeded
+        a = {"text": words, "language": name, **options} | seeded  # qwen_tts
         if self.preset:
             return a | {"voice": self.preset}
         a["speaker_voice_embedding_file_url"] = voice["embedding_url"]
@@ -148,7 +147,7 @@ class FalTts(FalEngine, TtsEngine):
             rec = ctx.store.get_step(key)
             if rec is None:
                 chunk = Item(f"{item.id}-{k}", key, item.scene)
-                cost = self.micros(Decimal(len(words)) / 1000)
+                cost = chars_estimate(self.entry, [len(words)]).micros
                 res = await self.request(ctx, chunk, self.arguments(words, voice, seed), estimate=cost)
                 got = await self.fetch(res.data["audio"]["url"], ctx.work / f"{chunk.id}.mp3")
                 rec = ctx.store.put_step(key, {"assets": {"audio": ctx.store.put(got)}})

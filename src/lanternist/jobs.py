@@ -179,7 +179,7 @@ class Runner:
             status = "cancelled"
         except BudgetExceeded as e:  # not a crash: the UI offers to raise the budget and carry on
             status, result, error = "failed", {"budget": e.info()}, redact(str(e))
-            progress.note(f"stopped before spending: {e}")
+            progress.note(f"stopped before spending: {error}")
         except Exception as e:  # a failed job must not stop the queue
             log.exception("job %s failed", job_id)
             status, error = "failed", redact(f"{e}\n\n{traceback.format_exc()[-3000:]}")

@@ -269,6 +269,18 @@ def test_registry_user_file_and_synced_prices(tmp_path, db):
     assert entries["fal/nano-banana-2"].status == "deprecated"
 
 
+def test_a_fal_model_without_a_list_price_is_refused(tmp_path):
+    lib = tmp_path / "lib"
+    lib.mkdir()
+    registry.user_file(lib).write_text(
+        '[[model]]\nid = "fal/new"\nlabel = "New"\ncapability = "tts.speak"\nprovider = "fal"\n'
+        'family = "elevenlabs"\nendpoint = "x"\nprice = { unit = "1k_chars" }\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="fal/new has no list price"):
+        registry.load(lib)
+
+
 def test_unit_names_from_fal():
     assert registry.normalise_unit("seconds") == "output_second"
     assert registry.normalise_unit("Megapixels") == "megapixel"

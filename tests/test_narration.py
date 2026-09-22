@@ -5,7 +5,7 @@ import wave
 
 import pytest
 
-from lanternist import text, timing
+from lanternist import registry, text, timing
 from lanternist.db import Job
 from lanternist.engines import catalog
 from lanternist.engines.fal_tts import FalTts, VoiceError, join_speech
@@ -158,12 +158,22 @@ async def test_a_cloned_voice_makes_its_embedding_once(fake_cfg, db, fakes, make
     assert len(speaks) == 4 and all(r.arguments["speaker_voice_embedding_file_url"] for r in speaks)
 
 
-async def test_a_language_the_model_doesnt_speak_is_refused(fake_cfg, db, make_story):
+async def test_a_language_the_app_doesnt_write_is_refused(fake_cfg, db, make_story):
     sb = make_story(("still",))
     sb.models.tts, sb.voice, sb.language = "fal/chatterbox-multilingual", "demo", "de"
     await Pipeline(fake_cfg, db=db).narrate(sb)  # German is one of Chatterbox's 23
     sb.language = "ar"  # Chatterbox speaks Arabic, but the app writes no stories in it yet
-    with pytest.raises(ValueError, match="can't be narrated in 'ar' yet"):
+    with pytest.raises(ValueError, match="set the story's language to one of en,"):
+        await Pipeline(fake_cfg, db=db).narrate(sb)
+
+
+async def test_a_language_the_model_doesnt_speak_is_refused(fake_cfg, db, make_story):
+    registry.user_file(fake_cfg.library).write_text(
+        '[[model]]\nid = "fal/elevenlabs-v3"\nlanguages = ["en"]\n', encoding="utf-8"
+    )
+    sb = make_story(("still",))
+    sb.models.tts, sb.voice, sb.language = "fal/elevenlabs-v3", "Aria", "es"
+    with pytest.raises(ValueError, match="'es' is not supported by ElevenLabs v3"):
         await Pipeline(fake_cfg, db=db).narrate(sb)
 
 

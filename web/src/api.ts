@@ -132,6 +132,8 @@ export interface Estimate {
   budget_usd?: number;
   spent_usd?: number;
   short_usd?: number;
+  /** The budget that fits all of it: what "raise the budget and carry on" asks for. */
+  raise_to_usd?: number;
 }
 
 export interface Budget {

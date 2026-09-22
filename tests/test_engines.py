@@ -237,6 +237,9 @@ async def test_a_board_on_fal_draws_the_cast_first_and_uploads_it_once(fake_cfg,
     assert all(r.arguments["image_urls"] == fakes.fal.uploads for r in reqs[1:])
     assert cast and len(keyframes) == 2
     assert any(e.stage == "cast" and e.status == "done" and e.asset == cast for e in events)
+    # The cast sheet's row counts itself, not the pictures after it.
+    assert [(e.done, e.total) for e in events if e.stage == "cast" and e.status == "done"] == [(1, 1)]
+    assert [(e.done, e.total) for e in events if e.stage == "keyframes" and e.status == "done"][-1] == (2, 2)
     assert any("generating at fal" in e.message for e in events if e.status == "progress")
 
     # A second board is all cache hits; a re-roll asks for one picture.

@@ -1,5 +1,5 @@
 # Narration. A voice is one of the model's presets (`voices`), or, where `clone = true`, a recording
-# in voices/ it copies. `languages` are the ISO 639-1 codes it speaks, of the ones the app writes in.
+# in voices/ it copies. `languages` are the ISO 639-1 codes it speaks.
 # Prices and inputs were read from each fal endpoint page and its OpenAPI schema on 21 and 22 Sep 2026.
 
 [[model]]
@@ -81,7 +81,10 @@ endpoint = "fal-ai/chatterbox/text-to-speech/multilingual"
 clone = true
 seed = true
 max_chars = 300
-languages = ["en", "es", "pt", "fr", "de", "it", "ru", "zh", "ja", "ko"]   # of its 23, the ones the app writes in
+languages = [
+  "ar", "da", "de", "el", "en", "es", "fi", "fr", "he", "hi", "it", "ja", "ko", "ms", "nl", "no",
+  "pl", "pt", "ru", "sv", "sw", "tr", "zh",
+]
 commercial_use = true
 licence = "fal commercial terms; confirm on the endpoint page"
 defaults = { exaggeration = 0.5, temperature = 0.8, cfg_scale = 0.5 }

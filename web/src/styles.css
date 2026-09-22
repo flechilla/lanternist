@@ -1282,6 +1282,10 @@ details > summary {
   flex: 1 1 140px;
   min-width: 0;
 }
+.voice-item > button.quiet {
+  min-width: 8.5em; /* "Listen · $0.010", "Making it…" and "Stop" in the same space: rows don't jump */
+  justify-content: flex-end;
+}
 .voice-item .pick-row:disabled {
   opacity: 1;
   cursor: default;

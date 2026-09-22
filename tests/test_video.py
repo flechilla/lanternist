@@ -6,7 +6,7 @@ import pytest
 
 from lanternist import timing
 from lanternist.db import StepRun, to_micros
-from lanternist.engines import catalog
+from lanternist.engines import catalog, local
 from lanternist.engines.base import Item
 from lanternist.engines.fal_video import FalVideo
 from lanternist.engines.ffmpeg import probe
@@ -266,7 +266,6 @@ async def test_a_film_with_every_stage_remote_never_takes_the_gpu(
     fake_cfg, db, fakes, make_story, monkeypatch
 ):
     """Definition of done, step 7: no lease, so neither Ollama nor ComfyUI is touched."""
-    from lanternist.engines import local
 
     def no_lease(*args):
         raise AssertionError(f"the GPU lease was taken: {args[1:]}")

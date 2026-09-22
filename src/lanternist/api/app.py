@@ -217,13 +217,13 @@ def list_stories():
     spent = db.spend_by_story()
     return [
         {
-            **story_dict(r["story"]),
-            "scenes": len(r["storyboard"].get("scenes", [])),
-            "active_jobs": r["active"],
-            "film": r["film"].result if r["film"] else None,
-            "film_version": r["film"].version if r["film"] else None,
-            "poster": (r["drawn"].result or {}).get("poster") if r["drawn"] else None,
-            "spent_usd": to_usd(spent.get(r["story"].id, 0)),
+            **story_dict(r.story),
+            "scenes": len(r.storyboard.get("scenes", [])),
+            "active_jobs": r.active,
+            "film": r.film.result if r.film else None,
+            "film_version": r.film.version if r.film else None,
+            "poster": (r.drawn.result or {}).get("poster") if r.drawn else None,
+            "spent_usd": to_usd(spent.get(r.story.id, 0)),
         }
         for r in db.library()
     ]

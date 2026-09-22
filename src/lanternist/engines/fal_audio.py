@@ -43,9 +43,9 @@ class FalMmaudio(FalEngine):
 
     async def score(self, item: Item, ctx: StepContext, on_item: OnItem) -> None:
         p = item.params
-        seconds = min(p["seconds"], MAX_SECONDS)
         arguments = self.arguments(item, await self.upload(ctx, p["video"]))
-        res = await self.request(ctx, item, arguments, estimate=self.micros(seconds))
+        seconds = arguments["duration"]
+        res = await self.request(ctx, item, arguments, estimate=self.estimate([item]).micros)
         scored = await self.fetch(res.data["video"]["url"], ctx.work / f"{item.id}-scored.mp4")
         out = ctx.work / f"{item.id}.mp4"
         await ffmpeg.mux_audio(ctx.store.path(p["video"]), scored, out)

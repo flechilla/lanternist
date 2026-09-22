@@ -123,18 +123,22 @@ function text(rows: SettingRow[] | null, key: string): string {
   return typeof v === "string" || typeof v === "number" ? String(v) : "";
 }
 
+/** The settings that pick a model, each naming its stage, in the order the backend lists them. */
+function modelSettings(rows: SettingRow[]) {
+  return rows.filter((r): r is SettingRow & { capability: Capability } => !!r.capability);
+}
+
 function Defaults() {
   const [rows, setRows] = useState<SettingRow[] | null>(null);
   const [catalogs, setCatalogs] = useState<Partial<Record<Capability, MediaCatalog>>>({});
-  // The model settings: each names its stage (capability), in the order the backend lists them.
-  const stages = (rows ?? []).filter((r): r is SettingRow & { capability: Capability } => !!r.capability);
+  const stages = modelSettings(rows ?? []);
   const [budget, setBudget] = useState("");
   const { busy, error, setError, run } = useAction();
 
   // Each catalog names its stage's default, so they're fetched again after a save.
   const loadCatalogs = useCallback(
     (settings: SettingRow[]) => {
-      const caps = settings.flatMap((r) => (r.capability ? [r.capability] : []));
+      const caps = modelSettings(settings).map((r) => r.capability);
       return Promise.all(caps.map((c) => api.models(c))).then(
         (all) => setCatalogs(Object.fromEntries(caps.map((c, i) => [c, all[i]]))),
         (e: unknown) => setError(errorMessage(e)),

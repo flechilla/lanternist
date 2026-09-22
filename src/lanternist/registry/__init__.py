@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Literal
 
 import httpx
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 log = logging.getLogger(__name__)
 
@@ -138,9 +138,23 @@ class ModelEntry(BaseModel):
     price: Price
     billing: dict[str, Billing] = {}  # by endpoint role ("" for the main one), after a sync
 
+    @model_validator(mode="after")
+    def _priced(self) -> "ModelEntry":
+        # Estimates and the budget price a remote model's steps; one without a price would pass as free.
+        if self.provider == "fal" and self.price.usd is None:
+            raise ValueError(f"{self.id} has no list price: give it price.usd from its fal page")
+        return self
+
     @property
     def remote(self) -> bool:
         return self.provider in ("openrouter", "fal")
+
+    def list_price(self, tier: str | None = None) -> Decimal:
+        """USD per unit today, at a tier (a quality, a second endpoint) when it has its own price."""
+        price = self.price.on().per_unit(tier)
+        if price is None:
+            raise ValueError(f"{self.id} has no list price{f' for {tier}' if tier else ''}")
+        return price
 
     def pick_quality(self, wanted: str | None) -> str | None:
         """The quality to ask for: the one wanted if this model offers it, else its default."""
