@@ -1,26 +1,6 @@
 """Keys, providers and settings through the API, in fake mode."""
 
-import importlib
-
-import pytest
-from fastapi.testclient import TestClient
-
-from lanternist import config, keys
-
-
-@pytest.fixture
-def client(tmp_path, monkeypatch):
-    toml = tmp_path / "lanternist.toml"
-    toml.write_text(f'[paths]\nlibrary = "{tmp_path / "lib"}"\nvoices = ["{tmp_path}"]\n')
-    monkeypatch.setenv("LANTERNIST_CONFIG", str(toml))
-    monkeypatch.setenv("LANTERNIST_FAKE_ENGINES", "1")
-    config.settings.cache_clear()
-    import lanternist.api.app as appmod
-
-    appmod = importlib.reload(appmod)
-    with TestClient(appmod.app) as c:
-        yield c
-    config.settings.cache_clear()
+from lanternist import keys
 
 
 def test_providers_work_in_fake_mode_without_keys(client):

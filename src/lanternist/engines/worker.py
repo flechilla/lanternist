@@ -10,6 +10,7 @@ import asyncio
 import json
 from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 MARK = "@@LX "
 WORKERS = Path(__file__).resolve().parent.parent / "workers"
@@ -39,7 +40,7 @@ async def run_worker(
             limit=1 << 20,
         )
         try:
-            async for raw in proc.stdout:
+            async for raw in cast(asyncio.StreamReader, proc.stdout):  # stdout=PIPE, so never None
                 line = raw.decode(errors="replace").rstrip("\n")
                 if not line.startswith(MARK):
                     continue

@@ -6,6 +6,7 @@ that the SSE endpoint streams to the browser.
 """
 
 import asyncio
+import contextlib
 import logging
 import shutil
 import time
@@ -74,7 +75,7 @@ class Progress:
             st["asset"] = e.asset
         if e.message or e.status in ("start", "done", "finish"):
             self.note(
-                e.message and f"{LABELS.get(e.stage, e.stage)}: {e.message}" or describe(e),
+                f"{LABELS.get(e.stage, e.stage)}: {e.message}" if e.message else describe(e),
                 flush=e.status != "done",
             )
         else:
@@ -150,10 +151,8 @@ class Runner:
                 job = s.query(Job).filter(Job.status == "queued").order_by(Job.created_at).first()
             if job is None:
                 self.wake.clear()
-                try:
+                with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(self.wake.wait(), timeout=5)
-                except TimeoutError:
-                    pass
                 continue
             await self.run(job.id)
 

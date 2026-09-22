@@ -14,6 +14,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     JSON,
@@ -32,6 +33,9 @@ from sqlalchemy import (
     select,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
+
+if TYPE_CHECKING:
+    from alembic.config import Config
 
 
 def now() -> datetime:
@@ -153,7 +157,7 @@ class Setting(Base):
 
     __tablename__ = "settings"
     key: Mapped[str] = mapped_column(String(100), primary_key=True)
-    value: Mapped[object] = mapped_column(JSON)
+    value: Mapped[object | None] = mapped_column(JSON)  # nullable, as migration 0002 made it
     updated_at: Mapped[datetime] = mapped_column(default=now, onupdate=now)
 
 
@@ -185,14 +189,18 @@ class Database:
 
         self.session = sessionmaker(self.engine, expire_on_commit=False)
 
-    def migrate(self) -> None:
-        from alembic import command
+    def alembic_config(self) -> "Config":
         from alembic.config import Config
 
         cfg = Config()
         cfg.set_main_option("script_location", str(Path(__file__).parent / "migrations"))
         cfg.set_main_option("sqlalchemy.url", self.url)
-        command.upgrade(cfg, "head")
+        return cfg
+
+    def migrate(self) -> None:
+        from alembic import command
+
+        command.upgrade(self.alembic_config(), "head")
 
     # stories ----------------------------------------------------------------------------------
     def storyboard(self, s: Session, story_id: str, version: int | None = None) -> tuple[Story, StoryVersion]:

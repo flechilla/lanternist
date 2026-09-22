@@ -58,7 +58,7 @@ def import_story(path: str | Path, mode: str = "still", language: str = "en") ->
         Scene(
             n=i, narration=[Line(text=p)], visual=" ".join(v.split()), motion=" ".join(m.split()), mode=mode
         )
-        for i, (p, v, m) in enumerate(zip(paras, prompts, motion), 1)
+        for i, (p, v, m) in enumerate(zip(paras, prompts, motion, strict=True), 1)
     ]
     return Storyboard(
         title=title,

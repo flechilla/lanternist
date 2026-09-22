@@ -34,7 +34,11 @@ def sample(schema: dict):
         return {k: sample(v) for k, v in (schema.get("properties") or {}).items()}
     if t == "array":
         return [sample(schema.get("items") or {}) for _ in range(max(schema.get("minItems", 1), 1))]
-    return {"string": "text", "integer": 1, "number": 1.0, "boolean": False}.get(t)
+    return (
+        {"string": "text", "integer": 1, "number": 1.0, "boolean": False}.get(t)
+        if isinstance(t, str)
+        else None
+    )
 
 
 def _json(data, status: int = 200, headers: dict | None = None) -> httpx.Response:
@@ -87,7 +91,7 @@ class FakeFal:
         if host == "v3.fal.media" and request.method == "GET":
             body, ctype = self.media.get(str(request.url).split("?")[0], (b"", ""))
             return httpx.Response(200 if body else 404, content=body, headers={"content-type": ctype})
-        if host in ("storage.googleapis.com",):
+        if host == "storage.googleapis.com":
             return httpx.Response(200)
         if host == "v3.fal.media":
             return self._upload(request)

@@ -179,6 +179,13 @@ export interface SettingRow {
   source: "app" | "file" | "default";
 }
 
+/** The message to show for anything a promise rejected with. */
+export const errorMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+interface ErrorBody {
+  detail?: string | { loc?: unknown[]; msg: string }[];
+}
+
 export class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
@@ -199,12 +206,10 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
   if (!res.ok) {
     let message = `${res.status} ${res.statusText}`;
     try {
-      const data = await res.json();
-      if (typeof data.detail === "string") message = data.detail;
-      else if (Array.isArray(data.detail))
-        message = data.detail
-          .map((d: { loc?: unknown[]; msg: string }) => `${(d.loc ?? []).join(".")}: ${d.msg}`)
-          .join("; ");
+      const { detail } = (await res.json()) as ErrorBody;
+      if (typeof detail === "string") message = detail;
+      else if (Array.isArray(detail))
+        message = detail.map((d) => `${(d.loc ?? []).join(".")}: ${d.msg}`).join("; ");
     } catch {
       /* not JSON */
     }

@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   api,
   ApiError,
+  errorMessage,
   fmtSeconds,
   isActive,
   LANGUAGE_NAMES,
@@ -35,22 +36,23 @@ export default function Story() {
   const [stale, setStale] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const { busy, error, setError, run } = useAction();
+  // `apply` and `ensureSaved` must see an edit made since the last render, so the flag lives in a ref too.
   const dirtyRef = useRef(false);
-  dirtyRef.current = dirty;
+  const markDirty = (value: boolean) => {
+    dirtyRef.current = value;
+    setDirty(value);
+  };
 
-  const load = useCallback(async () => {
-    const d = await api.story(id);
+  const apply = useCallback((d: StoryDetail) => {
     setDetail(d);
     if (!dirtyRef.current) setDraft(d.storyboard ? structuredClone(d.storyboard) : null);
     setStarted((s) => s.filter((j) => !d.jobs.some((x) => x.id === j.id)));
-    return d;
-  }, [id]);
+  }, []);
+  const load = useCallback(() => api.story(id).then(apply), [id, apply]);
 
   useEffect(() => {
-    load().catch((e) =>
-      setError(
-        e instanceof ApiError && e.status === 404 ? "This story no longer exists." : String(e.message),
-      ),
+    load().catch((e: unknown) =>
+      setError(e instanceof ApiError && e.status === 404 ? "This story no longer exists." : errorMessage(e)),
     );
   }, [load, setError]);
 
@@ -95,7 +97,7 @@ export default function Story() {
       fn(copy);
       return copy;
     });
-    setDirty(true);
+    markDirty(true);
   }
 
   async function saveBoard(sb: Storyboard, note: string) {
@@ -105,15 +107,13 @@ export default function Story() {
       if (e instanceof ApiError && e.status === 409) setStale(true);
       throw e;
     }
-    dirtyRef.current = false;
-    setDirty(false);
+    markDirty(false);
     await load();
   }
 
   const save = () => run(() => saveBoard(draft!, "edited"));
   const discard = () => {
-    setDirty(false);
-    dirtyRef.current = false;
+    markDirty(false);
     setDraft(structuredClone(detail.storyboard));
   };
   const ensureSaved = async () => {
@@ -151,7 +151,7 @@ export default function Story() {
     render: () =>
       startJob(
         () => api.run(id, "render"),
-        () => navigate(`/stories/${id}/film`),
+        () => void navigate(`/stories/${id}/film`),
       ),
     cast: () => startJob(() => api.run(id, "cast")),
     rerollCast: () => withVersion(() => api.rerollCast(id)),
@@ -168,7 +168,7 @@ export default function Story() {
   const remove = () =>
     run(async () => {
       await api.remove(id);
-      navigate("/");
+      await navigate("/");
     });
 
   const sb = draft ?? detail.storyboard;
@@ -211,7 +211,7 @@ export default function Story() {
               setStale(false);
               setError(null);
               discard();
-              load();
+              load().catch((e: unknown) => setError(errorMessage(e)));
             }}
           >
             Load the latest version

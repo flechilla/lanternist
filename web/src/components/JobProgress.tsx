@@ -11,12 +11,12 @@ const STAGES: [string, string][] = [
   ["mix", "Final mix"],
 ];
 
-export function jobTitle(job: Job): string {
+function jobTitle(job: Job): string {
   switch (job.kind) {
     case "write":
       return "Writing the story";
     case "rewrite":
-      return `Rewriting scene ${job.params.n ?? ""}`;
+      return typeof job.params.n === "number" ? `Rewriting scene ${job.params.n}` : "Rewriting a scene";
     case "cast":
       return "Drawing the cast sheet";
     case "board":

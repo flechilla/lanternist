@@ -45,7 +45,7 @@ def timeline(durations: list[float], gap: float, lead_in: float, tail: float, xf
         starts.append(round(t, 3))
         t += d + gap
     end = starts[-1] + durations[-1] + tail
-    bounds = [0.0] + starts[1:] + [round(end, 3)]
+    bounds = [0.0, *starts[1:], round(end, 3)]
     return Timeline(speech_starts=starts, bounds=bounds, xfade=xfade)
 
 
@@ -78,8 +78,8 @@ def cues(
     Within a chunk, pieces share its duration in proportion to their length.
     """
     out = []
-    for chunks, durs, t in zip(scene_texts, chunk_durations, speech_starts):
-        for chunk, d in zip(chunks, durs):
+    for chunks, durs, t in zip(scene_texts, chunk_durations, speech_starts, strict=True):
+        for chunk, d in zip(chunks, durs, strict=True):
             parts = pack(chunk, MAX_CUE)
             chars = sum(len(p) for p in parts) or 1
             c = t

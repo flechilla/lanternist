@@ -12,8 +12,6 @@ from decimal import Decimal
 import pytest
 
 from lanternist import keys, registry
-from lanternist.config import Paths, Settings
-from lanternist.db import Database
 from lanternist.providers.fal import Fal, RunSpec
 from lanternist.providers.openrouter import OpenRouter
 
@@ -23,18 +21,6 @@ pytestmark = pytest.mark.live
 def need(provider: str) -> None:
     if not keys.get_key(provider).value:
         pytest.skip(f"no {provider} key: run `lanternist keys set {provider}`")
-
-
-@pytest.fixture
-def cfg(tmp_path) -> Settings:
-    return Settings(paths=Paths(library=tmp_path / "lib"))
-
-
-@pytest.fixture
-def db(cfg) -> Database:
-    d = Database(cfg.library / "lanternist.db")
-    d.migrate()
-    return d
 
 
 async def test_openrouter_key_models_and_a_strict_chat(cfg):

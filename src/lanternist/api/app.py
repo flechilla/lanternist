@@ -205,13 +205,12 @@ class NewStory(BaseModel):
 
 @app.post("/api/stories", status_code=201)
 def create_story(body: NewStory):
-    if not body.brief and not body.storyboard:
+    source = body.storyboard or body.brief
+    if source is None:
         raise HTTPException(422, "send a brief to write a story, or a storyboard to import one")
     with db.session() as s:
         title = body.storyboard.title if body.storyboard else "Writing…"
-        st = Story(
-            slug=slugify(title), title=title, language=(body.storyboard or body.brief).language, version=0
-        )
+        st = Story(slug=slugify(title), title=title, language=source.language, version=0)
         s.add(st)
         s.flush()
         if body.storyboard:
@@ -421,7 +420,7 @@ def get_asset(asset: str, download: str | None = None):
         path,
         media_type=media,
         headers=headers,
-        filename=download if download else None,
+        filename=download or None,
         content_disposition_type="attachment" if download else "inline",
     )
 

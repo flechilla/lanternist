@@ -290,7 +290,7 @@ async def write_storyboard(cfg: Settings, b: Brief, emit: Callable[[str], None] 
         schema = inline_schema(WriterBoard)
         system, user = board_prompt(b, title, paras)
         wb, error = None, None
-        for attempt in range(2):
+        for _ in range(2):
             prompt = user if not error else f"{user}\n\nYour previous answer was invalid: {error}. Fix it."
             raw = await llm.chat(system, prompt, schema=schema, temperature=0.4)
             try:
@@ -348,7 +348,7 @@ def assemble(b: Brief, title: str, paras: list[str], wb: WriterBoard) -> Storybo
         marked = [marked[round(j * (len(marked) - 1) / (k - 1))] for j in range(k)] if k > 1 else [marked[-1]]
     video = set(marked)
     scenes = []
-    for i, (p, ws) in enumerate(zip(paras, wb.scenes), 1):
+    for i, (p, ws) in enumerate(zip(paras, wb.scenes, strict=True), 1):
         members = []
         for ref in ws.cast:
             cid = slugify(ref) if slugify(ref) in ids else by_name.get(ref.lower())

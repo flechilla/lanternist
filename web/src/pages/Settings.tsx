@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { api, type Provider, type ProviderName } from "../api";
+import { api, errorMessage, type Provider, type ProviderName } from "../api";
 import { useAction } from "../hooks";
 
 const ABOUT: Record<ProviderName, { what: string; keys: string; tip: string }> = {
@@ -113,7 +113,7 @@ export default function Settings() {
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(() => {
-    api.providers().then(setProviders, (e) => setError(e.message));
+    api.providers().then(setProviders, (e: unknown) => setError(errorMessage(e)));
   }, []);
   useEffect(load, [load]);
 

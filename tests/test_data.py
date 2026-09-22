@@ -7,21 +7,12 @@ from pathlib import Path
 
 import pytest
 from alembic import command
-from alembic.config import Config
 
 from lanternist import keys, pipeline, prefs, registry
 from lanternist.config import Defaults, Paths, Settings
 from lanternist.db import Database, Job, StepRun, Story, now, to_micros, to_usd
 
-MIGRATIONS = Path(__file__).parent.parent / "src" / "lanternist" / "migrations"
 REAL_DB = Path.home() / "Lanternist" / "lanternist.db"
-
-
-def alembic(db: Database) -> Config:
-    cfg = Config()
-    cfg.set_main_option("script_location", str(MIGRATIONS))
-    cfg.set_main_option("sqlalchemy.url", db.url)
-    return cfg
 
 
 def counts(path: Path) -> dict:
@@ -35,17 +26,10 @@ def counts(path: Path) -> dict:
         c.close()
 
 
-@pytest.fixture
-def db(tmp_path) -> Database:
-    d = Database(tmp_path / "lib" / "lanternist.db")
-    d.migrate()
-    return d
-
-
 # ------------------------------------------------------------------------------------ migration
 def test_migration_keeps_mvp_rows(tmp_path):
     d = Database(tmp_path / "old.db")
-    command.upgrade(alembic(d), "0001")
+    command.upgrade(d.alembic_config(), "0001")
     with sqlite3.connect(tmp_path / "old.db") as c:
         c.execute("insert into stories values ('s1','luna','Luna','es',1,'2026-09-01','2026-09-01')")
         c.execute(
@@ -62,10 +46,17 @@ def test_migration_keeps_mvp_rows(tmp_path):
     with d.session() as s:
         assert s.get(Story, "s1").budget_micros is None and s.get(Job, "j1").estimate is None
         assert s.get(Job, "j1").result == {"film": "x.mp4"}
-    command.downgrade(alembic(d), "0001")
+    command.downgrade(d.alembic_config(), "0001")
     assert counts(tmp_path / "old.db") == before
-    command.upgrade(alembic(d), "head")
+    command.upgrade(d.alembic_config(), "head")
     assert counts(tmp_path / "old.db") == before
+
+
+def test_models_match_the_migrations(db):
+    """A column added to db.py without a migration (or the other way round) fails here."""
+    command.check(db.alembic_config())
+    command.downgrade(db.alembic_config(), "base")
+    command.upgrade(db.alembic_config(), "head")
 
 
 @pytest.mark.skipif(not REAL_DB.is_file(), reason="no library database on this machine")
@@ -162,7 +153,7 @@ def test_settings_precedence(tmp_path, db, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "change, message",
+    ("change", "message"),
     [
         ({"paths.library": "/tmp"}, "can't change"),
         ({"defaults.video": "fal/flux-2-klein-9b"}, "image.keyframe model"),
@@ -192,9 +183,9 @@ def test_keys_come_from_env_then_file(monkeypatch):
     keys.clear_key("fal")
     assert keys.get_key("fal").value is None
     assert keys.get_key("fal", fake=True).source == "fake"
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="doesn't look like an API key"):
         keys.set_key("fal", "has spaces in it")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="unknown provider"):
         keys.get_key("replicate")
 
 

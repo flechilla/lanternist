@@ -567,7 +567,7 @@ class Pipeline:
         except FileNotFoundError:
             voice, out["voice_ok"] = None, False
         narration = []
-        for sc, row in zip(sb.scenes, scenes):
+        for sc, row in zip(sb.scenes, scenes, strict=True):
             rec = self.store.get_step(self._tts_key(sb, sc, voice)[1]) if voice else None
             if rec:
                 row["audio"], row["duration"] = rec["assets"]["audio"], rec["meta"]["duration"]
@@ -584,7 +584,7 @@ class Pipeline:
             rec = self.store.get_step(self._cast_key(sb, cast_prompt))
             out["cast"] = rec["assets"]["image"] if rec else None
         if out["cast"] or not cast_prompt:
-            for sc, row in zip(sb.scenes, scenes):
+            for sc, row in zip(sb.scenes, scenes, strict=True):
                 rec = self.store.get_step(
                     self._keyframe_key(prompts.keyframe(sb, sc), sb.scene_seed(sc), out["cast"])
                 )
@@ -594,7 +594,7 @@ class Pipeline:
             out["total"] = round(tl.total, 2)
             if all(r["keyframe"] for r in scenes):
                 board = Board(narration, out["cast"], [r["keyframe"] for r in scenes], tl)
-                for i, (sc, row) in enumerate(zip(sb.scenes, scenes)):
+                for i, (sc, row) in enumerate(zip(sb.scenes, scenes, strict=True)):
                     if sc.mode == "video":
                         rec = self.store.get_step(self._motion_key(sb, i, board)[0])
                         row["motion"] = rec["assets"]["video"] if rec else None

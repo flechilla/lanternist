@@ -5,6 +5,7 @@ import pytest
 from lanternist import prompts, text, timing
 from lanternist.config import Render
 from lanternist.engines import ffmpeg
+from lanternist.engines.worker import MARK, WORKERS
 from lanternist.importers.prototype import import_story
 from lanternist.store import step_key
 from lanternist.storyboard import CastMember, Line, Scene, Storyboard
@@ -185,3 +186,13 @@ def test_ambience_only_drops_voices_and_music():
     )
     assert ambience_only("A gentle, melodic chime sound") == "soft room tone"
     assert ambience_only("wind over water, distant waves") == "wind over water, distant waves"
+
+
+def test_every_worker_speaks_the_runners_protocol():
+    """Workers run in other venvs and can't import lanternist, so each restates the marker. This keeps them in step."""
+    scripts = sorted(WORKERS.glob("*.py"))
+    assert scripts
+    for script in scripts:
+        assert f'"{MARK}"' in script.read_text(encoding="utf-8"), (
+            f"{script.name} doesn't prefix its events with {MARK!r}"
+        )

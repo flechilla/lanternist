@@ -1,30 +1,6 @@
 """The API end to end with fake engines: import, board, edit, re-roll, render, download."""
 
-import importlib
 import time
-
-import pytest
-from fastapi.testclient import TestClient
-
-from lanternist import config
-
-
-@pytest.fixture
-def client(tmp_path, monkeypatch):
-    voices = tmp_path / "voices"
-    voices.mkdir()
-    (voices / "demo.wav").write_bytes(b"RIFF fake")
-    toml = tmp_path / "lanternist.toml"
-    toml.write_text(f'[paths]\nlibrary = "{tmp_path / "lib"}"\nvoices = ["{voices}"]\n')
-    monkeypatch.setenv("LANTERNIST_CONFIG", str(toml))
-    monkeypatch.setenv("LANTERNIST_FAKE_ENGINES", "1")
-    config.settings.cache_clear()
-    import lanternist.api.app as appmod
-
-    appmod = importlib.reload(appmod)
-    with TestClient(appmod.app) as c:
-        yield c
-    config.settings.cache_clear()
 
 
 def storyboard(n=3):

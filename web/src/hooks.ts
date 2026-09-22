@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { api, isActive, type Job, type Options } from "./api";
+import { useCallback, useEffect, useEffectEvent, useState } from "react";
+import { api, errorMessage, isActive, type Job, type Options } from "./api";
 
 /** Follow a set of jobs over SSE. Returns the freshest copy of each; calls onEnd when one finishes. */
 export function useJobStreams(jobs: Job[], onEnd: (job: Job) => void): Record<string, Job> {
   const [live, setLive] = useState<Record<string, Job>>({});
-  const onEndRef = useRef(onEnd);
-  onEndRef.current = onEnd;
+  const onJobEnd = useEffectEvent(onEnd);
   const ids = jobs
     .filter(isActive)
     .map((j) => j.id)
@@ -17,12 +16,12 @@ export function useJobStreams(jobs: Job[], onEnd: (job: Job) => void): Record<st
     const sources = ids.split(",").map((id) => {
       const es = new EventSource(`/api/jobs/${id}/events`);
       es.addEventListener("job", (e) => {
-        const job = JSON.parse((e as MessageEvent).data) as Job;
+        const job = JSON.parse(e.data as string) as Job;
         setLive((prev) => ({ ...prev, [job.id]: job }));
         if (!isActive(job)) {
           // Close before the server ends the stream, or EventSource would reconnect.
           es.close();
-          onEndRef.current(job);
+          onJobEnd(job);
         }
       });
       es.addEventListener("gone", () => es.close());
@@ -58,7 +57,7 @@ export function useAction() {
     try {
       return await fn();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(e));
       return undefined;
     } finally {
       setBusy(false);

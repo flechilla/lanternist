@@ -1,5 +1,5 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { api, type Voice } from "../api";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { api, errorMessage, type Voice } from "../api";
 import { useAction } from "../hooks";
 
 export default function Voices() {
@@ -10,10 +10,13 @@ export default function Voices() {
   const [added, setAdded] = useState<string | null>(null);
   const { busy, error, setError, run } = useAction();
 
-  const load = () => api.voices().then(setVoices, (e) => setError(e.message));
+  const load = useCallback(
+    () => api.voices().then(setVoices, (e: unknown) => setError(errorMessage(e))),
+    [setError],
+  );
   useEffect(() => {
-    load();
-  }, []);
+    void load();
+  }, [load]);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -29,7 +32,7 @@ export default function Voices() {
       setTranscript("");
       setFile(null);
       (e.target as HTMLFormElement).reset();
-      load();
+      await load();
     }
   }
 

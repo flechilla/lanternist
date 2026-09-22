@@ -14,6 +14,7 @@ import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+from typing import overload
 
 log = logging.getLogger(__name__)
 
@@ -86,8 +87,8 @@ def get_key(provider: str, fake: bool = False) -> Key:
                 return Key(provider, value, "keychain")
         except Exception as e:  # noqa: BLE001
             log.warning("couldn't read the keychain: %s", e)
-    if value := _read_file().get(provider):
-        return Key(provider, value, "file")
+    if saved := _read_file().get(provider):
+        return Key(provider, saved, "file")
     if fake:
         return Key(provider, f"fake-{provider}-key", "fake")
     return Key(provider, None, None)
@@ -131,6 +132,10 @@ def clear_key(provider: str) -> None:
     _clear_file(provider)
 
 
+@overload
+def redact(text: str) -> str: ...
+@overload
+def redact(text: None) -> None: ...
 def redact(text: str | None) -> str | None:
     """Replace every known key in `text` with a short marker."""
     if not text:

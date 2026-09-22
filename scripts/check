@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# The quality gate. CI runs exactly this, so a green run here is a green pull request.
+#
+#   scripts/check           every gate below
+#   scripts/check python    format, lint, types, tests (unit, fake pipeline, API, migrations)
+#   scripts/check web       format, lint, types and build of the React app
+#   scripts/check dup       copy-paste across Python, TypeScript and CSS
+#   scripts/check fix       apply the formatters and the safe lint fixes, then stop
+#
+# Needs `uv sync` and `pnpm --dir web install` first. No GPU, keys or network: engines are faked.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
+
+check_python() {
+  step "python: format"
+  uv run ruff format --check .
+  step "python: lint"
+  uv run ruff check .
+  step "python: types"
+  uv run mypy
+  step "python: tests"
+  uv run pytest -q
+}
+
+check_web() {
+  step "web: format"
+  pnpm --dir web run --silent format:check
+  step "web: lint"
+  pnpm --dir web run --silent lint
+  step "web: types and build"
+  pnpm --dir web run --silent build
+}
+
+check_dup() {
+  step "duplication"
+  web/node_modules/.bin/jscpd --config .jscpd.json src web/src tests
+}
+
+fix() {
+  uv run ruff format .
+  uv run ruff check --fix .
+  pnpm --dir web run --silent format
+  pnpm --dir web run --silent lint --fix
+}
+
+# Plain `;` sequences, never `a && b`: bash ignores `set -e` inside a function called on the left of
+# `&&`, which would let a failing gate pass.
+case "${1:-all}" in
+  all) check_python; check_web; check_dup; step "all checks passed" ;;
+  python) check_python ;;
+  web) check_web ;;
+  dup) check_dup ;;
+  fix) fix ;;
+  *) echo "usage: scripts/check [all|python|web|dup|fix]" >&2; exit 2 ;;
+esac

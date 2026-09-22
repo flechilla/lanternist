@@ -1,0 +1,12 @@
+{
+  "minTokens": 50,
+  "format": ["python", "typescript", "tsx", "css"],
+  "ignore": [
+    "**/migrations/versions/**",
+    "**/lanternist/workers/**",
+    "**/api/static/**",
+    "**/node_modules/**"
+  ],
+  "exitCode": 1,
+  "reporters": ["console"]
+}

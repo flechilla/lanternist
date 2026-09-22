@@ -9,10 +9,7 @@ from lanternist.storyboard import CastMember, Line, Scene, Storyboard
 
 
 @pytest.fixture
-def cfg(tmp_path):
-    voices = tmp_path / "voices"
-    voices.mkdir()
-    (voices / "demo.wav").write_bytes(b"RIFF fake")
+def cfg(tmp_path, voices):
     return Settings(paths=Paths(library=tmp_path / "lib", voices=[voices]), fake_engines=True)
 
 

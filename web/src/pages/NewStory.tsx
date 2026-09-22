@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, STYLE_NAMES, type Brief } from "../api";
 import { useAction, useOptions } from "../hooks";
@@ -42,17 +42,16 @@ export default function NewStory() {
   });
   const set = <K extends keyof Brief>(k: K, v: Brief[K]) => setBrief((b) => ({ ...b, [k]: v }));
 
-  useEffect(() => {
-    if (opts?.voices.length && !opts.voices.some((v) => v.name === brief.voice))
-      set("voice", opts.voices[0].name);
-  }, [opts]);
+  // The default narrator may not be installed: fall back to the first voice there is.
+  const voices = opts?.voices ?? [];
+  const voice = voices.some((v) => v.name === brief.voice) ? brief.voice : (voices[0]?.name ?? brief.voice);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     const created = await run(() =>
-      api.write({ ...brief, idea: brief.idea.trim(), notes: brief.notes.trim() }),
+      api.write({ ...brief, voice, idea: brief.idea.trim(), notes: brief.notes.trim() }),
     );
-    if (created) navigate(`/stories/${created.story.id}`);
+    if (created) await navigate(`/stories/${created.story.id}`);
   }
 
   const words = Math.round(brief.minutes * (brief.language === "en" ? 150 : 140));
@@ -184,8 +183,8 @@ export default function NewStory() {
           </label>
           <label className="field">
             Narrator
-            <select value={brief.voice} onChange={(e) => set("voice", e.target.value)}>
-              {(opts?.voices ?? []).map((v) => (
+            <select value={voice} onChange={(e) => set("voice", e.target.value)}>
+              {voices.map((v) => (
                 <option key={v.name} value={v.name}>
                   {v.name}
                 </option>

@@ -108,6 +108,17 @@ async def provider_rows(cfg: Settings) -> list[dict]:
     return list(await asyncio.gather(one("openrouter"), one("fal")))
 
 
+def _ram() -> tuple[str, str]:
+    """(status, detail) for the RAM that klein's CPU offload needs."""
+    mem = re.search(r"MemAvailable:\s+(\d+)", Path("/proc/meminfo").read_text())
+    if mem is None:
+        return "warn", "couldn't read MemAvailable from /proc/meminfo"
+    avail = int(mem.group(1)) / 1e6
+    if avail < 40:
+        return "warn", f"{avail:.0f} GB available; klein's CPU offload wants about 40 GB"
+    return "ok", f"{avail:.0f} GB available"
+
+
 async def run_checks(cfg: Settings) -> list[Check]:
     checks: list[Check] = []
 
@@ -132,13 +143,7 @@ async def run_checks(cfg: Settings) -> list[Check]:
             f"{info.name}, {info.free_gb:.1f} of {info.total_gb:.1f} GB free"
             + (f" (held: {holders}; freed per stage)" if holders else ""),
         )
-    meminfo = Path("/proc/meminfo").read_text()
-    avail = int(re.search(r"MemAvailable:\s+(\d+)", meminfo).group(1)) / 1e6
-    add(
-        "ram",
-        "ok" if avail >= 40 else "warn",
-        f"{avail:.0f} GB available" + ("" if avail >= 40 else "; klein's CPU offload wants about 40 GB"),
-    )
+    add("ram", *_ram())
 
     # ffmpeg
     if not shutil.which("ffmpeg"):

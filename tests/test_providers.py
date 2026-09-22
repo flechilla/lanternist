@@ -9,8 +9,7 @@ import httpx
 import pytest
 
 from lanternist import registry
-from lanternist.config import Paths, Settings
-from lanternist.db import Database, StepRun, now
+from lanternist.db import StepRun, now
 from lanternist.providers.fake import FakeWorld, sample
 from lanternist.providers.fal import Fal, FalError, RunSpec
 from lanternist.providers.openrouter import OpenRouter, OpenRouterError
@@ -21,18 +20,6 @@ KLING = "fal-ai/kling-video/v3/standard/image-to-video"
 @pytest.fixture
 def world() -> FakeWorld:
     return FakeWorld()
-
-
-@pytest.fixture
-def cfg(tmp_path) -> Settings:
-    return Settings(paths=Paths(library=tmp_path / "lib"))
-
-
-@pytest.fixture
-def db(cfg) -> Database:
-    d = Database(cfg.library / "lanternist.db")
-    d.migrate()
-    return d
 
 
 @pytest.fixture

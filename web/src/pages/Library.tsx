@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { api, fmtSeconds, LANGUAGE_NAMES, type StoryListItem } from "../api";
+import { api, errorMessage, fmtSeconds, LANGUAGE_NAMES, type StoryListItem } from "../api";
 import Slide from "../components/Slide";
 import { useAction } from "../hooks";
 
@@ -11,7 +11,7 @@ export default function Library() {
   const navigate = useNavigate();
 
   const load = useCallback(() => {
-    api.stories().then(setStories, (e) => setError(String(e.message ?? e)));
+    api.stories().then(setStories, (e: unknown) => setError(errorMessage(e)));
   }, [setError]);
 
   useEffect(load, [load]);
@@ -32,7 +32,7 @@ export default function Library() {
       }
       return api.importStoryboard(data);
     });
-    if (created) navigate(`/stories/${created.story.id}/board`);
+    if (created) await navigate(`/stories/${created.story.id}/board`);
   }
 
   return (
@@ -50,7 +50,7 @@ export default function Library() {
           hidden
           onChange={(e) => {
             const f = e.target.files?.[0];
-            if (f) importFile(f);
+            if (f) void importFile(f);
             e.target.value = "";
           }}
         />

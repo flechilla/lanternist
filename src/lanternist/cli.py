@@ -28,7 +28,7 @@ def _printer():
     t0 = time.time()
 
     def emit(e):
-        if e.status in ("cached",) and e.scene is not None:
+        if e.status == "cached" and e.scene is not None:
             return
         where = f" scene {e.scene}" if e.scene is not None else ""
         count = f" {e.done}/{e.total}" if e.total else ""
@@ -121,7 +121,7 @@ def board(story: Path):
     p = Pipeline(settings(), _printer())
     b = asyncio.run(p.board(sb))
     print(f"board ready: {len(b.keyframes)} keyframes, {b.timeline.total:.1f}s of film")
-    for sc, kf, nar in zip(sb.scenes, b.keyframes, b.narration):
+    for sc, kf, nar in zip(sb.scenes, b.keyframes, b.narration, strict=True):
         print(f"  {sc.n:3d} {nar.duration:5.1f}s  {p.store.path(kf)}")
 
 

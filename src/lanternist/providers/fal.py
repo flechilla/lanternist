@@ -398,7 +398,7 @@ class Fal:
                                 f.write(chunk)
                     return dest
                 except (httpx.TransportError, FalError) as e:
-                    if isinstance(e, FalError) and not e.retryable or attempt == 3:
+                    if (isinstance(e, FalError) and not e.retryable) or attempt == 3:
                         raise
                     await asyncio.sleep(backoff(attempt))
         return dest
