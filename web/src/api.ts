@@ -37,11 +37,21 @@ export interface Storyboard {
   subtitles: "off" | "sidecar" | "burned";
   cast: CastMember[];
   cast_sheet_prompt: string | null;
-  models?: { writer: string; writer_effort: Effort | null };
+  models: Models;
   scenes: Scene[];
 }
 
+/** Which model makes each stage of a story; an empty id means the default from Settings. */
+export interface Models {
+  writer: string;
+  writer_effort: Effort | null;
+  image: string;
+  image_quality: string | null;
+}
+
 export interface StageState {
+  /** What the progress row is called; the backend names every stage. */
+  label?: string;
   status: "running" | "done";
   done: number;
   total: number;
@@ -205,6 +215,40 @@ export interface WriterCatalog {
   };
 }
 
+export type Capability = "tts.speak" | "image.keyframe" | "video.image_to_video" | "audio.ambience";
+
+export interface MediaPrice {
+  /** List price per `per` (a picture, a second of video); null for models on this machine. */
+  usd: number | null;
+  /** GPU time per `per`, for models on this machine. */
+  gpu_seconds: number | null;
+}
+
+/** A model a media stage can use, from the registry, with its price at each quality it offers. */
+export interface MediaModel extends MediaPrice {
+  id: string;
+  label: string;
+  provider: "local" | "fal";
+  local: boolean;
+  /** Runs here now: a local model, or a remote one whose provider has a key. */
+  available: boolean;
+  status: string;
+  notes: string;
+  licence: string;
+  commercial_use: boolean | "below_10m_revenue";
+  per: string;
+  quality: {
+    param: string;
+    default: string;
+    options: (MediaPrice & { id: string; label: string })[];
+  } | null;
+}
+
+export interface MediaCatalog {
+  default: string;
+  models: MediaModel[];
+}
+
 export interface Check {
   name: string;
   status: "ok" | "warn" | "fail";
@@ -303,6 +347,7 @@ export const api = {
   settings: () => call<SettingRow[]>("GET", "/api/settings"),
   saveSettings: (changes: Record<string, unknown>) => call<SettingRow[]>("PUT", "/api/settings", { changes }),
   writers: () => call<WriterCatalog>("GET", "/api/models?capability=writer.chat"),
+  models: (capability: Capability) => call<MediaCatalog>("GET", `/api/models?capability=${capability}`),
   voices: () => call<Voice[]>("GET", "/api/voices"),
   addVoice: (form: FormData) => call<Voice>("POST", "/api/voices", form),
 };
@@ -347,4 +392,20 @@ export function fmtSeconds(s: number | null | undefined): string {
   const m = Math.floor(s / 60);
   const r = Math.round(s - m * 60);
   return m ? `${m}:${String(r).padStart(2, "0")}` : `${s.toFixed(1)} s`;
+}
+
+/** What a model costs for one unit of its output, as people read it. */
+export function priceOf(p: MediaPrice | undefined, per: string): string {
+  if (p?.usd != null) return `${fmtUsd(p.usd)} a ${per}`;
+  if (p?.gpu_seconds != null) return `free, about ${Math.round(p.gpu_seconds)} s of GPU a ${per}`;
+  return "free, on this machine";
+}
+
+/** The chosen model of a catalog, and the price at the chosen quality. */
+export function chosenModel(catalog: MediaCatalog | null, value: string, quality: string | null) {
+  const model = catalog?.models.find((m) => m.id === (value || catalog.default));
+  const q = model?.quality;
+  const qualityId = q ? (q.options.some((o) => o.id === quality) ? quality : q.default) : null;
+  const price: MediaPrice | undefined = q ? q.options.find((o) => o.id === qualityId) : model;
+  return { model, qualityId, price };
 }

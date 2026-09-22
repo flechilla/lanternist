@@ -12,7 +12,7 @@ import httpx
 from .config import Settings
 from .gpu import vram
 from .keys import LABELS, get_key
-from .pipeline import find_voice
+from .voices import find_voice
 
 LTX_NODES = [
     "LTXVImgToVideoInplace",

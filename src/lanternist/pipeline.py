@@ -1,39 +1,44 @@
-"""A film is a sequence of cached stages, each batched across all scenes so every model loads once.
+"""A film is a sequence of cached stages, each run as one batch on the engine its story picked.
 
-    board:   narration (Qwen3-TTS) -> cast sheet + keyframes (klein)
-    render:  board -> motion for video scenes (LTX-2.5) -> one normalised clip per scene -> mix
+    board:   narration -> cast sheet + keyframes
+    render:  board -> motion for video scenes -> one normalised clip per scene -> mix
 
 Every step's output is stored under a key hashing everything that decides it, so a second run
-is all cache hits and an edit re-runs only the steps it reaches.
+is all cache hits and an edit re-runs only the steps it reaches. A stage asks its engine
+(engines/) only for what the cache lacks: a local engine loads its model once for the batch under
+the GPU lease, a remote one runs the items concurrently and never touches the GPU.
 """
 
-import asyncio
 import logging
 import shutil
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
-from pathlib import Path
+from typing import Any
 
-import httpx
-
-from . import prompts, text, timing
+from . import prompts, registry, timing
 from .config import Settings
-from .engines import fake, ffmpeg
-from .engines.ltx import ComfyClient, ensure_running, graph
-from .engines.worker import run_worker
-from .gpu import lease
-from .store import Store, file_sha, step_key
-from .storyboard import Storyboard
+from .db import Database, now
+from .engines import catalog, ffmpeg
+from .engines.base import (
+    CAST_SIZE,
+    Engine,
+    Item,
+    Maker,
+    Output,
+    StepContext,
+    TtsEngine,
+    VideoEngine,
+    keyframe_size,
+)
+from .engines.local import Clips, Mix
+from .store import Store, step_key
+from .storyboard import Scene, Storyboard
+from .writer import narration_seconds
 
 log = logging.getLogger(__name__)
 
-TTS = "qwen3-tts-1.7b@1"
-KLEIN = "flux2-klein-9b@1"
-LTX = "ltx-2.5-22b-nvfp4@1"
 CLIP = "clip@1"
 MIX = "mix@1"
-CAST_SIZE = (1024, 1024)
-KLEIN_STEPS, KLEIN_GUIDANCE = 4, 1.0
 
 
 @dataclass
@@ -48,14 +53,6 @@ class Event:
 
     def dict(self) -> dict:
         return asdict(self)
-
-
-@dataclass
-class Voice:
-    name: str
-    wav: Path
-    text: str | None
-    sha: str
 
 
 @dataclass
@@ -84,278 +81,202 @@ class Film:
     poster: str | None = None
 
 
-def find_voice(cfg: Settings, name: str) -> Voice:
-    for d in cfg.paths.voices:
-        wav = d / f"{name}.wav"
-        if wav.is_file():
-            txt = wav.with_suffix(".txt")
-            transcript = txt.read_text(encoding="utf-8").strip() if txt.is_file() else None
-            return Voice(name, wav, transcript or None, file_sha(wav))
-    raise FileNotFoundError(
-        f"no voice '{name}': looked for {name}.wav in " + ", ".join(str(d) for d in cfg.paths.voices)
-    )
+def _narration(rec: dict) -> Narration:
+    m = rec["meta"]
+    return Narration(rec["assets"]["audio"], m["duration"], m["chunks"], m["chunk_durations"])
 
 
-def list_voices(cfg: Settings) -> list[dict]:
-    seen, out = set(), []
-    for d in cfg.paths.voices:
-        for wav in sorted(d.glob("*.wav")) if d.is_dir() else []:
-            if wav.stem not in seen:
-                seen.add(wav.stem)
-                out.append(
-                    {"name": wav.stem, "path": str(wav), "has_transcript": wav.with_suffix(".txt").is_file()}
-                )
-    return out
-
-
-def keyframe_size(cfg: Settings) -> tuple[int, int]:
-    # klein wants sides divisible by 16: 1920x1080 is drawn at 1920x1088 and cropped when framed.
-    r = cfg.render
-    return (r.width + 15) // 16 * 16, (r.height + 15) // 16 * 16
+def _sid(sc: Scene) -> str:
+    return f"s{sc.n:03d}"
 
 
 class Pipeline:
-    def __init__(self, cfg: Settings, emit: Callable[[Event], None] | None = None):
+    def __init__(
+        self,
+        cfg: Settings,
+        emit: Callable[[Event], None] | None = None,
+        db: Database | None = None,
+        story_id: str | None = None,
+        job_id: str | None = None,
+        user_cancelled: Callable[[], bool] = lambda: False,
+    ):
         self.cfg = cfg
         self.store = Store(cfg.library)
         self._emit = emit or (lambda e: None)
+        self.db, self.story_id, self.job_id = db, story_id, job_id
+        self.user_cancelled = user_cancelled
 
     def emit(self, stage: str, status: str, **kw) -> None:
         self._emit(Event(stage, status, **kw))
 
-    # ---------------------------------------------------------------- narration
-    def _tts_key(self, sb: Storyboard, sc, voice: Voice) -> tuple[list[str], str]:
-        chunks = text.tts_chunks(sc.text, sb.language)
-        return chunks, step_key(
-            "tts",
-            engine=TTS,
-            chunks=chunks,
-            language=text.LANGUAGES.get(sb.language),
-            voice=voice.sha,
-            ref_text=voice.text,
-            seed=sb.seed,
-            chunk_gap=self.cfg.render.chunk_gap,
-        )
+    # ---------------------------------------------------------------- the models a story uses
+    def tts(self, sb: Storyboard) -> TtsEngine:
+        return catalog.tts(self.cfg, self.db, self.cfg.defaults.tts, sb.voice, sb.language)
 
-    async def narrate(self, sb: Storyboard) -> list[Narration]:
-        if sb.language not in text.LANGUAGES:
-            raise ValueError(
-                f"narration language '{sb.language}' is not supported by Qwen3-TTS "
-                f"(supported: {', '.join(text.LANGUAGES)})"
-            )
-        voice = find_voice(self.cfg, sb.voice)
-        language = text.LANGUAGES[sb.language]
-        results: dict[int, dict] = {}
-        pending = []
-        for sc in sb.scenes:
-            chunks, key = self._tts_key(sb, sc, voice)
-            rec = self.store.get_step(key)
-            if rec:
-                results[sc.n] = rec
-            else:
-                pending.append((sc, chunks, key))
-        total = len(sb.scenes)
-        self.emit("narration", "start", done=len(results), total=total)
+    def image(self, sb: Storyboard) -> Engine:
+        m = sb.models
+        return catalog.image(self.cfg, self.db, m.image or self.cfg.defaults.image, m.image_quality)
 
+    def video(self) -> VideoEngine:
+        return catalog.video(self.cfg, self.db, self.cfg.defaults.video)
+
+    # ---------------------------------------------------------------- one stage
+    async def _stage(
+        self,
+        stage: str,
+        maker: Maker,
+        items: list[Item],
+        asset: str,
+        bind: Callable[[Item, dict[str, dict]], None] | None = None,
+    ) -> dict[str, dict]:
+        """Serve what the cache holds, make the rest as one batch, and store each output as it lands.
+        Returns every item's step record, by item id."""
+        records: dict[str, dict] = {}
+        for it in items:
+            if it.key and (rec := self.store.get_step(it.key)):
+                records[it.id] = rec
+        pending = [it for it in items if it.id not in records]
+        total = len(items)
+        self.emit(stage, "start", done=len(records), total=total)
         if pending:
             work = self.store.tmp()
-            items, keys = [], {}
-            for sc, chunks, key in pending:
-                item_id = f"s{sc.n:03d}"
-                items.append(
-                    {"id": item_id, "chunks": chunks, "seed": sb.seed, "out": str(work / f"{item_id}.wav")}
-                )
-                keys[item_id] = (sc.n, key, chunks)
+            waited_on = {it.after for it in pending if it.after}
 
-            def on_event(ev: dict) -> None:
-                if ev.get("event") == "loaded":
-                    self.emit(
-                        "narration",
-                        "progress",
-                        message=f"model loaded in {ev['secs']}s",
-                        done=len(results),
-                        total=total,
-                    )
-                if ev.get("event") != "item":
-                    return
-                n, key, chunks = keys[ev["id"]]
-                asset = self.store.put(Path(ev["out"]))
-                results[n] = self.store.put_step(
-                    key,
-                    {
-                        "assets": {"audio": asset},
-                        "meta": {
-                            "duration": ev["duration"],
-                            "chunks": chunks,
-                            "chunk_durations": ev["chunk_durations"],
-                            "sample_rate": ev["sample_rate"],
-                        },
-                        "secs": ev.get("secs"),
-                    },
+            def on_item(out: Output) -> None:
+                it = out.item
+                if it.key is None:
+                    raise RuntimeError(f"{it.id} came back before its key was bound")
+                # Copied, not moved, when a later item in this batch still reads it from the work dir.
+                main = self.store.put(out.path, move=it.id not in waited_on)
+                assets = {asset: main} | {k: self.store.put(p) for k, p in out.extra.items()}
+                records[it.id] = self.store.put_step(
+                    it.key, {"assets": assets, "meta": out.meta, "secs": out.secs}
                 )
-                self.emit("narration", "done", scene=n, done=len(results), total=total, asset=asset)
-
-            if self.cfg.fake_engines:
-                for item in items:
-                    on_event({"event": "item", **fake.tts(item, chunk_gap=self.cfg.render.chunk_gap)})
-            else:
-                eng = self.cfg.engines.qwen3tts
-                job = {
-                    "weights": str(eng.weights),
-                    "ref_audio": str(voice.wav),
-                    "ref_text": voice.text,
-                    "language": language,
-                    "chunk_gap": self.cfg.render.chunk_gap,
-                    "items": items,
-                }
-                async with lease(self.cfg, "qwen3tts", eng.vram_gb):
-                    await run_worker(eng.python, "tts_qwen3.py", job, work, on_event)
-            shutil.rmtree(work, ignore_errors=True)
-
-        self.emit("narration", "finish", done=total, total=total)
-        out = []
-        for sc in sb.scenes:
-            rec = results[sc.n]
-            out.append(
-                Narration(
-                    rec["assets"]["audio"],
-                    rec["meta"]["duration"],
-                    rec["meta"]["chunks"],
-                    rec["meta"]["chunk_durations"],
+                self._log_local(maker, it.stage or stage, it, out)
+                self.emit(
+                    it.stage or stage, "done", scene=it.scene, done=len(records), total=total, asset=main
                 )
+
+            ctx = StepContext(
+                self.cfg,
+                self.store,
+                work,
+                stage,
+                self.db,
+                self.story_id,
+                self.job_id,
+                self.user_cancelled,
+                note=lambda message, scene: self.emit(
+                    stage, "progress", scene=scene, message=message, done=len(records), total=total
+                ),
             )
-        return out
+            if bind:
+                ctx.bind = lambda it: bind(it, records)
+            try:
+                if maker.remote and self.db is not None:
+                    await registry.ensure_synced(self.cfg, self.db)
+                await maker.run(pending, ctx, on_item)
+            finally:
+                shutil.rmtree(work, ignore_errors=True)
+        self.emit(stage, "finish", done=total, total=total)
+        return records
 
-    # ---------------------------------------------------------------- pictures
-    def _cast_key(self, sb: Storyboard, prompt: str) -> str:
-        return step_key(
-            "cast",
-            engine=KLEIN,
-            prompt=prompt,
-            seed=sb.seed,
-            size=list(CAST_SIZE),
-            steps=KLEIN_STEPS,
-            guidance=KLEIN_GUIDANCE,
+    def _log_local(self, maker: Maker, stage: str, it: Item, out: Output) -> None:
+        """A step_runs row for each step a local model made: what it cost is GPU time, not money."""
+        if maker.remote or not maker.model_id or self.db is None:
+            return
+        self.db.start_run(
+            story_id=self.story_id,
+            job_id=self.job_id,
+            scene=it.scene,
+            stage=stage,
+            step_key=it.key,
+            model_id=maker.model_id,
+            provider="local",
+            status="done",
+            gpu_seconds=out.secs,
+            wall_seconds=out.secs,
+            finished_at=now(),
         )
 
-    def _keyframe_key(self, prompt: str, seed: int, cast: str | None) -> str:
-        return step_key(
+    # ---------------------------------------------------------------- narration
+    def _narration_items(self, sb: Storyboard, eng: TtsEngine) -> list[Item]:
+        items = []
+        for sc in sb.scenes:
+            chunks = eng.chunks(sc.text)
+            items.append(
+                Item(
+                    _sid(sc),
+                    eng.key("tts", chunks=chunks, seed=sb.seed),
+                    sc.n,
+                    {"chunks": chunks, "seed": sb.seed, "seconds": narration_seconds(sc.text, sb.language)},
+                )
+            )
+        return items
+
+    async def narrate(self, sb: Storyboard) -> list[Narration]:
+        eng = self.tts(sb)
+        languages = eng.entry.languages
+        if languages and sb.language not in languages:
+            raise ValueError(
+                f"narration language '{sb.language}' is not supported by {eng.entry.label} "
+                f"(supported: {', '.join(languages)})"
+            )
+        items = self._narration_items(sb, eng)
+        records = await self._stage("narration", eng, items, "audio")
+        return [_narration(records[it.id]) for it in items]
+
+    # ---------------------------------------------------------------- pictures
+    def _cast_key(self, eng: Engine, sb: Storyboard, prompt: str) -> str:
+        return eng.key("cast", prompt=prompt, seed=sb.seed, size=list(CAST_SIZE))
+
+    def _keyframe_key(self, eng: Engine, prompt: str, seed: int, cast: str | None) -> str:
+        return eng.key(
             "keyframe",
-            engine=KLEIN,
             prompt=prompt,
             seed=seed,
             size=list(keyframe_size(self.cfg)),
-            steps=KLEIN_STEPS,
-            guidance=KLEIN_GUIDANCE,
             refs=[cast] if cast else [],
         )
 
+    def _keyframe_item(self, eng: Engine, sb: Storyboard, sc: Scene, cast: str | None, after: bool) -> Item:
+        p, seed = prompts.keyframe(sb, sc), sb.scene_seed(sc)
+        w, h = keyframe_size(self.cfg)
+        params = {"prompt": p, "seed": seed, "width": w, "height": h, "refs": [cast] if cast else []}
+        if after:
+            return Item(_sid(sc), None, sc.n, params, after="cast")
+        return Item(_sid(sc), self._keyframe_key(eng, p, seed, cast), sc.n, params)
+
     async def draw(self, sb: Storyboard, cast_only: bool = False) -> tuple[str | None, list[str]]:
-        """Cast sheet, then one keyframe per scene with the cast sheet as reference. One model load."""
-        width, height = keyframe_size(self.cfg)
-        work = self.store.tmp()
-        items: list[dict] = []
+        """Cast sheet, then one keyframe per scene with the cast sheet as reference, as one batch."""
+        eng = self.image(sb)
         cast_prompt = prompts.cast_sheet(sb)
-        state = {"cast": None}
-        keyframes: dict[int, str] = {}
-
+        cast: str | None = None
+        items: list[Item] = []
         if cast_prompt:
-            rec = self.store.get_step(self._cast_key(sb, cast_prompt))
+            key = self._cast_key(eng, sb, cast_prompt)
+            rec = self.store.get_step(key)
             if rec:
-                state["cast"] = rec["assets"]["image"]
+                cast = rec["assets"]["image"]
+                self.emit("cast", "cached", asset=cast)
             else:
-                items.append(
-                    {
-                        "id": "cast",
-                        "prompt": cast_prompt,
-                        "seed": sb.seed,
-                        "width": CAST_SIZE[0],
-                        "height": CAST_SIZE[1],
-                        "refs": [],
-                        "out": str(work / "cast.png"),
-                    }
-                )
-        redraw_cast = bool(items)
-
-        scene_prompts = {}
+                w, h = CAST_SIZE
+                params = {"prompt": cast_prompt, "seed": sb.seed, "width": w, "height": h, "refs": []}
+                items.append(Item("cast", key, None, params, stage="cast"))
+        redraw = bool(items)
         if not cast_only:
-            for sc in sb.scenes:
-                p, seed = prompts.keyframe(sb, sc), sb.scene_seed(sc)
-                scene_prompts[sc.n] = (p, seed)
-                if not redraw_cast:
-                    rec = self.store.get_step(self._keyframe_key(p, seed, state["cast"]))
-                    if rec:
-                        keyframes[sc.n] = rec["assets"]["image"]
-                        continue
-                # A cast sheet drawn in this job is every keyframe's reference, read from the work dir.
-                ref = (
-                    [str(work / "cast.png")]
-                    if redraw_cast
-                    else ([str(self.store.path(state["cast"]))] if state["cast"] else [])
-                )
-                items.append(
-                    {
-                        "id": f"s{sc.n:03d}",
-                        "prompt": p,
-                        "seed": seed,
-                        "width": width,
-                        "height": height,
-                        "refs": ref,
-                        "out": str(work / f"s{sc.n:03d}.png"),
-                    }
-                )
+            # Keyframes drawn after a new cast sheet key on it, so none of them can be a cache hit yet.
+            items += [self._keyframe_item(eng, sb, sc, cast, after=redraw) for sc in sb.scenes]
 
-        total = (1 if cast_prompt else 0) + len(scene_prompts)
-        done = total - len(items)
-        if cast_prompt and not redraw_cast:
-            self.emit("cast", "cached", asset=state["cast"])
-        self.emit("keyframes", "start", done=done, total=total)
+        def bind(it: Item, records: dict[str, dict]) -> None:
+            new_cast = records["cast"]["assets"]["image"]
+            it.params["refs"] = [new_cast]
+            it.key = self._keyframe_key(eng, it.params["prompt"], it.params["seed"], new_cast)
 
-        def on_event(ev: dict) -> None:
-            nonlocal done
-            if ev.get("event") == "loaded":
-                self.emit(
-                    "keyframes", "progress", message=f"model loaded in {ev['secs']}s", done=done, total=total
-                )
-            if ev.get("event") != "item":
-                return
-            done += 1
-            if ev["id"] == "cast":
-                # Copied, not moved: the keyframes after it in this job still read it from the work dir.
-                state["cast"] = self.store.put(Path(ev["out"]), move=False)
-                self.store.put_step(
-                    self._cast_key(sb, cast_prompt),
-                    {"assets": {"image": state["cast"]}, "secs": ev.get("secs")},
-                )
-                self.emit("cast", "done", done=done, total=total, asset=state["cast"])
-                return
-            n = int(ev["id"][1:])
-            p, seed = scene_prompts[n]
-            asset = self.store.put(Path(ev["out"]))
-            self.store.put_step(
-                self._keyframe_key(p, seed, state["cast"]),
-                {"assets": {"image": asset}, "secs": ev.get("secs")},
-            )
-            keyframes[n] = asset
-            self.emit("keyframes", "done", scene=n, done=done, total=total, asset=asset)
-
-        if items:
-            if self.cfg.fake_engines:
-                for item in items:
-                    on_event({"event": "item", **await fake.image(item)})
-            else:
-                eng = self.cfg.engines.klein
-                job = {
-                    "weights": str(eng.weights),
-                    "steps": KLEIN_STEPS,
-                    "guidance": KLEIN_GUIDANCE,
-                    "items": items,
-                }
-                async with lease(self.cfg, "klein", eng.vram_gb):
-                    await run_worker(eng.python, "image_klein.py", job, work, on_event)
-        shutil.rmtree(work, ignore_errors=True)
-        self.emit("keyframes", "finish", done=total, total=total)
-        return state["cast"], [keyframes[sc.n] for sc in sb.scenes] if not cast_only else []
+        records = await self._stage("keyframes", eng, items, "image", bind)
+        if "cast" in records:
+            cast = records["cast"]["assets"]["image"]
+        return cast, [] if cast_only else [records[_sid(sc)]["assets"]["image"] for sc in sb.scenes]
 
     # ---------------------------------------------------------------- board
     def timeline(self, narration: list[Narration]) -> timing.Timeline:
@@ -368,93 +289,36 @@ class Pipeline:
         return Board(narration, cast, keyframes, self.timeline(narration))
 
     # ---------------------------------------------------------------- motion
-    def _motion_key(self, sb: Storyboard, i: int, board: Board) -> tuple[str, str, int, list[int]]:
-        m, sc = self.cfg.engines.ltx, sb.scenes[i]
-        shots = timing.shot_lengths(board.timeline.clip_length(i), m.max_seconds)
-        frames = [timing.ltx_frames(s, m.fps) for s in shots]
-        prompt, seed = prompts.video(sb, sc), sb.scene_seed(sc)
-        key = step_key(
-            "motion",
-            engine=LTX,
-            prompt=prompt,
-            negative=prompts.VIDEO_NEGATIVE,
-            seed=seed,
-            frames=frames,
-            size=[m.width, m.height],
-            strength=m.strength,
-            fps=m.fps,
-            keyframe=board.keyframes[i],
-        )
-        return key, prompt, seed, frames
-
-    async def motion(self, sb: Storyboard, board: Board) -> dict[int, str]:
-        """Animate every video-mode scene. Slots past LTX's 20 s limit become shots chained on last frames."""
-        m = self.cfg.engines.ltx
-        out: dict[int, str] = {}
-        pending = []
+    def _motion_items(self, sb: Storyboard, board: Board, eng: VideoEngine) -> list[Item]:
+        items = []
         for i, sc in enumerate(sb.scenes):
             if sc.mode != "video":
                 continue
-            key, prompt, seed, frames = self._motion_key(sb, i, board)
-            rec = self.store.get_step(key)
-            if rec:
-                out[sc.n] = rec["assets"]["video"]
-            else:
-                pending.append((i, sc, key, prompt, seed, frames))
-        total = len(out) + len(pending)
-        if not total:
-            return out
-        self.emit("motion", "start", done=len(out), total=total)
-        if pending:
-            work = self.store.tmp()
-            comfy = ComfyClient(self.cfg.comfyui.url, self.cfg.comfyui.root)
-            if not self.cfg.fake_engines:
-                await ensure_running(self.cfg.comfyui.url, self.cfg.comfyui.root)
-            async with lease(self.cfg, "comfyui", m.vram_gb), httpx.AsyncClient(timeout=120) as client:
-                for i, sc, key, prompt, seed, frames in pending:
-                    shots = []
-                    image = self.store.path(board.keyframes[i])
-                    for j, f in enumerate(frames):
-                        shot = work / f"s{sc.n:03d}-{j}.mp4"
-                        self.emit(
-                            "motion",
-                            "progress",
-                            scene=sc.n,
-                            done=len(out),
-                            total=total,
-                            message=f"scene {sc.n}: shot {j + 1}/{len(frames)}, {f} frames",
-                        )
-                        if self.cfg.fake_engines:
-                            await fake.video(f, m.fps, m.width, m.height, shot)
-                        else:
-                            name = await comfy.upload(client, image)
-                            await comfy.run(
-                                client, graph(m, name, prompt, f, seed + j, f"lanternist/s{sc.n:03d}"), shot
-                            )
-                            comfy.discard("input", *name.rsplit("/", 1))
-                        shots.append(shot)
-                        if j + 1 < len(frames):
-                            image = work / f"s{sc.n:03d}-{j}-last.png"
-                            await ffmpeg.last_frame(shot, image)
-                    joined = work / f"s{sc.n:03d}.mp4"
-                    await ffmpeg.concat(shots, joined)
-                    asset = self.store.put(joined)
-                    self.store.put_step(key, {"assets": {"video": asset}, "meta": {"frames": frames}})
-                    out[sc.n] = asset
-                    self.emit("motion", "done", scene=sc.n, done=len(out), total=total, asset=asset)
-            shutil.rmtree(work, ignore_errors=True)
-        self.emit("motion", "finish", done=total, total=total)
-        return out
+            prompt, seed = prompts.video(sb, sc), sb.scene_seed(sc)
+            shots = eng.shots(board.timeline.clip_length(i))
+            inputs = {"prompt": prompt, "seed": seed, "keyframe": board.keyframes[i]}
+            items.append(
+                Item(_sid(sc), eng.key("motion", shots=shots, **inputs), sc.n, {"shots": shots, **inputs})
+            )
+        return items
+
+    async def motion(self, sb: Storyboard, board: Board) -> dict[int, str]:
+        """Animate every video-mode scene; a slot longer than one generation is chained shots."""
+        if not any(sc.mode == "video" for sc in sb.scenes):
+            return {}
+        eng = self.video()
+        items = self._motion_items(sb, board, eng)
+        records = await self._stage("motion", eng, items, "video")
+        return {it.scene: records[it.id]["assets"]["video"] for it in items if it.scene is not None}
 
     # ---------------------------------------------------------------- clips
-    async def clips(self, sb: Storyboard, board: Board, motions: dict[int, str]) -> list[str]:
+    def _clip_items(self, sb: Storyboard, board: Board, motions: dict[int, str]) -> list[Item]:
         r, tl = self.cfg.render, board.timeline
-        out: list[str | None] = [None] * len(sb.scenes)
-        pending = []
+        items = []
         for i, sc in enumerate(sb.scenes):
             length = round(tl.clip_length(i), 3)
             if sc.mode == "video":
-                spec = {"mode": "video", "src": motions[sc.n]}
+                spec: dict = {"mode": "video", "src": motions[sc.n]}
             else:
                 spec = {
                     "mode": "still",
@@ -470,36 +334,13 @@ class Pipeline:
                 encoder=r.encoder,
                 **spec,
             )
-            rec = self.store.get_step(key)
-            if rec:
-                out[i] = rec["assets"]["video"]
-            else:
-                pending.append((i, sc, key, length, spec))
-        total = len(out)
-        done = total - len(pending)
-        self.emit("clips", "start", done=done, total=total)
-        if pending:
-            work = self.store.tmp()
-            sem = asyncio.Semaphore(3)
+            items.append(Item(_sid(sc), key, sc.n, {"length": length, **spec}))
+        return items
 
-            async def one(i, sc, key, length, spec):
-                nonlocal done
-                async with sem:
-                    dest = work / f"s{sc.n:03d}.mp4"
-                    src = self.store.path(spec["src"])
-                    if spec["mode"] == "video":
-                        await ffmpeg.video_clip(src, length, r, dest)
-                    else:
-                        await ffmpeg.still_clip(src, length, spec["camera"], r, dest)
-                    out[i] = self.store.put(dest)
-                    self.store.put_step(key, {"assets": {"video": out[i]}, "meta": {"length": length}})
-                    done += 1
-                    self.emit("clips", "done", scene=sc.n, done=done, total=total, asset=out[i])
-
-            await asyncio.gather(*(one(*p) for p in pending))
-            shutil.rmtree(work, ignore_errors=True)
-        self.emit("clips", "finish", done=total, total=total)
-        return out
+    async def clips(self, sb: Storyboard, board: Board, motions: dict[int, str]) -> list[str]:
+        items = self._clip_items(sb, board, motions)
+        records = await self._stage("clips", Clips(), items, "video")
+        return [records[it.id]["assets"]["video"] for it in items]
 
     # ---------------------------------------------------------------- mix
     async def mix(self, sb: Storyboard, board: Board, clips: list[str]) -> Film:
@@ -525,79 +366,50 @@ class Pipeline:
             subtitles=sb.subtitles,
             cues=[(c.start, c.end, c.text) for c in cues] if sb.subtitles != "off" else [],
         )
-        rec = self.store.get_step(key)
-        self.emit("mix", "start", done=0, total=1)
-        if not rec:
-            work = self.store.tmp()
-            assets = {}
-            srt_path = None
-            if sb.subtitles != "off":
-                srt_path = work / "film.srt"
-                srt_path.write_text(timing.srt(cues), encoding="utf-8")
-                vtt_path = work / "film.vtt"
-                vtt_path.write_text(timing.vtt(cues), encoding="utf-8")
-            film = work / "film.mp4"
-            await ffmpeg.mix(
-                [self.store.path(c) for c in clips],
-                [self.store.path(w) for w in wavs],
-                tl,
-                r,
-                film,
-                subtitles=srt_path if sb.subtitles == "burned" else None,
-            )
-            assets["film"] = self.store.put(film)
-            if srt_path:
-                assets["srt"] = self.store.put(srt_path)
-                assets["vtt"] = self.store.put(vtt_path)
-            rec = self.store.put_step(key, {"assets": assets, "meta": {"duration": round(tl.total, 3)}})
-            shutil.rmtree(work, ignore_errors=True)
-        self.emit("mix", "finish", done=1, total=1, asset=rec["assets"]["film"])
+        params = {"clips": clips, "wavs": wavs, "timeline": tl, "cues": cues, "subtitles": sb.subtitles}
+        rec = (await self._stage("mix", Mix(), [Item("film", key, None, params)], "film"))["film"]
         a = rec["assets"]
         return Film(a["film"], a.get("srt"), a.get("vtt"), rec["meta"]["duration"], clips)
 
     # ---------------------------------------------------------------- what's already made
     def peek(self, sb: Storyboard) -> dict:
         """What the cache already holds for this storyboard, without running anything."""
-        scenes = [
+        scenes: list[dict[str, Any]] = [
             {"n": sc.n, "audio": None, "duration": None, "keyframe": None, "motion": None} for sc in sb.scenes
         ]
-        out = {"cast": None, "scenes": scenes, "total": None, "voice_ok": True}
+        out: dict = {"cast": None, "scenes": scenes, "total": None, "voice_ok": True}
         try:
-            voice = find_voice(self.cfg, sb.voice)
+            tts: TtsEngine | None = self.tts(sb)
         except FileNotFoundError:
-            voice, out["voice_ok"] = None, False
+            tts, out["voice_ok"] = None, False
         narration = []
-        for sc, row in zip(sb.scenes, scenes, strict=True):
-            rec = self.store.get_step(self._tts_key(sb, sc, voice)[1]) if voice else None
+        for it, row in zip(self._narration_items(sb, tts) if tts else [], scenes, strict=False):
+            rec = self.store.get_step(it.key) if it.key else None
             if rec:
                 row["audio"], row["duration"] = rec["assets"]["audio"], rec["meta"]["duration"]
-                narration.append(
-                    Narration(
-                        rec["assets"]["audio"],
-                        rec["meta"]["duration"],
-                        rec["meta"]["chunks"],
-                        rec["meta"]["chunk_durations"],
-                    )
-                )
+                narration.append(_narration(rec))
+        try:
+            img = self.image(sb)
+        except ValueError:  # the story's picture model left the registry: nothing of it is cached
+            return out
         cast_prompt = prompts.cast_sheet(sb)
         if cast_prompt:
-            rec = self.store.get_step(self._cast_key(sb, cast_prompt))
+            rec = self.store.get_step(self._cast_key(img, sb, cast_prompt))
             out["cast"] = rec["assets"]["image"] if rec else None
         if out["cast"] or not cast_prompt:
             for sc, row in zip(sb.scenes, scenes, strict=True):
-                rec = self.store.get_step(
-                    self._keyframe_key(prompts.keyframe(sb, sc), sb.scene_seed(sc), out["cast"])
-                )
+                it = self._keyframe_item(img, sb, sc, out["cast"], after=False)
+                rec = self.store.get_step(it.key) if it.key else None
                 row["keyframe"] = rec["assets"]["image"] if rec else None
         if len(narration) == len(sb.scenes):
             tl = self.timeline(narration)
             out["total"] = round(tl.total, 2)
-            if all(r["keyframe"] for r in scenes):
+            if all(r["keyframe"] for r in scenes) and any(sc.mode == "video" for sc in sb.scenes):
                 board = Board(narration, out["cast"], [r["keyframe"] for r in scenes], tl)
-                for i, (sc, row) in enumerate(zip(sb.scenes, scenes, strict=True)):
-                    if sc.mode == "video":
-                        rec = self.store.get_step(self._motion_key(sb, i, board)[0])
-                        row["motion"] = rec["assets"]["video"] if rec else None
+                by_scene = {row["n"]: row for row in scenes}
+                for it in self._motion_items(sb, board, self.video()):
+                    rec = self.store.get_step(it.key) if it.key else None
+                    by_scene[it.scene]["motion"] = rec["assets"]["video"] if rec else None
         return out
 
     # ---------------------------------------------------------------- all of it

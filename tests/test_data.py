@@ -8,9 +8,10 @@ from pathlib import Path
 import pytest
 from alembic import command
 
-from lanternist import keys, pipeline, prefs, registry
+from lanternist import keys, prefs, registry
 from lanternist.config import Defaults, Paths, Settings
 from lanternist.db import Database, Job, StepRun, Story, now, to_micros, to_usd
+from lanternist.engines import local as local_engines
 
 REAL_DB = Path.home() / "Lanternist" / "lanternist.db"
 
@@ -200,7 +201,7 @@ def test_registry_entries_are_consistent():
     entries = registry.load()
     local = {e.engine_id for e in entries.values() if e.provider == "local"}
     # The local entries carry today's step-key engine ids, so the existing cache stays valid.
-    assert {pipeline.TTS, pipeline.KLEIN, pipeline.LTX} == local
+    assert {local_engines.TTS, local_engines.KLEIN, local_engines.LTX} == local
     for e in entries.values():
         assert e.capability in registry.CAPABILITIES
         if e.provider == "fal":

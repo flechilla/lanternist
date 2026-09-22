@@ -23,7 +23,6 @@ from .storyboard import Storyboard
 
 log = logging.getLogger(__name__)
 
-STAGES = ["write", "narration", "cast", "keyframes", "motion", "clips", "mix"]
 LABELS = {
     "write": "Writing",
     "narration": "Narration",
@@ -63,7 +62,9 @@ class Progress:
         self._last_write = 0.0
 
     def stage(self, e: Event) -> None:
-        st = self.snap["stages"].setdefault(e.stage, {"status": "running", "done": 0, "total": 0})
+        st = self.snap["stages"].setdefault(
+            e.stage, {"label": LABELS.get(e.stage, e.stage), "status": "running", "done": 0, "total": 0}
+        )
         if e.total:
             st["done"], st["total"] = e.done, e.total
         if e.status == "finish":
@@ -196,7 +197,14 @@ class Runner:
 
     async def execute(self, job: Job, progress: Progress) -> dict:
         cfg = prefs.effective(self.cfg, self.db)  # what the Settings page saved applies from the next job
-        pipeline = Pipeline(cfg, progress.stage)
+        pipeline = Pipeline(
+            cfg,
+            progress.stage,
+            db=self.db,
+            story_id=job.story_id,
+            job_id=job.id,
+            user_cancelled=lambda: self.user_cancelled(job.id),
+        )
         calls = Calls(self.db, story_id=job.story_id, job_id=job.id)
         if job.kind == "write":
             from .writer import Brief, write_storyboard

@@ -1,5 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import { asset, type BoardPeek, type Mode, type Storyboard } from "../api";
+import {
+  asset,
+  chosenModel,
+  fmtUsd,
+  type BoardPeek,
+  type MediaCatalog,
+  type Mode,
+  type Models,
+  type Storyboard,
+} from "../api";
+import ModelPicker from "./ModelPicker";
 import Slide from "./Slide";
 
 interface Props {
@@ -10,7 +20,10 @@ interface Props {
   jobActive: boolean;
   busy: boolean;
   dirty: boolean;
+  pictures: MediaCatalog | null;
+  catalogError: string | null;
   onMode: (n: number, mode: Mode) => void;
+  onModels: (change: Partial<Models>, note: string) => void;
   onReroll: (n: number) => void;
   onBoard: () => void;
   onRender: () => void;
@@ -53,6 +66,9 @@ export default function BoardView(p: Props) {
   const unvoiced = scenes.filter((x) => !x.peek?.audio).length;
   const videos = scenes.filter((x) => x.s.mode === "video").length;
   const ready = missing === 0 && unvoiced === 0;
+  const models = p.draft.models;
+  const picture = chosenModel(p.pictures, models.image, models.image_quality);
+  const redrawUsd = picture.price?.usd;
 
   let summary: string;
   if (p.dirty) summary = "You have unsaved script changes. They're saved before anything is drawn.";
@@ -87,6 +103,22 @@ export default function BoardView(p: Props) {
           on Voices.
         </p>
       )}
+      <section className="panel models" aria-label="Models">
+        <ModelPicker
+          label="Pictures"
+          catalog={p.pictures}
+          error={p.catalogError}
+          value={models.image}
+          quality={models.image_quality}
+          disabled={p.busy || p.jobActive}
+          onChange={(image, image_quality) =>
+            p.onModels(
+              { image, image_quality },
+              `pictures by ${p.pictures?.models.find((m) => m.id === (image || p.pictures?.default))?.label ?? "the default"}`,
+            )
+          }
+        />
+      </section>
       <audio ref={audio} hidden />
       <div className="board">
         {scenes.map(({ s, peek, keyframe }) => (
@@ -135,7 +167,7 @@ export default function BoardView(p: Props) {
                 disabled={p.busy || p.jobActive}
                 title="Draw this scene again with a new seed"
               >
-                Redraw
+                {redrawUsd ? `Redraw · ${fmtUsd(redrawUsd)}` : "Redraw"}
               </button>
             </div>
           </article>

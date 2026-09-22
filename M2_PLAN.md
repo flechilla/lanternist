@@ -1,6 +1,6 @@
 # Lanternist M2: OpenRouter and fal.ai
 
-> **Status, 21 Sep 2026: Phases A and B are built and checked against the live APIs.** 91 tests pass offline, and your library is migrated to `0002` (backup in `~/Lanternist/backups/`). Both keys work. A first real video was made end to end: GPT Luna wrote the story and MiniMax H3 Max rendered the shot on fal, for $0.80 as estimated. Stories can now be written by any OpenRouter model with structured output, picked on New story; Claude Opus 5 wrote a Spanish story in the app for $0.21, as estimated. Phases C–F are next.
+> **Status, 21 Sep 2026: Phases A and B are built and checked against the live APIs.** 91 tests pass offline, and your library is migrated to `0002` (backup in `~/Lanternist/backups/`). Both keys work. A first real video was made end to end: GPT Luna wrote the story and MiniMax H3 Max rendered the shot on fal, for $0.80 as estimated. Stories can now be written by any OpenRouter model with structured output, picked on New story; Claude Opus 5 wrote a Spanish story in the app for $0.21, as estimated. **22 Sep: Phase C is built offline** (the engine interface, and pictures on fal with five models, Nano Banana Pro, Seedream 5.0 Pro and FLUX.2 [max] among them); its live check is pending. Phases D–F are next.
 >
 > This is the blueprint's M2 ("fal, registry, estimator, your own key") with one change: the writer calls OpenRouter directly instead of going through fal's `openrouter/router`. Going direct gives the real cost of every request, the full list of models, and one hop fewer.
 > API facts below were read from the OpenRouter and fal docs, the per-model `llms.txt` pages and the fal-client 1.0.3 source on 21 Sep 2026. Anything marked **verify** was not confirmed and gets checked in Phase A.
@@ -224,18 +224,20 @@ Around those calls:
 
 ### 1.7 Pictures on fal
 
-- **Cast sheet:**
-  - Uses `fal-ai/flux-2/klein/9b` at 1024×1024, about $0.006.
-  - Nano Banana 2 has no pure text-to-image path in our list, so its cast sheet uses its edit endpoint with no references.
-- **Keyframes:**
-  - Use `fal-ai/flux-2/klein/9b/edit` with `image_urls: [cast sheet]`, `image_size: {width: 1920, height: 1088}`, `seed` and `num_inference_steps: 4`.
-  - Cost is about $0.034 each: $0.011 per megapixel, counting input and output.
-  - It's the same model as the local worker, so the character lock behaves the same.
-- **Premium option:** `fal-ai/nano-banana-2/edit`.
-  - It takes `aspect_ratio` and `resolution` in place of a size: 16:9 at 2K, about $0.12 per frame.
-  - It follows long prompts and references better.
-  - The clip step already crops whatever size comes back.
+Every fal picture model draws the cast sheet from text (`endpoints.text_to_image`, 1024×1024), then every keyframe at once on its edit endpoint with the cast sheet as the reference. The cast sheet is uploaded once per story: keyframes running together share one upload.
+
+| Model | Size | Seed | List price (22 Sep) | A keyframe | Notes |
+|---|---|---|---|---|---|
+| FLUX.2 [klein] 9B (`fal-ai/flux-2/klein/9b[/edit]`) | `image_size` | yes | $0.011/MP in and out; cast sheet $0.006/MP | $0.034 | Same model as local, so the lock behaves the same. The cheapest good choice. |
+| Nano Banana 2 (`fal-ai/nano-banana-2[/edit]`) | `aspect_ratio` + `resolution` | yes | $0.08 at 1K; 0.5K ×0.75, 2K ×1.5, 4K ×2 | $0.12 at 2K | Follows long prompts and references well. |
+| **Nano Banana Pro** (`fal-ai/nano-banana-pro[/edit]`) | `aspect_ratio` + `resolution` | yes | $0.15 at 1K or 2K, $0.30 at 4K | $0.15 | Google's best: the closest match to the cast sheet. |
+| **Seedream 5.0 Pro** (`bytedance/seedream/v5/pro/...`) | `image_size` | **no** | $0.0675 up to 1536², $0.135 above; $0.0045 per reference after the first | $0.0675 | ByteDance's best; rich detail. |
+| **FLUX.2 [max]** (`fal-ai/flux-2-max[/edit]`) | `image_size` | yes | $0.07 for the first MP, $0.03 per MP after, references included, rounded up (**verify** the rounding) | $0.16 | Black Forest Labs' best, klein's big sibling. |
+
+- **Quality.** A model with a `quality` entry (Nano Banana's `resolution`) lets the story pick it; each option's price is a `price.tiers` entry. `Storyboard.models.image_quality` holds the choice, and an option the model doesn't offer falls back to its default.
+- **Safety.** klein returns a black picture when its checker trips, with `has_nsfw_concepts: [true]`. The adapter turns that into an error that names the scene, instead of storing a black frame.
 - **Seeds and re-rolls:** models that take a seed get the scene seed. For models without one, a re-roll still changes the step key, so it still draws a new picture.
+- **Not offered:** GPT Image 2 and 2.5 are billed per token with a quality setting, so an estimate before the run would be a guess. They can come later as their own family.
 
 ### 1.8 Video on fal
 
@@ -458,7 +460,7 @@ Each phase ends with something that runs end to end. Sizes assume one developer 
     1. token counts measured on your finished write jobs
     2. the trial counts below
     3. the trial median
-  - Only the writer's list is served so far; the media stages' lists come with their pickers in Phase C.
+  - Only the writer's list is served so far; the media stages' lists come with their pickers in Phase C (the picture list did).
 - [x] The writer picker on New story: search, groups (on this machine, then OpenRouter), a price for the chosen length, and a reasoning select when the model has efforts. OpenRouter models are disabled until a key is set.
   - The story header shows "written by … for $X". `GET /api/stories/{id}` sends the writer and its cost, summed from `step_runs`, so failed attempts count.
   - `lanternist write --writer openrouter/<id> --effort <e>` prints the calls, tokens and cost.
@@ -488,17 +490,24 @@ Each phase ends with something that runs end to end. Sizes assume one developer 
 - [x] The Ollama path is unchanged. It is tested against the fake, and a real 1-minute story took 20 s.
 - Not checked live: a scene rewrite on an OpenRouter model. It is covered offline, and it uses the same strict-schema path as the storyboard.
 
-### Phase C: the engine interface and pictures on fal (≈3 days)
+### Phase C: the engine interface and pictures on fal (≈3 days) · built 22 Sep 2026
 
-- [ ] `engines/base.py` and `engines/local.py`. Move klein, Qwen3-TTS and LTX behind the interface. The golden-key test proves the cache is unchanged.
-- [ ] `fal_image.py`, with klein 9B (text-to-image and edit) and Nano Banana 2 edit. `draw` runs as two waves: the cast sheet, then all keyframes in parallel.
-- [ ] `Storyboard.models` (it holds the writer since Phase B) gains the picture model. A "Models" panel on the story (pictures for now) with a per-scene re-roll price. `GET /api/models?capability=image.keyframe` lists what it offers.
-- [ ] Progress lines show fal queue position and in-progress state.
+- [x] `engines/base.py` and `engines/local.py`. Move klein, Qwen3-TTS and LTX behind the interface. The golden-key test proves the cache is unchanged.
+  - Every stage, ffmpeg's clips and mix too, now runs through one `Pipeline._stage`: serve the cache hits, run the misses as one batch, store each output as it lands. The five copies of that loop are gone.
+  - An item can wait on another in its batch (`Item.after`): keyframes on a cast sheet drawn in the same job. A local engine keeps one model load for both; a remote one runs them as two waves.
+  - `test_local_step_keys_are_unchanged` pins the keys computed on `main` before the change.
+  - Every step a local model makes is a `step_runs` row with its GPU seconds, for calibrating the estimates.
+- [x] `fal_image.py`, with klein 9B (text-to-image and edit) and Nano Banana 2, plus three top-tier models not in the first plan: **Nano Banana Pro, Seedream 5.0 Pro and FLUX.2 [max]** (§1.7). `draw` runs as two waves: the cast sheet, then all keyframes in parallel.
+  - When one keyframe fails (moderation, say), the others still finish and are stored, since they're paid for; then the stage fails naming the scene.
+  - What fal bills is refreshed at most once a day, before the first remote stage of a job (`registry.ensure_synced`), and read at request time, so a computed cost uses today's billing price.
+- [x] `Storyboard.models` (it holds the writer since Phase B) gains the picture model and its quality. A "Models" panel on the Board step (pictures for now) with the price of each redraw on its button. `GET /api/models?capability=image.keyframe` lists every model with its price per picture at each quality, priced by the engines' own estimates.
+- [x] Progress lines show fal queue position and in-progress state.
+  - Progress rows now carry their label from `jobs.LABELS`, and the web app shows them in the order they ran: its own stage list is gone.
 
 **Exit:**
-- Maya's board with fal klein pictures and local narration: the cast is as consistent as the local board (checked by eye).
-- A second board is all cache hits. Re-rolling one scene costs one image.
-- The existing local stories re-render entirely from cache.
+- [ ] Maya's board with fal klein pictures and local narration: the cast is as consistent as the local board (checked by eye). Needs a live run.
+- [x] A second board is all cache hits. Re-rolling one scene costs one image (`test_a_board_on_fal_draws_the_cast_first_and_uploads_it_once`, offline).
+- [x] The existing local stories re-render entirely from cache (the golden keys).
 
 ### Phase D: estimate and budget (≈1.5 days)
 

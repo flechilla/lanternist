@@ -9,7 +9,9 @@ import {
   isActive,
   LANGUAGE_NAMES,
   type Job,
+  type MediaCatalog,
   type Mode,
+  type Models,
   type StoryDetail,
   type Storyboard,
 } from "../api";
@@ -56,6 +58,12 @@ export default function Story() {
       setError(e instanceof ApiError && e.status === 404 ? "This story no longer exists." : errorMessage(e)),
     );
   }, [load, setError]);
+
+  const [pictures, setPictures] = useState<MediaCatalog | null>(null);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  useEffect(() => {
+    api.models("image.keyframe").then(setPictures, (e: unknown) => setCatalogError(errorMessage(e)));
+  }, []);
 
   const allJobs = useMemo(() => [...started, ...(detail?.jobs ?? [])], [started, detail]);
   const live = useJobStreams(allJobs, () => {
@@ -145,6 +153,14 @@ export default function Story() {
       sc.mode = mode;
       setDraft(sb);
       await saveBoard(sb, `scene ${n} set to ${mode}`);
+    });
+
+  const setModels = (change: Partial<Models>, note: string) =>
+    run(async () => {
+      const sb = structuredClone(draft!);
+      sb.models = { ...sb.models, ...change };
+      setDraft(sb);
+      await saveBoard(sb, note);
     });
 
   const actions = {
@@ -291,7 +307,10 @@ export default function Story() {
               jobActive={!!current}
               busy={busy}
               dirty={dirty}
+              pictures={pictures}
+              catalogError={catalogError}
               onMode={actions.setMode}
+              onModels={setModels}
               onReroll={actions.reroll}
               onBoard={actions.board}
               onRender={actions.render}

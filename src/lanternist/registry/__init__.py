@@ -21,17 +21,23 @@ Writer models aren't listed here: they are whatever Ollama has pulled and OpenRo
 
 import asyncio
 import copy
+import logging
 import re
 import tomllib
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
+import httpx
 from pydantic import BaseModel, ConfigDict
 
+log = logging.getLogger(__name__)
+
 HERE = Path(__file__).parent
+SYNC_EVERY = timedelta(days=1)
+_synced: dict[Path, datetime] = {}  # when each library's prices were last refreshed from fal
 CAPABILITIES = ("writer.chat", "tts.speak", "image.keyframe", "video.image_to_video", "audio.ambience")
 Capability = Literal["writer.chat", "tts.speak", "image.keyframe", "video.image_to_video", "audio.ambience"]
 Provider = Literal["local", "ollama", "openrouter", "fal"]
@@ -44,8 +50,32 @@ class Price(BaseModel):
     usd: Decimal | None = None  # list price per unit, remote models
     gpu_seconds: float | None = None  # GPU time per unit, local models
     tiers: dict[str, Decimal] = {}  # named alternatives: resolutions, audio on, a second endpoint
+    first: Decimal | None = None  # the first unit of a request, when it costs more than the rest
     synced: date | None = None
     source: str = "registry"  # registry | fal_pricing_api
+    until: date | None = None  # a launch price's last day; `then` applies from the day after
+    then: "Price | None" = None
+
+    def on(self, day: date | None = None) -> "Price":
+        """The price that applies on `day` (today by default)."""
+        if self.until and self.then and (day or date.today()) > self.until:
+            return self.then.on(day)
+        return self
+
+    def per_unit(self, tier: str | None = None) -> Decimal | None:
+        """USD per unit, for a named tier (a quality, a second endpoint) when it has its own price."""
+        return self.tiers.get(tier, self.usd) if tier else self.usd
+
+
+class Quality(BaseModel):
+    """A request field a story may choose, such as the resolution. Each option not priced at the
+    list price has its own entry in `price.tiers`."""
+
+    model_config = ConfigDict(extra="forbid")
+    param: str  # the request field, e.g. "resolution"
+    options: list[str]
+    default: str
+    labels: dict[str, str] = {}  # how the picker names an option, when not by its value
 
 
 class Billing(BaseModel):
@@ -98,6 +128,8 @@ class ModelEntry(BaseModel):
     max_chars: int | None = None  # narration: longest text per request
     audio: Literal["none", "ambience"] = "none"  # video: whether it makes its own sound bed
     durations: Durations | None = None
+    seed: bool = False  # takes a seed input; without one, a re-roll still asks again
+    quality: Quality | None = None
     defaults: dict = {}  # request fields always sent
     commercial_use: bool | Literal["below_10m_revenue"] = True
     licence: str = ""
@@ -109,6 +141,12 @@ class ModelEntry(BaseModel):
     @property
     def remote(self) -> bool:
         return self.provider in ("openrouter", "fal")
+
+    def pick_quality(self, wanted: str | None) -> str | None:
+        """The quality to ask for: the one wanted if this model offers it, else its default."""
+        if self.quality is None:
+            return None
+        return wanted if wanted in self.quality.options else self.quality.default
 
     def endpoint_for(self, role: str | None = None) -> str:
         if role is None:
@@ -181,6 +219,14 @@ def get(model_id: str, library: Path | None = None, db=None) -> ModelEntry:
     if model_id not in entries:
         raise KeyError(f"no model '{model_id}' in the registry (known: {', '.join(sorted(entries))})")
     return entries[model_id]
+
+
+def billing(db, model_id: str, role: str | None = None) -> Billing | None:
+    """What fal bills per unit for one of a model's endpoints, as last synced; None before a sync."""
+    row = db.latest_prices().get(model_id if not role else f"{model_id}#{role}")
+    if row is None:
+        return None
+    return Billing(unit_price=Decimal(row.unit_price), unit=row.unit, synced=row.synced_at.date())
 
 
 def by_capability(capability: str, library: Path | None = None, db=None) -> list[ModelEntry]:
@@ -258,14 +304,36 @@ async def sync_prices(cfg, db, fal=None) -> list[dict]:
     return lines
 
 
+async def ensure_synced(cfg, db) -> None:
+    """Refresh what fal bills, at most once a day per library, before remote steps run: actual
+    costs are billable units times these prices. A failed refresh only leaves yesterday's prices
+    in use, so it's logged, not raised."""
+    from ..providers import ProviderError
+
+    last = _synced.get(cfg.library)
+    if last and datetime.now(UTC) - last < SYNC_EVERY:
+        return
+    try:
+        await sync_prices(cfg, db)
+    except (ProviderError, httpx.HTTPError) as e:
+        log.warning("couldn't refresh fal's prices (%s); costs use the last ones synced", e)
+        return
+    _synced[cfg.library] = datetime.now(UTC)
+
+
 def _drift(e: ModelEntry, role: str | None, api_unit: str, api_price) -> str | None:
     """Why fal's billing price doesn't line up with any list price, if it doesn't; None when it does.
 
     Only comparable when fal bills in our unit. A base price that matches no list tier usually means
     the model page changed: re-read it and update the registry."""
-    if normalise_unit(api_unit) != e.price.unit:
+    price_now = e.price.on()
+    if normalise_unit(api_unit) != price_now.unit:
         return None
-    listed = {e.price.usd, *e.price.tiers.values()} if role is None else {e.price.tiers.get(role)}
+    listed = (
+        {price_now.usd, price_now.first, *price_now.tiers.values()}
+        if role is None
+        else {price_now.tiers.get(role)}
+    )
     price = Decimal(str(api_price))
     if any(v is not None and abs(v - price) < Decimal("0.0000005") for v in listed):
         return None

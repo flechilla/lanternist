@@ -16,10 +16,12 @@ from pydantic import BaseModel, ValidationError
 from .. import keys, llm, prefs
 from ..config import settings
 from ..db import Database, Job, Story, StoryVersion, to_usd
+from ..engines.catalog import catalog as media_catalog
 from ..jobs import Runner, is_terminal
-from ..pipeline import Pipeline, find_voice, list_voices
+from ..pipeline import Pipeline
 from ..storyboard import Storyboard, slugify
 from ..text import LANGUAGES
+from ..voices import find_voice, list_voices
 from ..writer import AUDIENCES, KINDS, STYLES, Brief
 
 STATIC = Path(__file__).parent / "static"
@@ -151,11 +153,14 @@ def put_settings(body: SettingsBody):
 
 @app.get("/api/models")
 async def models(capability: str = "writer.chat"):
-    """The models a stage can use: so far the writer's, live from Ollama and OpenRouter. The media stages'
-    lists come with their pickers in Phase C."""
-    if capability != "writer.chat":
-        raise HTTPException(404, f"no model list for '{capability}' yet")
-    return await llm.catalog(prefs.effective(cfg, db), db)
+    """The models a stage can use: writers live from Ollama and OpenRouter, media from the registry."""
+    eff = prefs.effective(cfg, db)
+    if capability == "writer.chat":
+        return await llm.catalog(eff, db)
+    try:
+        return media_catalog(eff, db, capability)
+    except ValueError as e:
+        raise HTTPException(404, str(e)) from None
 
 
 @app.get("/api/options")
@@ -228,9 +233,9 @@ def create_story(body: NewStory):
     return {"story": story, "job": job}
 
 
-def writer_dict(story_id: str, sb: dict | None) -> dict | None:
+def writer_dict(story_id: str, sb: Storyboard | None) -> dict | None:
     """Who wrote the story, and what writing it has cost: failed attempts too, since OpenRouter bills them."""
-    writer = ((sb or {}).get("models") or {}).get("writer")
+    writer = sb.models.writer if sb else None
     if not writer:
         return None  # imported, or written before stories recorded their writer
     provider, model = llm.parse(writer)
@@ -253,13 +258,14 @@ def get_story(story_id: str, version: int | None = None):
         {"version": v.version, "note": v.note, "created_at": v.created_at.isoformat()}
         for v in db.story_versions(story_id)
     ]
-    sb = row.storyboard if row else None
-    board = Pipeline(cfg).peek(Storyboard.model_validate(sb)) if sb else None
+    # Validated, so a storyboard saved before a field existed comes back with its default.
+    sb = Storyboard.model_validate(row.storyboard) if row else None
+    board = Pipeline(prefs.effective(cfg, db), db=db).peek(sb) if sb else None
     films = [j for j in jobs if j["kind"] == "render" and j["status"] == "done"]
     return {
         "story": story_dict(st),
         "version": row.version if row else 0,
-        "storyboard": sb,
+        "storyboard": sb.model_dump() if sb else None,
         "board": board,
         "jobs": jobs,
         "versions": versions,

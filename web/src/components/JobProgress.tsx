@@ -1,16 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Job } from "../api";
 
-const STAGES: [string, string][] = [
-  ["write", "Writing"],
-  ["narration", "Narration"],
-  ["cast", "Cast sheet"],
-  ["keyframes", "Pictures"],
-  ["motion", "Animation"],
-  ["clips", "Scene clips"],
-  ["mix", "Final mix"],
-];
-
 function jobTitle(job: Job): string {
   switch (job.kind) {
     case "write":
@@ -27,16 +17,16 @@ function jobTitle(job: Job): string {
 }
 
 export function Stages({ job }: { job: Job }) {
-  const stages = job.progress?.stages ?? {};
-  const shown = STAGES.filter(([key]) => stages[key]);
+  // In the order the stages ran, under the names the backend gives them.
+  const shown = Object.entries(job.progress?.stages ?? {});
   if (!shown.length)
     return (
       <p className="muted">{job.status === "queued" ? "Waiting for the job ahead of it." : "Starting…"}</p>
     );
   return (
     <div className="stages">
-      {shown.map(([key, name]) => {
-        const st = stages[key];
+      {shown.map(([key, st]) => {
+        const name = st.label ?? key;
         const pct = st.total ? Math.round((100 * st.done) / st.total) : st.status === "done" ? 100 : 0;
         const unknown = !st.total && st.status === "running";
         return (

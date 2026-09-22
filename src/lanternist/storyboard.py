@@ -29,6 +29,17 @@ def _writer_id(v: str) -> str:
 WriterId = Annotated[str, AfterValidator(_writer_id)]
 
 
+def _model_id(v: str) -> str:
+    v = v.strip()
+    if v and not re.fullmatch(r"(local|fal)/\S+", v):
+        raise ValueError("a media model is a registry id: local/<name> or fal/<name>")
+    return v
+
+
+# A media model from the registry (`lanternist models` lists them). Empty means the default.
+ModelId = Annotated[str, AfterValidator(_model_id)]
+
+
 class CastMember(BaseModel):
     id: str = Field(description="short lowercase slug, e.g. 'luna'")
     name: str
@@ -63,6 +74,8 @@ class Models(BaseModel):
     writer_effort: Effort | None = Field(
         None, description="the writer's reasoning effort; None is the model's default"
     )
+    image: ModelId = Field("", description="draws the cast sheet and the pictures")
+    image_quality: str | None = Field(None, description="the picture model's quality option, e.g. 2K")
 
 
 class Storyboard(BaseModel):
