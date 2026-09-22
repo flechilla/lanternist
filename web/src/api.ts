@@ -246,6 +246,8 @@ export interface StoryMeta {
 export interface StoryListItem extends StoryMeta {
   scenes: number;
   active_jobs: number;
+  /** How far through its running job is, 0 to 1, by time; null when nothing's running or it can't say. */
+  progress: number | null;
   film: FilmResult | null;
   film_version: number | null;
   poster: string | null;

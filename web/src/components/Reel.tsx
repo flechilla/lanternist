@@ -36,6 +36,9 @@ interface Props {
   sb: Storyboard;
   board: BoardPeek | null;
   job: Job;
+  /** The viewer asked to be told when it's ready. */
+  telling: boolean;
+  onTell: () => void;
   onCancel: () => void;
   onWatch: () => void;
 }
@@ -43,7 +46,7 @@ interface Props {
 /** A render as its story: every scene a slide on one reel, filling in as its voice, picture and motion
  * arrive, with the cast above it and one plain sentence of what's happening. Hover or focus a slide
  * for its details; the stages, models, spend and log are under Behind the scenes. */
-export default function Reel({ sb, board, job, onCancel, onWatch }: Props) {
+export default function Reel({ sb, board, job, telling, onTell, onCancel, onWatch }: Props) {
   const scenes = useMemo(() => sceneStates(sb, board, job), [sb, board, job]);
   const { doing, detail } = headline(job, scenes, Object.fromEntries(sb.cast.map((c) => [c.id, c.name])));
   const [still, setStill] = useStored("reel.still", false);
@@ -290,6 +293,10 @@ export default function Reel({ sb, board, job, onCancel, onWatch }: Props) {
                 <div className="since">{since.join(" · ")}</div>
               </div>
               <div className="reel-actions">
+                <button className={`hbtn${telling ? " rang" : ""}`} onClick={onTell} disabled={telling}>
+                  <Bell />
+                  {telling ? "We'll tell you" : "Tell me when it's ready"}
+                </button>
                 <button className="hbtn" aria-pressed={still} onClick={() => setStill(!still)}>
                   Pause motion
                 </button>
@@ -513,6 +520,13 @@ function CastSlide({ label, sheet, image, drawing, open, onOpen, onHover }: Cast
 const Arrow = () => (
   <svg className="arrow" viewBox="0 0 24 24" aria-hidden="true">
     <path d="M4 12h15m-5-5 5 5-5 5" />
+  </svg>
+);
+
+const Bell = () => (
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M6 8a6 6 0 1 1 12 0c0 7 3 8 3 8H3s3-1 3-8" />
+    <path d="M10.3 21a1.9 1.9 0 0 0 3.4 0" />
   </svg>
 );
 

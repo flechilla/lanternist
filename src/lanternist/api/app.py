@@ -221,6 +221,7 @@ def list_stories():
             **story_dict(r.story),
             "scenes": len(r.storyboard.get("scenes", [])),
             "active_jobs": r.active,
+            "progress": r.progress,
             "film": r.film.result if r.film else None,
             "film_version": r.film.version if r.film else None,
             "poster": (r.drawn.result or {}).get("poster") if r.drawn else None,

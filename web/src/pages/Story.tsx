@@ -22,6 +22,16 @@ import ScriptEditor from "../components/ScriptEditor";
 import { useAction, useJobStreams, useOptions } from "../hooks";
 
 type Step = "script" | "board" | "film";
+// What the writer does, in order: its two passes (`writer.write_storyboard`).
+const WRITER_PASSES = ["Drafting the story", "Planning the scenes"];
+
+/** A system notification that a job the viewer asked about has ended, when they've gone elsewhere. */
+function tell(job: Job, title: string) {
+  if (!document.hidden || Notification.permission !== "granted") return;
+  const what = job.kind === "render" ? "Your film" : job.kind === "board" ? "The board" : "The job";
+  const heading = job.status === "done" ? `${what} is ready` : `${what} stopped`;
+  new Notification(heading, { body: job.status === "done" ? title : (job.error?.split("\n")[0] ?? title) });
+}
 const STEPS: { id: Step; name: string }[] = [
   { id: "script", name: "Script" },
   { id: "board", name: "Board" },
@@ -98,8 +108,11 @@ export default function Story() {
   const allJobs = useMemo(() => [...started, ...(detail?.jobs ?? [])], [started, detail]);
   // The last job that ended while the page was open: a render's reel stays up, finished.
   const [ended, setEnded] = useState<Job | null>(null);
+  // The jobs the viewer asked to be told about when they end, if the page is in the background then.
+  const [telling, setTelling] = useState<Record<string, boolean>>({});
   const live = useJobStreams(allJobs, (job) => {
     setEnded(job);
+    if (telling[job.id]) tell(job, detail?.storyboard?.title ?? detail?.story.title ?? "");
     load().catch(() => undefined);
   });
   const jobs = allJobs.map((j) => live[j.id] ?? j);
@@ -125,6 +138,17 @@ export default function Story() {
     }
     return { keyframes, cast };
   }, [jobs, detail]);
+
+  // The tab says how far a job has got, so a render can run in a background tab.
+  const title = draft?.title ?? detail?.story.title;
+  const fraction = current?.status === "running" ? current.progress?.fraction : undefined;
+  useEffect(() => {
+    if (!title) return;
+    document.title = `${fraction != null ? `(${Math.round(fraction * 100)}%) ` : ""}${title} · Lanternist`;
+    return () => {
+      document.title = "Lanternist";
+    };
+  }, [title, fraction]);
 
   if (error && !detail)
     return (
@@ -241,6 +265,19 @@ export default function Story() {
     setMode,
   };
 
+  // Permission is asked for only when the viewer asks to be told, never when the page opens.
+  const askToTell = (job: Job) =>
+    run(async () => {
+      if (!("Notification" in window)) throw new Error("This browser can't show notifications.");
+      const allowed =
+        Notification.permission === "default"
+          ? await Notification.requestPermission()
+          : Notification.permission;
+      if (allowed !== "granted")
+        throw new Error("Notifications are off for this page. Allow them in the browser's site settings.");
+      setTelling((t) => ({ ...t, [job.id]: true }));
+    });
+
   const cancel = (job: Job) =>
     run(async () => {
       await api.cancel(job.id);
@@ -343,12 +380,24 @@ export default function Story() {
           {writeJob && writeJob.status !== "failed" && writeJob.status !== "cancelled" ? (
             <>
               <h2>Writing your story</h2>
-              <p className="muted">
-                The writer drafts the story first, then the cast and a picture, motion and sound note for
-                every scene.
-              </p>
-              <Stages job={writeJob} />
-              <Log job={writeJob} />
+              <ol className="passes" aria-live="polite">
+                {WRITER_PASSES.map((name, i) => {
+                  const done = writeJob.progress?.stages?.write?.done ?? 0;
+                  const state =
+                    done > i ? "done" : done === i && writeJob.status === "running" ? "working" : "planned";
+                  return (
+                    <li key={name} data-state={state}>
+                      {name}
+                    </li>
+                  );
+                })}
+              </ol>
+              <p className="muted">{writeJob.progress?.message}</p>
+              <details>
+                <summary>Behind the scenes</summary>
+                <Stages job={writeJob} />
+                <Log job={writeJob} />
+              </details>
             </>
           ) : (
             <>
@@ -424,6 +473,8 @@ export default function Story() {
               detail={detail}
               jobs={jobs}
               finished={ended?.kind === "render" && ended.status === "done" ? ended : undefined}
+              telling={telling}
+              onTell={(job) => void askToTell(job)}
               busy={busy}
               renderUsd={estimates?.render.total_usd}
               onRender={actions.render}
@@ -434,7 +485,16 @@ export default function Story() {
       )}
 
       {current && !writing && !(step === "film" && current.kind === "render") && (
-        <Dock job={current} queued={active.length - 1} onCancel={() => cancel(current)} />
+        <Dock
+          job={current}
+          queued={active.length - 1}
+          sb={sb}
+          board={detail.board}
+          reel={current.kind === "render" ? `/stories/${id}/film` : null}
+          telling={!!telling[current.id]}
+          onTell={() => void askToTell(current)}
+          onCancel={() => cancel(current)}
+        />
       )}
     </>
   );

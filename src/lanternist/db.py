@@ -188,6 +188,7 @@ class LibraryRow:
     film: Job | None  # the latest finished render
     drawn: Job | None  # the latest finished board or render, for the poster
     active: int  # jobs queued or running
+    progress: float | None  # how far through the running one is, by time, when it knows
 
 
 class Database:
@@ -273,15 +274,17 @@ class Database:
                 )
                 film = s.scalars(done.where(Job.kind == "render")).first()
                 drawn = s.scalars(done.where(Job.kind.in_(("board", "render")))).first()
-                active = s.scalar(
-                    select(func.count()).where(Job.story_id == st.id, Job.status.in_(("queued", "running")))
+                active = list(
+                    s.scalars(select(Job).where(Job.story_id == st.id, Job.status.in_(("queued", "running"))))
                 )
+                running = next((j for j in active if j.status == "running"), None)
                 row = s.scalars(
                     select(StoryVersion).where(
                         StoryVersion.story_id == st.id, StoryVersion.version == st.version
                     )
                 ).first()
-                out.append(LibraryRow(st, row.storyboard if row else {}, film, drawn, active or 0))
+                fraction = (running.progress or {}).get("fraction") if running else None
+                out.append(LibraryRow(st, row.storyboard if row else {}, film, drawn, len(active), fraction))
             return out
 
     def get_story(self, story_id: str) -> Story | None:

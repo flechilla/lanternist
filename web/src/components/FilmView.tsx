@@ -9,6 +9,9 @@ interface Props {
   jobs: Job[];
   /** A render that finished while the page was open: its reel stays up, finished, above the film. */
   finished: Job | undefined;
+  /** The jobs the viewer asked to be told about when they end. */
+  telling: Record<string, boolean>;
+  onTell: (job: Job) => void;
   busy: boolean;
   /** What rendering again would cost now. */
   renderUsd: number | undefined;
@@ -16,7 +19,8 @@ interface Props {
   onCancel: (job: Job) => void;
 }
 
-export default function FilmView({ detail, jobs, finished, busy, renderUsd, onRender, onCancel }: Props) {
+export default function FilmView(p: Props) {
+  const { detail, jobs, finished, busy, renderUsd, onRender, onCancel } = p;
   const player = useRef<HTMLVideoElement>(null);
   const renders = jobs.filter((j) => j.kind === "render");
   const running = renders.find(isActive);
@@ -46,6 +50,8 @@ export default function FilmView({ detail, jobs, finished, busy, renderUsd, onRe
           sb={detail.storyboard}
           board={detail.board}
           job={reel}
+          telling={!!p.telling[reel.id]}
+          onTell={() => p.onTell(reel)}
           onCancel={() => onCancel(reel)}
           onWatch={watch}
         />

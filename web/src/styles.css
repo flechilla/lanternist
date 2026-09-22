@@ -541,6 +541,24 @@ input[type="checkbox"] {
 .status-pill.working {
   background: var(--lamp-soft);
   color: var(--lamp-ink);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.ring {
+  width: 14px;
+  height: 14px;
+  transform: rotate(-90deg);
+}
+.ring circle {
+  fill: none;
+  stroke: var(--rule);
+  stroke-width: 2.4;
+}
+.ring circle.fill {
+  stroke: var(--lamp);
+  stroke-linecap: round;
+  transition: stroke-dasharray var(--t-slow) var(--ease-out);
 }
 .status-pill.ready {
   background: var(--viridian-soft);
@@ -980,6 +998,69 @@ details > summary {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.dock-head .left {
+  color: var(--lamp-ink);
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.minireel {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 10px;
+}
+.dotb {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  box-shadow: inset 0 0 0 1px var(--rule);
+  transition: background var(--t-mid);
+}
+.dotb[data-s="1"] {
+  background: var(--lamp-soft);
+  box-shadow: none;
+}
+.dotb[data-s="2"] {
+  background: var(--oak);
+  box-shadow: none;
+}
+.dotb[data-s="3"] {
+  background: var(--lamp);
+  box-shadow: none;
+}
+.dotb[data-s="4"] {
+  background: var(--viridian);
+  box-shadow: none;
+}
+.dotb[data-w] {
+  box-shadow: 0 0 0 1.5px var(--lamp);
+}
+.dotb[data-f] {
+  box-shadow: 0 0 0 1.5px var(--madder);
+}
+.minireel .tip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+  z-index: 3;
+  background: var(--ink);
+  color: var(--surface);
+  font-size: 0.74rem;
+  padding: 4px 8px;
+  border-radius: 6px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+@media (max-width: 600px) {
+  .dock-head {
+    flex-wrap: wrap;
+  }
+  .dock-head .what {
+    flex-basis: calc(100% - 30px);
+  }
 }
 .dock .body {
   margin-top: 12px;
@@ -2334,5 +2415,66 @@ details > summary {
   .srow .tm,
   .srow.head .tmh {
     display: none;
+  }
+}
+
+/* Writing a story: the writer's two passes */
+.passes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.passes li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink-3);
+}
+.passes li::before {
+  content: "";
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px var(--rule);
+  flex: none;
+}
+.passes li[data-state="working"] {
+  color: var(--ink);
+  font-weight: 600;
+}
+.passes li[data-state="working"]::before {
+  background: var(--lamp);
+  box-shadow: 0 0 0 4px var(--lamp-soft);
+}
+.passes li[data-state="done"] {
+  color: var(--ink-2);
+}
+.passes li[data-state="done"]::before {
+  background: var(--viridian);
+  box-shadow: none;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .passes li[data-state="working"]::before {
+    animation: flicker 2.4s ease-in-out infinite;
+  }
+  .hbtn.rang svg {
+    animation: ring 700ms ease-in-out;
+    transform-origin: 50% 10%;
+  }
+}
+@keyframes ring {
+  20% {
+    rotate: 16deg;
+  }
+  40% {
+    rotate: -13deg;
+  }
+  60% {
+    rotate: 8deg;
+  }
+  80% {
+    rotate: -4deg;
   }
 }

@@ -319,7 +319,9 @@ async def write_storyboard(
     b: Brief,
     emit: Callable[[str], None] | None = None,
     calls: llms.Calls | None = None,
+    drafted: Callable[[], None] = lambda: None,
 ) -> Storyboard:
+    """The story in two passes: its prose, then its storyboard. `drafted` hears when the first ends."""
     emit = emit or (lambda m: None)
     llm = llms.make(cfg, b.writer, b.effort, calls)
     async with llm.session():
@@ -359,6 +361,7 @@ async def write_storyboard(
                 raw, title, paras, words = raw2, t2 or title, p2, w2
                 emit(f"revised: {len(paras)} paragraphs, {words} words{_spent(reply)}")
 
+        drafted()
         emit("storyboarding: cast, pictures, motion and sound")
         schema = inline_schema(WriterBoard)
         system, user = board_prompt(b, title, paras)

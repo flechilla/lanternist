@@ -3,7 +3,7 @@
 import asyncio
 import time
 
-from lanternist import jobs
+from lanternist import jobs, pace
 from lanternist.cli import _printer
 from lanternist.config import Settings
 from lanternist.db import Job, Story
@@ -189,3 +189,32 @@ def test_the_portraits_to_draw_are_on_the_snapshot_before_they_start(db):
         "a": "done",
         "bo": "queued",
     }
+
+
+def test_the_library_says_how_far_a_running_job_is(db):
+    with db.session() as s:
+        s.add(Story(id="s1", slug="a", title="A", version=0))
+        s.commit()
+    queued = db.add_job("s1", "board", 1, {}, None)
+    running = db.add_job("s1", "render", 1, {}, None)
+    db.update_job(running.id, status="running", progress={"fraction": 0.42})
+    [row] = db.library()
+    assert (row.active, row.progress) == (2, 0.42)
+    db.update_job(running.id, status="done")
+    db.update_job(queued.id, status="cancelled")
+    [row] = db.library()
+    assert (row.active, row.progress) == (0, None)
+
+
+async def test_how_far_a_job_is_never_goes_back(db, monkeypatch):
+    clock = Clock()
+    monkeypatch.setattr(jobs, "time", clock)
+    progress = Progress(db, db.add_job(None, "render", None, {}, None).id)
+    progress.expect = {"keyframes": pace.Expect(2, 10.0, basis="history")}
+    clock.now += 20
+    progress.flush()
+    before = progress.snap["fraction"]
+    progress.expect["keyframes"].items = 200  # the check sent many back to be drawn again
+    clock.now += 1
+    progress.flush()
+    assert 0 < before == progress.snap["fraction"]

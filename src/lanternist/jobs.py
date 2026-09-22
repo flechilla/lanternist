@@ -206,7 +206,9 @@ class Progress:
             for k, v in whole.items()
             if v > 0
         ]
-        self.snap["fraction"] = round(ran / (ran + (lo + hi) / 2), 3) if ran + lo + hi else 0.0
+        # Shown as a percentage in the tab and the Library, which mustn't go back when an estimate grows.
+        now_at = round(ran / (ran + (lo + hi) / 2), 3) if ran + lo + hi else 0.0
+        self.snap["fraction"] = max(self.snap.get("fraction", 0.0), now_at)
 
     def _spend(self) -> None:
         """What the job has paid for so far: in all, by stage, and for each scene's step."""
@@ -360,10 +362,17 @@ class Runner:
         if job.kind == "write":
             from .writer import Brief, write_storyboard
 
+            # Two passes, counted on the row once the first is done, so the page can say which is on.
             progress.stage(Event("write", "start"))
-            sb = await write_storyboard(cfg, Brief(**job.params), emit=progress.note, calls=calls)
+            sb = await write_storyboard(
+                cfg,
+                Brief(**job.params),
+                emit=progress.note,
+                calls=calls,
+                drafted=lambda: progress.stage(Event("write", "progress", done=1, total=2)),
+            )
             version = self.db.add_version(job.story_id, sb.model_dump(), note="written")
-            progress.stage(Event("write", "finish", done=1, total=1))
+            progress.stage(Event("write", "finish", done=2, total=2))
             return {"version": version, **calls.summary()}
 
         with self.db.session() as s:
