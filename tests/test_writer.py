@@ -21,6 +21,7 @@ from lanternist.writer import (
     RewrittenScene,
     WriterBoard,
     _json_text,
+    board_prompt,
     inline_schema,
     rewrite_scene,
     write_storyboard,
@@ -133,6 +134,11 @@ def test_replies_are_unwrapped_before_validation():
     assert _json_text('<think>which cat?</think>\n```json\n{"title": "T"}\n```') == '{"title": "T"}'
     assert _json_text('```\n{"a": 1}\n```') == '{"a": 1}'
     assert _json_text(' {"a": 1} ') == '{"a": 1}'
+
+
+def test_a_story_without_a_title_is_storyboarded_as_untitled():
+    _, user = board_prompt(brief(), None, ["The cat looks up at the stars."])
+    assert user.startswith("Story: (untitled)\n")  # was "Story: None"
 
 
 async def test_openrouter_writer_end_to_end(cfg, db, world, leases):

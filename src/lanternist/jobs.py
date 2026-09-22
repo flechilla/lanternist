@@ -11,6 +11,7 @@ import logging
 import shutil
 import time
 import traceback
+from typing import Any, cast
 
 from . import prefs
 from .config import Settings
@@ -57,7 +58,7 @@ class Progress:
 
     def __init__(self, db: Database, job_id: str):
         self.db, self.job_id = db, job_id
-        self.snap = {"stages": {}, "log": [], "message": ""}
+        self.snap: dict[str, Any] = {"stages": {}, "log": [], "message": ""}
         self.t0 = time.time()
         self._last_write = 0.0
 
@@ -159,10 +160,9 @@ class Runner:
             await self.run(job.id)
 
     async def run(self, job_id: str) -> None:
-        with self.db.session() as s:
-            job = s.get(Job, job_id)
-            job.status, job.started_at, job.error = "running", now(), None
-            s.commit()
+        job = self.db.update_job(job_id, status="running", started_at=now(), error=None)
+        if job is None:
+            return  # deleted with its story since it was picked
         progress = Progress(self.db, job_id)
         task = asyncio.create_task(self.execute(job, progress))
         self.current = (job_id, task)
@@ -170,7 +170,7 @@ class Runner:
         try:
             result = await task
         except asyncio.CancelledError:
-            if asyncio.current_task().cancelling():
+            if cast(asyncio.Task, asyncio.current_task()).cancelling():  # run() always runs in a task
                 status = "queued"  # the server is shutting down: run it again on the next start
                 raise
             status = "cancelled"
@@ -181,14 +181,18 @@ class Runner:
         finally:
             self.current = None
             self.cancel_requested.discard(job_id)
-            with self.db.session() as s:
-                job = s.get(Job, job_id)
-                job.status, job.result, job.error, job.finished_at = status, result, error, now()
-                if status == "done":
-                    for st in progress.snap["stages"].values():
-                        st["status"] = "done"
-                job.progress = dict(progress.snap)
-                s.commit()
+            if status == "done":
+                for st in progress.snap["stages"].values():
+                    st["status"] = "done"
+            # Deleting a story deletes its jobs, a running one too; the row is then gone and this does nothing.
+            self.db.update_job(
+                job_id,
+                status=status,
+                result=result,
+                error=error,
+                finished_at=now(),
+                progress=dict(progress.snap),
+            )
 
     async def execute(self, job: Job, progress: Progress) -> dict:
         cfg = prefs.effective(self.cfg, self.db)  # what the Settings page saved applies from the next job
@@ -199,14 +203,9 @@ class Runner:
 
             progress.stage(Event("write", "start"))
             sb = await write_storyboard(cfg, Brief(**job.params), emit=progress.note, calls=calls)
-            with self.db.session() as s:
-                from .db import Story
-
-                story = s.get(Story, job.story_id)
-                row = self.db.save_version(s, story, sb.model_dump(), note="written")
-                s.commit()
+            version = self.db.add_version(job.story_id, sb.model_dump(), note="written")
             progress.stage(Event("write", "finish", done=1, total=1))
-            return {"version": row.version, **calls.summary()}
+            return {"version": version, **calls.summary()}
 
         with self.db.session() as s:
             story, row = self.db.storyboard(s, job.story_id, job.version)
@@ -219,14 +218,9 @@ class Runner:
             progress.stage(Event("write", "start", message=f"rewriting scene {n}"))
             new = await rewrite_scene(cfg, sb, n, job.params["instruction"], calls=calls)
             sb.scenes = [new if s.n == n else s for s in sb.scenes]
-            with self.db.session() as s:
-                from .db import Story
-
-                story = s.get(Story, job.story_id)
-                row = self.db.save_version(s, story, sb.model_dump(), note=f"rewrote scene {n}")
-                s.commit()
+            version = self.db.add_version(job.story_id, sb.model_dump(), note=f"rewrote scene {n}")
             progress.stage(Event("write", "finish", done=1, total=1))
-            return {"version": row.version, **calls.summary()}
+            return {"version": version, **calls.summary()}
 
         if job.kind == "cast":
             cast, _ = await pipeline.draw(sb, cast_only=True)

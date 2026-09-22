@@ -11,7 +11,7 @@ from typing import Annotated
 import typer
 
 from .config import settings
-from .storyboard import Effort, Storyboard, slugify
+from .storyboard import Effort, Mode, Storyboard, Subtitles, slugify
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 keys_app = typer.Typer(no_args_is_help=True, help="API keys for remote models (OpenRouter, fal.ai).")
@@ -156,8 +156,8 @@ def board(story: Path):
 def render(
     story: Path,
     out: Annotated[Path | None, typer.Option("-o", "--out")] = None,
-    mode: Annotated[str | None, typer.Option(help="still | video: override every scene's mode")] = None,
-    subtitles: Annotated[str | None, typer.Option(help="off | sidecar | burned")] = None,
+    mode: Annotated[Mode | None, typer.Option(help="override every scene's mode")] = None,
+    subtitles: Annotated[Subtitles | None, typer.Option()] = None,
 ):
     """Render the whole film: board, motion, clips, mix."""
     from .pipeline import Pipeline

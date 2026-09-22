@@ -259,6 +259,27 @@ class Database:
         s.add(row)
         return row
 
+    def add_version(self, story_id: str, storyboard: dict, note: str = "") -> int:
+        """Save a storyboard as the story's next version, in a session of its own; returns the version."""
+        with self.session() as s:
+            story = s.get(Story, story_id)
+            if story is None:
+                raise KeyError(story_id)  # deleted while a job was writing it
+            row = self.save_version(s, story, storyboard, note=note)
+            s.commit()
+            return row.version
+
+    # jobs -------------------------------------------------------------------------------------
+    def update_job(self, job_id: str, **fields) -> Job | None:
+        """Set fields on a job; None if it's gone, deleted with its story."""
+        with self.session() as s:
+            job = s.get(Job, job_id)
+            if job is not None:
+                for k, v in fields.items():
+                    setattr(job, k, v)
+                s.commit()
+            return job
+
     # step runs --------------------------------------------------------------------------------
     def start_run(self, **fields) -> int:
         with self.session() as s:

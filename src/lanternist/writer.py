@@ -16,7 +16,18 @@ from pydantic import BaseModel, Field, ValidationError
 from . import llm as llms
 from .config import Settings
 from .db import to_usd
-from .storyboard import Camera, CastMember, Effort, Line, Models, Scene, Storyboard, WriterId, slugify
+from .storyboard import (
+    Camera,
+    CastMember,
+    Effort,
+    Line,
+    Mode,
+    Models,
+    Scene,
+    Storyboard,
+    WriterId,
+    slugify,
+)
 from .text import LANGUAGES, word_count
 
 STYLES = {
@@ -213,7 +224,7 @@ def story_prompt(b: Brief) -> tuple[str, str]:
     return system, user
 
 
-def board_prompt(b: Brief, title: str, paras: list[str]) -> tuple[str, str]:
+def board_prompt(b: Brief, title: str | None, paras: list[str]) -> tuple[str, str]:
     system = (
         "You are the storyboard artist for an illustrated, narrated film. You turn a story into image and "
         "motion prompts for AI image and video models. All prompts are in English, whatever the story's "
@@ -221,7 +232,7 @@ def board_prompt(b: Brief, title: str, paras: list[str]) -> tuple[str, str]:
     )
     numbered = "\n\n".join(f"[{i}] {p}" for i, p in enumerate(paras, 1))
     user = (
-        f"Story: {title}\nAudience: {AUDIENCES.get(b.audience, b.audience)}\n\n{numbered}\n\n"
+        f"Story: {title or '(untitled)'}\nAudience: {AUDIENCES.get(b.audience, b.audience)}\n\n{numbered}\n\n"
         f"Return the cast and exactly {len(paras)} scenes, one per numbered paragraph, in order (n = 1..{len(paras)}).\n"
         "Cast: every recurring character, with a concrete visual 'look'. Their looks are added to every prompt "
         "automatically, so in scene prompts refer to characters by name only.\n"
@@ -338,7 +349,8 @@ def ambience_only(sound: str) -> str:
 
 
 def assemble(b: Brief, title: str, paras: list[str], wb: WriterBoard) -> Storyboard:
-    cast, ids = [], set()
+    cast: list[CastMember] = []
+    ids: set[str] = set()
     for c in wb.cast:
         cid = slugify(c.id or c.name) or f"c{len(cast) + 1}"
         if cid not in ids:
@@ -357,10 +369,10 @@ def assemble(b: Brief, title: str, paras: list[str], wb: WriterBoard) -> Storybo
     for i, (p, ws) in enumerate(zip(paras, wb.scenes, strict=True), 1):
         members = []
         for ref in ws.cast:
-            cid = slugify(ref) if slugify(ref) in ids else by_name.get(ref.lower())
-            if cid and cid not in members:
-                members.append(cid)
-        mode = {"still": "still", "video": "video"}.get(b.mode, "video" if i - 1 in video else "still")
+            found = slugify(ref) if slugify(ref) in ids else by_name.get(ref.lower())
+            if found and found not in members:
+                members.append(found)
+        mode: Mode = ("video" if i - 1 in video else "still") if b.mode == "hybrid" else b.mode
         # A still with a static camera is a slide; stills always get a move ("auto" alternates in and out).
         camera = "auto" if mode == "still" and ws.camera == "static" else ws.camera
         scenes.append(
