@@ -5,6 +5,7 @@ import {
   ApiError,
   errorMessage,
   fmtSeconds,
+  fmtUsd,
   isActive,
   LANGUAGE_NAMES,
   type Job,
@@ -173,6 +174,9 @@ export default function Story() {
 
   const sb = draft ?? detail.storyboard;
   const writeJob = jobs.find((j) => j.kind === "write");
+  const w = detail.writer;
+  const writtenBy =
+    w && `written by ${w.model}` + (w.cost_usd ? ` for ${fmtUsd(w.cost_usd)}` : w.local ? ", locally" : "");
 
   return (
     <>
@@ -183,6 +187,7 @@ export default function Story() {
           {sb && <span>{sb.scenes.length} scenes</span>}
           {detail.board?.total && <span>{fmtSeconds(detail.board.total)} with narration</span>}
           {!writing && <span>version {detail.version}</span>}
+          {writtenBy && <span>{writtenBy}</span>}
           <span className="spacer" />
           {confirmDelete ? (
             <span className="row">

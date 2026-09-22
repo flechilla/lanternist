@@ -1,7 +1,5 @@
 """The API end to end with fake engines: import, board, edit, re-roll, render, download."""
 
-import time
-
 
 def storyboard(n=3):
     return {
@@ -20,18 +18,7 @@ def storyboard(n=3):
     }
 
 
-def wait(client, job_id, timeout=60):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        job = client.get(f"/api/jobs/{job_id}").json()
-        if job["status"] in ("done", "failed", "cancelled"):
-            assert job["status"] == "done", job["error"]
-            return job
-        time.sleep(0.2)
-    raise TimeoutError(job_id)
-
-
-def test_story_lifecycle(client):
+def test_story_lifecycle(client, wait):
     assert client.get("/api/health").json()["fake_engines"] is True
     opts = client.get("/api/options").json()
     assert any(v["name"] == "demo" for v in opts["voices"]) and opts["styles"]
@@ -40,8 +27,9 @@ def test_story_lifecycle(client):
     sid = created["story"]["id"]
     story = client.get(f"/api/stories/{sid}").json()
     assert story["version"] == 1 and story["board"]["scenes"][0]["keyframe"] is None
+    assert story["writer"] is None  # imported: nobody here wrote it
 
-    wait(client, client.post(f"/api/stories/{sid}/board").json()["id"])
+    wait(client.post(f"/api/stories/{sid}/board").json()["id"])
     board = client.get(f"/api/stories/{sid}").json()["board"]
     assert board["cast"] and all(s["keyframe"] and s["audio"] for s in board["scenes"])
 
@@ -57,11 +45,11 @@ def test_story_lifecycle(client):
 
     # Re-rolling a scene makes a version with a new seed and redraws it.
     rr = client.post(f"/api/stories/{sid}/scenes/2/reroll").json()
-    wait(client, rr["job"]["id"])
+    wait(rr["job"]["id"])
     story = client.get(f"/api/stories/{sid}").json()
     assert story["version"] == 3 and story["storyboard"]["scenes"][1]["seed"] is not None
 
-    job = wait(client, client.post(f"/api/stories/{sid}/render").json()["id"])
+    job = wait(client.post(f"/api/stories/{sid}/render").json()["id"])
     film = job["result"]["film"]
     stages = job["progress"]["stages"]
     assert {"narration", "keyframes", "motion", "clips", "mix"} <= set(stages)

@@ -1,6 +1,6 @@
 # Lanternist M2: OpenRouter and fal.ai
 
-> **Status, 21 Sep 2026: Phase A is built and checked against the live APIs.** 63 tests pass offline, and your library is migrated to `0002` (backup in `~/Lanternist/backups/`). Both keys work. A first real video was made end to end: GPT Luna wrote the story and MiniMax H3 Max rendered the shot on fal, for $0.80 as estimated. Phases B–F are next.
+> **Status, 21 Sep 2026: Phases A and B are built and checked against the live APIs.** 91 tests pass offline, and your library is migrated to `0002` (backup in `~/Lanternist/backups/`). Both keys work. A first real video was made end to end: GPT Luna wrote the story and MiniMax H3 Max rendered the shot on fal, for $0.80 as estimated. Stories can now be written by any OpenRouter model with structured output, picked on New story; Claude Opus 5 wrote a Spanish story in the app for $0.21, as estimated. Phases C–F are next.
 >
 > This is the blueprint's M2 ("fal, registry, estimator, your own key") with one change: the writer calls OpenRouter directly instead of going through fal's `openrouter/router`. Going direct gives the real cost of every request, the full list of models, and one hop fewer.
 > API facts below were read from the OpenRouter and fal docs, the per-model `llms.txt` pages and the fal-client 1.0.3 source on 21 Sep 2026. Anything marked **verify** was not confirmed and gets checked in Phase A.
@@ -149,7 +149,7 @@ budget_usd = 5.0             # per story; values saved on the Settings page (the
 
 [openrouter]
 url = "https://openrouter.ai/api/v1"
-recommended = []             # model ids pinned at the top of the writer picker, chosen in Phase B
+recommended = ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5", "deepseek/deepseek-v4.1-flash", "openai/gpt-5.6-luna"]   # pinned in the writer picker; from the Phase B trials
 data_collection = "deny"     # verify: provider routing option that excludes providers that store prompts
 
 [fal]
@@ -309,7 +309,7 @@ The language check in `narrate()` (today "not supported by Qwen3-TTS") becomes e
 | Pictures | cast sheet + 13 keyframes, klein 9B | ≈ $0.45 (Nano Banana 2 at 2K: ≈ $1.60) |
 | Video | 4 × 14 s | Kling v3 Std ≈ $4.70 · LTX fast 720p ≈ $5.00 · Wan flash (15 s clips) ≈ $3.00 |
 | Ambience | MMAudio, 56 s | ≈ $0.06 |
-| Writer | frontier model | cents; measured in Phase B |
+| Writer | Claude Opus 5 (GPT-5.6 Luna: under a cent) | ≈ $0.21 (measured in Phase B) |
 
 That's about $5.50 with Kling. Full video on Kling is about $16. Everything but video costs under $1.
 
@@ -432,27 +432,67 @@ Each phase ends with something that runs end to end. Sizes assume one developer 
 - [x] OpenRouter ✓ with its usage and limit ($250 limit on the key), and fal ✓.
 - [x] `lanternist models --sync` recorded 13 fal endpoints in `model_prices`. `lanternist models` shows each list price beside what fal bills.
 - [x] The existing stories, versions and jobs are all still there after the migration.
-- [x] `uv run pytest` passes with no network: 62 tests (was 15).
+- [x] `uv run pytest` passes with no network: 63 tests (was 15).
 
-### Phase B: the writer on OpenRouter (≈1.5 days)
+### Phase B: the writer on OpenRouter (≈1.5 days) · built 21 Sep 2026
 
-- [ ] `llm.py`, with `Ollama` moved there and `OpenRouter` added: strict schema, reasoning control, empty-content handling, typed errors and reported cost.
-  - Only send the parameters a model lists in `supported_parameters`. GPT Luna takes no `temperature`.
-  - Reasoning effort per story, checked against the model's `supported_efforts`. GPT Luna offers `none` through `max`, with `medium` as its default. A story at `high` cost $0.001.
-- [ ] `Brief.writer`. The lease only when the writer is Ollama. Rewrites use the story's writer.
-- [ ] `GET /api/models?capability=writer.chat`: Ollama models (free) first, then the recommended OpenRouter models, then the rest, searchable, each with a price per story from measured token counts.
-- [ ] A writer picker on New story, and the cost on the finished job. `lanternist write --writer openrouter/<id>`.
-- [ ] Try 3–4 models on the same three ideas (en, es, pt). Keep the best-value ones as `recommended`, and record their token counts for the estimator.
+- [x] `llm.py`, with `Ollama` moved there and `OpenRouterLLM` added: strict schema, reasoning control, empty-content handling, typed errors and reported cost.
+  - **Parameters.** The model list's `supported_parameters` is the *union* over a model's providers. Claude Opus 5 is the proof:
+    - Its structured-output providers (Anthropic, Claude on AWS) take no `temperature`, and the one that does (Azure) has no structured output.
+    - A strict schema plus a temperature therefore found no provider (404).
+    - The writer now reads `/models/{id}/endpoints` (public, cached for a day). With a schema, it sends `reasoning`, `max_tokens` and `temperature` (in that order of need) only when one structured-output provider takes all of them. Without a schema, providers ignore what they lack. If the provider list can't be read, it falls back to the union and logs a warning.
+  - **Reasoning.** Effort is per story. `None` means the model's own default. A requested effort is clamped to the nearest one the model supports ("none" on a mandatory-reasoning model becomes its lowest).
+  - **Token limit.** `max_tokens` is 32k, capped by the model's limit. On an empty "length" stop, the writer retries once with twice the room. The wasted attempt is still paid for, so its tokens and cost are counted. If there's no more room, or the retry stops too, the call fails and its `step_runs` row keeps what OpenRouter billed.
+  - **Code fences.** Replies wrapped in a code fence, or with `<think>` blocks, are unwrapped before validation.
+- [x] `Brief.writer` and `Brief.effort`, validated.
+  - `Storyboard.models` (`writer`, `writer_effort`) records who wrote the story, and rewrites use that writer, not the current default.
+  - Only Ollama takes the GPU lease.
+  - Jobs now run with the settings saved in the app, so `defaults.writer` from Settings applies.
+- [x] Every writer call is a `step_runs` row (stage `write`): tokens in, out and reasoning, effort, upstream provider, wall time, and OpenRouter's reported cost. Failed and cancelled calls are recorded too, with what OpenRouter billed for them. A cost it didn't report is `null` (`cost_source` "none"), as for local models.
+  - Write and rewrite jobs return `{writer, cost_usd, calls, tokens_in, tokens_out}`.
+  - The job log shows each pass's cost.
+- [x] `GET /api/models?capability=writer.chat` lists the writers:
+  - Local Ollama models first (embedding models hidden).
+  - Then `openrouter.recommended`, then the rest. `:batch` and `:free` variants are hidden.
+  - Each model shows its per-token prices, supported efforts and a cost per minute of story. The cost comes from, in order of preference:
+    1. token counts measured on your finished write jobs
+    2. the trial counts below
+    3. the trial median
+  - Only the writer's list is served so far; the media stages' lists come with their pickers in Phase C.
+- [x] The writer picker on New story: search, groups (on this machine, then OpenRouter), a price for the chosen length, and a reasoning select when the model has efforts. OpenRouter models are disabled until a key is set.
+  - The story header shows "written by … for $X". `GET /api/stories/{id}` sends the writer and its cost, summed from `step_runs`, so failed attempts count.
+  - `lanternist write --writer openrouter/<id> --effort <e>` prints the calls, tokens and cost.
+  - `lanternist models --capability writer.chat` uses the same catalog.
+  - `POST /api/stories` refuses an OpenRouter writer when there's no key.
+- [x] Fake mode now fakes Ollama too (`/api/chat`, `/api/tags`), so tests and UI work never touch the local model. The fake storyboard has one scene per numbered paragraph, so a full write succeeds offline.
+- [x] **Trials:** 5 models × 3 ideas (en, es, pt), 3-minute bedtime stories for ages 5–8, plus Gemini and Sonnet again at `low` effort. That's 24 stories, $2.26 in total. That includes $0.39 for the story pass of the three Opus runs that then failed on the parameter bug above.
+  - **Every story was valid and within ±15% of its target length.** Opus 5 hit the exact target on all three ideas.
+  - Times are per story. Tokens are per minute of story, both passes, at the model's default effort unless the row says otherwise.
+
+    | Model | Tokens in / out | Cost per story | Time | Verdict |
+    |---|---|---|---|---|
+    | Claude Opus 5 | 921 / 2,613 | $0.21 | 95 s | Best by a distance: specific, inventive detail, a real wind-down, idiomatic Spanish and Brazilian Portuguese |
+    | Claude Sonnet 5 (default: high) | 939 / 6,012 | $0.19 (up to $0.30) | 143 s | Very good but wordy; high reasoning triples the cost |
+    | Claude Sonnet 5 (low) | 1,706 / 1,672 | $0.06 | 58 s | Same quality as high; runs a length revision more often |
+    | DeepSeek V4.1 Flash | 649 / 4,727 | $0.012 | 175 s | Simple, correct, good for small children; Portuguese comes out European; slow |
+    | Gemini 3.8 Flash (default: medium) | 384 / 7,866 | $0.09 (up to $0.14) | 124 s | Stilted Spanish and Portuguese, heavy on adjectives; reasoning spikes even at low (17k tokens) |
+    | GPT-5.6 Luna | 507 / 1,855 | $0.007 | 53 s | Cheapest and fastest; occasional slips ("el mundo quiera") |
+  - **Reasoning is most of the output, and it drives the cost.** A lower effort is usually the better deal for the writer.
+  - **Recommended** (the new built-in `openrouter.recommended`): Opus 5, Sonnet 5, DeepSeek V4.1 Flash and GPT-5.6 Luna. Gemini 3.8 Flash is left out.
+  - Their token counts are in `llm.TRIAL_TOKENS_PER_MINUTE`, and the median (700 in / 2,900 out per minute) prices every other model.
+  - Local qwen3.8 is unchanged: 20 s for a 1-minute story, under the GPU lease.
 
 **Exit:**
-- Ideas in English, Spanish and Portuguese each give a valid storyboard within ±15% of target length on at least two OpenRouter models, with the cost shown.
-- The Ollama path is unchanged.
+- [x] Ideas in English, Spanish and Portuguese each gave a valid storyboard within ±15% of target length on five OpenRouter models, with the cost shown.
+- [x] A story written in the app on Opus 5, in Spanish: 13 scenes and 4 characters, $0.214 against a $0.21 estimate, 99 s. The cost is shown on the story.
+- [x] The Ollama path is unchanged. It is tested against the fake, and a real 1-minute story took 20 s.
+- Not checked live: a scene rewrite on an OpenRouter model. It is covered offline, and it uses the same strict-schema path as the storyboard.
 
 ### Phase C: the engine interface and pictures on fal (≈3 days)
 
 - [ ] `engines/base.py` and `engines/local.py`. Move klein, Qwen3-TTS and LTX behind the interface. The golden-key test proves the cache is unchanged.
 - [ ] `fal_image.py`, with klein 9B (text-to-image and edit) and Nano Banana 2 edit. `draw` runs as two waves: the cast sheet, then all keyframes in parallel.
-- [ ] `Storyboard.models`. A "Models" panel on the story (pictures for now) with a per-scene re-roll price.
+- [ ] `Storyboard.models` (it holds the writer since Phase B) gains the picture model. A "Models" panel on the story (pictures for now) with a per-scene re-roll price. `GET /api/models?capability=image.keyframe` lists what it offers.
 - [ ] Progress lines show fal queue position and in-progress state.
 
 **Exit:**

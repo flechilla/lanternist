@@ -12,9 +12,11 @@ import shutil
 import time
 import traceback
 
+from . import prefs
 from .config import Settings
 from .db import TERMINAL, Database, Job, now
 from .keys import redact
+from .llm import Calls
 from .pipeline import Event, Pipeline
 from .storyboard import Storyboard
 
@@ -189,12 +191,14 @@ class Runner:
                 s.commit()
 
     async def execute(self, job: Job, progress: Progress) -> dict:
-        pipeline = Pipeline(self.cfg, progress.stage)
+        cfg = prefs.effective(self.cfg, self.db)  # what the Settings page saved applies from the next job
+        pipeline = Pipeline(cfg, progress.stage)
+        calls = Calls(self.db, story_id=job.story_id, job_id=job.id)
         if job.kind == "write":
             from .writer import Brief, write_storyboard
 
             progress.stage(Event("write", "start"))
-            sb = await write_storyboard(self.cfg, Brief(**job.params), emit=progress.note)
+            sb = await write_storyboard(cfg, Brief(**job.params), emit=progress.note, calls=calls)
             with self.db.session() as s:
                 from .db import Story
 
@@ -202,7 +206,7 @@ class Runner:
                 row = self.db.save_version(s, story, sb.model_dump(), note="written")
                 s.commit()
             progress.stage(Event("write", "finish", done=1, total=1))
-            return {"version": row.version}
+            return {"version": row.version, **calls.summary()}
 
         with self.db.session() as s:
             story, row = self.db.storyboard(s, job.story_id, job.version)
@@ -213,7 +217,7 @@ class Runner:
 
             n = job.params["n"]
             progress.stage(Event("write", "start", message=f"rewriting scene {n}"))
-            new = await rewrite_scene(self.cfg, sb, n, job.params["instruction"])
+            new = await rewrite_scene(cfg, sb, n, job.params["instruction"], calls=calls)
             sb.scenes = [new if s.n == n else s for s in sb.scenes]
             with self.db.session() as s:
                 from .db import Story
@@ -222,7 +226,7 @@ class Runner:
                 row = self.db.save_version(s, story, sb.model_dump(), note=f"rewrote scene {n}")
                 s.commit()
             progress.stage(Event("write", "finish", done=1, total=1))
-            return {"version": row.version}
+            return {"version": row.version, **calls.summary()}
 
         if job.kind == "cast":
             cast, _ = await pipeline.draw(sb, cast_only=True)
@@ -239,7 +243,7 @@ class Runner:
 
         if job.kind == "render":
             film = await pipeline.render(sb)
-            dest = self.cfg.library / "films" / f"{story.slug}-v{job.version}.mp4"
+            dest = cfg.library / "films" / f"{story.slug}-v{job.version}.mp4"
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(pipeline.store.path(film.film), dest)
             return {

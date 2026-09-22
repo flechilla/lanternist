@@ -10,6 +10,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
+from typing import Any
 
 import httpx
 
@@ -20,7 +21,7 @@ from . import ProviderError, backoff, retry_after, transport
 log = logging.getLogger(__name__)
 
 MODELS_TTL = 24 * 3600
-_models_cache: dict[str, tuple[float, list[dict]]] = {}
+_models_cache: dict[str, tuple[float, Any]] = {}  # public listings by URL, with the time fetched
 
 FRIENDLY = {
     401: "OpenRouter rejected the key",
@@ -163,6 +164,7 @@ class OpenRouter:
         finish = choice.get("finish_reason")
         usage = data.get("usage") or {}
         if not text.strip() and finish == "length":
+            # Still paid for: `usage` in the error's meta says what it cost.
             reasoning = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens")
             raise OpenRouterError(
                 "the model used its whole token budget"
@@ -170,6 +172,7 @@ class OpenRouter:
                 + " and wrote nothing; raise max_tokens",
                 type="length",
                 status=200,
+                meta={"usage": usage},
             )
         return ChatResult(
             text=text,
@@ -192,19 +195,30 @@ class OpenRouter:
     async def models(self, structured_only: bool = True, refresh: bool = False) -> list[dict]:
         """The public model list (no key needed), cached for a day."""
         params = {"supported_parameters": "structured_outputs"} if structured_only else {}
-        cache_key = f"{self.cfg.openrouter.url}?{params}"
+        return await self._listing(f"{self.cfg.openrouter.url}/models", params, refresh) or []
+
+    async def endpoints(self, model: str, refresh: bool = False) -> list[dict]:
+        """The providers serving one model, each with the parameters it takes (no key needed; cached for a day).
+
+        The model list's `supported_parameters` is the union over these, so a request that needs several
+        parameters at once (a strict schema and a temperature) must check them here.
+        """
+        url = f"{self.cfg.openrouter.url}/models/{model}/endpoints"
+        return ((await self._listing(url, {}, refresh)) or {}).get("endpoints") or []
+
+    async def _listing(self, url: str, params: dict, refresh: bool) -> Any:
+        """The `data` of a public GET, cached for a day: model details change rarely, and it's slow."""
+        cache_key = f"{url}?{params}"
         hit = _models_cache.get(cache_key)
         if hit and not refresh and time.time() - hit[0] < MODELS_TTL:
             return hit[1]
         async with self.client(timeout=30) as client:
-            r = await client.get(
-                f"{self.cfg.openrouter.url}/models", params=params, headers=self._headers(auth=False)
-            )
+            r = await client.get(url, params=params, headers=self._headers(auth=False))
         if r.status_code >= 400:
             raise _error(r.status_code, _json(r), r.text[:300])
-        models = r.json().get("data") or []
-        _models_cache[cache_key] = (time.time(), models)
-        return models
+        data = r.json().get("data")
+        _models_cache[cache_key] = (time.time(), data)
+        return data
 
     async def check(self) -> tuple[bool, str, dict]:
         try:

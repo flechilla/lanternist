@@ -63,3 +63,49 @@ def test_doctor_lists_providers(client):
     names = {c["name"]: c for c in client.get("/api/doctor").json()}
     assert names["openrouter"]["status"] == "ok" and "key from fake" in names["openrouter"]["detail"]
     assert names["fal"]["status"] == "ok"
+
+
+BRIEF = {"idea": "A cat and a gull.", "minutes": 0.4}
+
+
+def test_writing_on_openrouter_through_the_api(client, wait):
+    created = client.post(
+        "/api/stories", json={"brief": {**BRIEF, "writer": "openrouter/fake/frontier", "effort": "low"}}
+    ).json()
+    job = wait(created["job"]["id"])
+    res = job["result"]
+    assert res["writer"] == "openrouter/fake/frontier" and res["calls"] == 2 and res["cost_usd"] > 0
+    assert any("$" in line for line in job["progress"]["log"])  # the log shows what each pass cost
+    story = client.get(f"/api/stories/{created['story']['id']}").json()
+    assert story["storyboard"]["models"] == {"writer": "openrouter/fake/frontier", "writer_effort": "low"}
+    assert story["writer"] == {
+        "id": "openrouter/fake/frontier",
+        "model": "fake/frontier",
+        "local": False,
+        "cost_usd": res["cost_usd"],
+    }
+    # The finished job now prices this writer from what it measured.
+    cat = client.get("/api/models", params={"capability": "writer.chat"}).json()
+    frontier = next(m for m in cat["models"] if m["id"] == "openrouter/fake/frontier")
+    assert frontier["basis"] == "measured"
+
+
+def test_the_default_writer_from_settings(client, wait):
+    assert client.get("/api/models").json()["default"] == "ollama/qwen3.8:latest"
+    client.put("/api/settings", json={"changes": {"defaults.writer": "openrouter/fake/cheap"}})
+    assert client.get("/api/models").json()["default"] == "openrouter/fake/cheap"
+    job = wait(client.post("/api/stories", json={"brief": BRIEF}).json()["job"]["id"])
+    assert job["result"]["writer"] == "openrouter/fake/cheap"
+
+
+def test_models_endpoint(client):
+    cat = client.get("/api/models").json()
+    assert cat["models"][0]["id"] == "ollama/qwen3.8:latest" and cat["providers"]["openrouter"]["configured"]
+    assert client.get("/api/models", params={"capability": "image.keyframe"}).status_code == 404
+
+
+def test_an_openrouter_writer_needs_a_key(client, monkeypatch):
+    monkeypatch.setattr(keys, "get_key", lambda provider, fake=False: keys.Key(provider, None, None))
+    r = client.post("/api/stories", json={"brief": {**BRIEF, "writer": "openrouter/fake/frontier"}})
+    assert r.status_code == 422 and "OpenRouter key" in r.json()["detail"]
+    assert client.post("/api/stories", json={"brief": {**BRIEF, "writer": "gpt"}}).status_code == 422

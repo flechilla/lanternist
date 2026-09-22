@@ -62,10 +62,6 @@ def describe(cfg: Settings, db: Database) -> list[dict]:
 
 
 def _check_model(key: str, value, library) -> None:
-    if key == "defaults.writer":
-        if value and not str(value).startswith(("ollama/", "openrouter/")):
-            raise ValueError("the writer is ollama/<model> or openrouter/<model id>")
-        return
     if key == "defaults.ambience" and value == "none":
         return
     entry = registry.get(value, library)  # KeyError names the known ids
@@ -90,7 +86,7 @@ def update(cfg: Settings, db: Database, changes: dict) -> None:
             "; ".join(f"{'.'.join(map(str, err['loc']))}: {err['msg']}" for err in e.errors())
         ) from None
     for key in changes:
-        if key in MODEL_KEYS or key == "defaults.writer":
+        if key in MODEL_KEYS:
             try:
                 _check_model(key, _get(new, key), cfg.library)
             except KeyError as e:
