@@ -1,6 +1,6 @@
 # Lanternist: editions and accounts
 
-> **Status, 23 Sep 2026: built on `feat/accounts`, as one pull request; the sign-in against WorkOS staging waits for its keys.** This is Phase B of `HOSTED_PLAN.md` (issue #15). The sign-in provider is WorkOS AuthKit (#23), on its free plan: the custom domain ($99/month) waits until paying users justify it. The questions in §4 are answered.
+> **Status, 23 Sep 2026: built on `feat/accounts`, as one pull request, and checked against WorkOS staging.** This is Phase B of `HOSTED_PLAN.md` (issue #15). The sign-in provider is WorkOS AuthKit (#23), on its free plan: the custom domain ($99/month) waits until paying users justify it. The questions in §4 are answered.
 >
 > **Measured before writing:**
 > - `Database` has 42 public methods. 24 read or change a row a user will own; the rest run the queue, keep prices and uploads, or open the database.
@@ -115,13 +115,13 @@ Definition of done:
 
 **SSE** sends the cookie like any same-origin request, and the stream is checked once, when it connects. Nothing needs refreshing.
 
-**Webhooks.** `POST /api/webhooks/workos` verifies `WorkOS-Signature`: `t=<timestamp>, v1=<HMAC-SHA256 of "t.body">` with the webhook secret, within 5 minutes. **Verify** in staging whether `t` is milliseconds, as the SDKs treat it.
+**Webhooks.** `POST /api/webhooks/workos` verifies `WorkOS-Signature`: `t=<timestamp>, v1=<HMAC-SHA256 of "t.body">` with the webhook secret, within 5 minutes. `t` is in milliseconds, as the staging run confirmed.
 - `user.updated` updates the email.
 - `user.deleted` sets `deleted_at` and deletes the user's sessions. Deleting their stories and files is Phase I's account deletion.
 - `session.revoked` deletes the session with that `sid`.
 - No `user.created`: the callback is the only way in, and it creates the user.
 - The handlers are idempotent. Recording each event once in `webhook_events` comes in Phase H, for payments.
-- Webhooks need a public address, so they're tested against signed fake events here, and live in Phase G.
+- Webhooks need a public address. The suite tests them against signed fake events. The staging run reached them through an ngrok tunnel, and production gets its endpoint in Phase G.
 
 **The email** is written at every sign-in, and by `user.updated` in between.
 
@@ -214,10 +214,10 @@ One pull request, `feat/accounts`, in four commits.
 - [x] `auth.py`: the sign-in, callback, sign-out, `/api/me`, the session cookie, the Origin check and the webhook.
 - [x] The fake sign-in form.
 - [x] Web: the sign-in page, the account menu, and 401 sending people back to sign-in.
-- [ ] A manual run against WorkOS staging, once its keys are set (§4): sign in by email code and by Google, sign out, sign in again.
+- [x] A manual run against WorkOS staging (23 Sep, §4): sign up and sign in with Google, sign out back to the app, sign in again. Five real webhooks (`user.updated` and `session.revoked`) were accepted through ngrok. Email codes wait for Magic Auth to be switched on in the dashboard, which no API or CLI command can do. AuthKit runs both methods, so the callback doesn't change.
 
 **Exit** (the definition of done above):
-- [x] Items 1–5, with the suite passing on SQLite and Postgres: 268 tests on SQLite, and 265 on Postgres with the 3 `sqlite_only` ones skipped. Item 4 in fake mode; against WorkOS itself with the manual run above.
+- [x] Items 1–5, with the suite passing on SQLite and Postgres: 269 tests on SQLite, and 266 on Postgres with the 3 `sqlite_only` ones skipped. Item 4 in fake mode; against WorkOS itself with the manual run above.
 - [x] A copy of `~/Lanternist` opens after 0004, owned by `local` (`test_migration_on_a_copy_of_the_real_library`). The library itself hasn't been migrated: the first start on this branch does it.
 
 ## 3. Where the build departed from the design
@@ -251,8 +251,9 @@ One pull request, `feat/accounts`, in four commits.
 - **Pull requests:** one for all of Phase B.
 - **Files per user:** in this phase (§1.3), rather than waiting for R2 in Phase C.
 - **`users.email`:** written at every sign-in, and by `user.updated`. Not asked; it follows from AuthKit, where the callback is the only way in.
-- **Still needed from the user, for commit 4's manual run** (not blocking the build):
-  - A WorkOS account under Monsoft Solutions, and its staging environment with AuthKit on. Turn on Magic Auth (email codes) and Google OAuth; WorkOS's shared Google client is fine for staging.
-  - The redirect URI `http://localhost:8420/api/auth/callback`, and the sign-out redirect `http://localhost:8420/`.
-  - `WORKOS_API_KEY` set in the environment where `lanternist serve` runs, and the client id in a scratch `lanternist.toml`. Never paste the key into a chat or an issue.
-  - A webhook secret only once there's a public address (Phase G).
+- **WorkOS staging, as set up for commit 4's manual run** (23 Sep). The account is under Monsoft Solutions. `WORKOS_API_KEY` and `WORKOS_WEBHOOK_SECRET` are in the repo's `.env`, which is gitignored; never paste them into a chat or an issue. The API key can set:
+  - the redirect URI `http://localhost:8420/api/auth/callback` (`POST /user_management/redirect_uris`);
+  - the webhook endpoint `https://wise-mastiff-sharing.ngrok-free.app/api/webhooks/workos`, for the three events above (`POST /webhook_endpoints`, whose answer holds the secret).
+
+  The sign-out redirect and the app homepage URL need the dashboard, or the `workos` CLI after `workos auth login`: `workos authkit logout-uris set` and `workos config homepage-url set`. Both are `http://localhost:8420`. The redirect must equal the `return_to` we send, which is `[hosted] url`. Without them, WorkOS ends every sign-out on its own `app-homepage-url-not-found` page.
+- **Still for the user:** switch on Magic Auth (email codes) in the dashboard, and switch off Email + Password, since the sign-in page promises no password. No API or CLI command reaches these settings.

@@ -79,8 +79,11 @@ extra (`uv sync` already installs it for development) and a database of its own:
 The hosted edition (accounts, remote models only) runs from a `lanternist.toml` of its own, with
 `edition = "hosted"`, `[hosted] url` and remote models in `[defaults]` (`lanternist.example.toml` has
 them all). Point `LANTERNIST_CONFIG` at it, and use another library than `~/Lanternist`. In fake mode
-it signs in anyone, through a test page. With WorkOS, set `[workos] client_id` and `WORKOS_API_KEY`,
-and add `<url>/api/auth/callback` as a redirect URI in the WorkOS dashboard.
+it signs in anyone, through a test page. With WorkOS, set `[workos] client_id` and `WORKOS_API_KEY`.
+In the WorkOS dashboard, add `<url>/api/auth/callback` as a redirect URI, and set `<url>` itself as
+the sign-out redirect and the app homepage URL. For webhooks, add an endpoint at
+`<url>/api/webhooks/workos` for `user.updated`, `user.deleted` and `session.revoked`, and put its
+secret in `WORKOS_WEBHOOK_SECRET`. The endpoint needs a public address: locally, `ngrok http 8420`.
 
 `plans/MVP_PLAN.md` has the plan this was built from; `plans/M2_PLAN.md` has its live checks still to run; `plans/HOSTED_PLAN.md` is the hosted edition in progress, with a plan per phase (`plans/DB_PLAN.md` done, `plans/ACCOUNTS_PLAN.md` in progress). `CLAUDE.md` holds the
 conventions every change follows.
