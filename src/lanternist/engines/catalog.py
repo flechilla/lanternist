@@ -30,7 +30,7 @@ SAMPLE_SEED = 7  # a sample is one take: the same line in the same voice is made
 
 def entry(cfg: Settings, db: Database | None, model_id: str, capability: str) -> ModelEntry:
     try:
-        e = registry.get(model_id, cfg.library, db)
+        e = registry.get(model_id, cfg.library, db, cfg.hosted_edition)
     except KeyError as err:
         raise ValueError(str(err).strip("'\"")) from None
     if e.capability != capability:
@@ -95,8 +95,9 @@ def cached_sample(store: Store, eng: TtsEngine, language: str) -> str | None:
 
 
 def voices(cfg: Settings, db: Database | None, store: Store, model_id: str, language: str) -> dict:
-    """The voices a narration model offers: its presets and, if it clones, the recordings in voices/.
-    Each comes with its sample when one was made; `sample_usd` is what making one costs."""
+    """The voices a narration model offers: its presets and, if it clones, the recordings in voices/
+    (none in the hosted edition, which clones no one's voice). Each comes with its sample when one was
+    made; `sample_usd` is what making one costs."""
     e = entry(cfg, db, model_id, "tts.speak")
 
     def sample(voice: str) -> str | None:
@@ -104,7 +105,7 @@ def voices(cfg: Settings, db: Database | None, store: Store, model_id: str, lang
             return None  # the recording itself is the sample
         return cached_sample(store, tts(cfg, db, e.id, voice, language), language)
 
-    recordings = list_voices(cfg) if e.clone else []
+    recordings = list_voices(cfg) if e.clone and not cfg.hosted_edition else []
     price = None
     if e.remote and (e.voices or recordings):
         first = e.voices[0] if e.voices else recordings[0]["name"]
@@ -212,7 +213,7 @@ def catalog(cfg: Settings, db: Database | None, capability: str) -> dict:
     """Every model a stage can use, with what it costs and whether it can run here now."""
     default = prefs.default_model(cfg, capability)
     rows = []
-    for e in registry.by_capability(capability, cfg.library, db):
+    for e in registry.by_capability(capability, cfg.library, db, cfg.hosted_edition):
         row = {
             "id": e.id,
             "label": e.label,

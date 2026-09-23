@@ -20,7 +20,7 @@ import httpx
 
 from . import keys
 from .config import Settings
-from .db import Database, now, to_micros, to_usd
+from .db import LOCAL, Database, now, to_micros, to_usd
 from .gpu import lease
 from .providers import transport
 from .providers.openrouter import OpenRouter as OpenRouterClient
@@ -80,11 +80,13 @@ class Calls:
     job_id: str | None = None
     stage: str = "write"  # a key of pipeline.LABELS
     replies: list[Reply] = field(default_factory=list)
+    owner: str = field(kw_only=True)  # whose calls these are, and so whose spend
 
     def start(self, llm: "LLM") -> int | None:
         if self.db is None:
             return None
         return self.db.start_run(
+            owner_id=self.owner,
             story_id=self.story_id,
             job_id=self.job_id,
             stage=self.stage,
@@ -152,7 +154,7 @@ class LLM:
     provider: str
 
     def __init__(self, calls: Calls | None = None):
-        self.calls = calls or Calls()
+        self.calls = calls or Calls(owner=LOCAL)  # with no database it logs nothing, for no one
 
     def session(self) -> AbstractAsyncContextManager:
         """Held around a whole story, so the local model loads once."""
@@ -391,18 +393,29 @@ def parse(writer: str) -> tuple[str, str]:
     return provider, model
 
 
+def _runs_here(cfg: Settings, writer: str | None) -> tuple[str, str]:
+    """The writer's provider and model; LLMError for a local writer in the hosted edition, which has
+    no Ollama."""
+    provider, model = parse(writer_id(cfg, writer))
+    if provider == "ollama" and cfg.hosted_edition:
+        raise LLMError(
+            f"{model} runs on your own machine, which this edition doesn't: pick an OpenRouter writer"
+        )
+    return provider, model
+
+
 def make(
     cfg: Settings, writer: str | None = "", effort: Effort | None = None, calls: Calls | None = None
 ) -> LLM:
-    provider, model = parse(writer_id(cfg, writer))
+    provider, model = _runs_here(cfg, writer)
     if provider == "ollama":
         return Ollama(cfg, model, calls)
     return OpenRouterLLM(cfg, model, effort, calls)
 
 
 def check_key(cfg: Settings, writer: str | None = "") -> None:
-    """Raises LLMError when the writer runs on OpenRouter and there's no key for it."""
-    remote = parse(writer_id(cfg, writer))[0] == "openrouter"
+    """Raises LLMError when the writer can't run here, or runs on OpenRouter and there's no key for it."""
+    remote = _runs_here(cfg, writer)[0] == "openrouter"
     if remote and not keys.get_key("openrouter", fake=cfg.fake_engines).value:
         raise LLMError("this writer runs on OpenRouter: add an OpenRouter key in Settings first")
 
@@ -466,15 +479,16 @@ async def catalog(cfg: Settings, db: Database | None = None) -> dict:
         "openrouter": {"ok": True, "error": None, "configured": False},
     }
 
-    try:
-        async with httpx.AsyncClient(transport=transport(cfg), timeout=5) as client:
-            tags = (await client.get(f"{cfg.ollama.url}/api/tags")).json().get("models", [])
-    except (httpx.HTTPError, ValueError) as e:
-        tags = []
-        status["ollama"] = {
-            "ok": False,
-            "error": f"Ollama isn't reachable at {cfg.ollama.url} ({e.__class__.__name__})",
-        }
+    tags: list[dict] = []
+    if not cfg.hosted_edition:  # which has no Ollama
+        try:
+            async with httpx.AsyncClient(transport=transport(cfg), timeout=5) as client:
+                tags = (await client.get(f"{cfg.ollama.url}/api/tags")).json().get("models", [])
+        except (httpx.HTTPError, ValueError) as e:
+            status["ollama"] = {
+                "ok": False,
+                "error": f"Ollama isn't reachable at {cfg.ollama.url} ({e.__class__.__name__})",
+            }
     rows = [
         Writer(
             id=f"ollama/{t['name']}",

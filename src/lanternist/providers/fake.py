@@ -1,13 +1,15 @@
-"""In-process fakes of fal.ai, OpenRouter and Ollama, served through an httpx transport.
+"""In-process fakes of fal.ai, OpenRouter, Ollama and WorkOS, served through an httpx transport.
 
 Fake mode (LANTERNIST_FAKE_ENGINES=1) and the tests use these, so the real clients run end to
 end with no keys and no network. fal's queue walks IN_QUEUE -> IN_PROGRESS -> COMPLETED and its
 results are ffmpeg test media; OpenRouter and Ollama answer a JSON schema with a sample that fits
 it (a storyboard gets one scene per numbered paragraph), and plain prompts with a short story.
-Tests steer failures through the attributes on FakeFal and FakeOpenRouter.
+Tests steer failures through the attributes on FakeFal and FakeOpenRouter. WorkOS signs in anyone
+whose code is `fake:<email>`, which the fake sign-in page makes.
 """
 
 import asyncio
+import base64
 import itertools
 import json
 import re
@@ -19,6 +21,7 @@ from urllib.parse import urlparse
 import httpx
 
 from ..engines import fake as media
+from .workos import FAKE_CODE
 
 
 def sample(schema: dict, lengths: dict[str, int] | None = None):
@@ -465,6 +468,35 @@ class FakeOllama:
         )
 
 
+def fake_token(claims: dict) -> str:
+    """An access token shaped like WorkOS's: a JWT with these claims, and no real signature."""
+
+    def part(data: dict) -> str:
+        return base64.urlsafe_b64encode(json.dumps(data).encode()).decode().rstrip("=")
+
+    return f"{part({'alg': 'RS256'})}.{part(claims)}.signature"
+
+
+@dataclass
+class FakeWorkOS:
+    authenticated: list[dict] = field(default_factory=list)  # every code exchange, as sent
+
+    async def handle(self, request: httpx.Request) -> httpx.Response:
+        if request.method != "POST" or request.url.path != "/user_management/authenticate":
+            return _json({"message": "not found"}, 404)
+        body = json.loads(request.content)
+        self.authenticated.append(body)
+        code = body.get("code", "")
+        if body.get("grant_type") != "authorization_code" or not code.startswith(FAKE_CODE):
+            return _json({"error": "invalid_grant", "error_description": "The code is invalid."}, 400)
+        email = code.removeprefix(FAKE_CODE)
+        user = {"object": "user", "id": f"user_{re.sub(r'[^a-z0-9]', '_', email.lower())}", "email": email}
+        sid = f"session_{len(self.authenticated)}"
+        return _json(
+            {"user": user, "access_token": fake_token({"sid": sid}), "refresh_token": "fake-refresh"}
+        )
+
+
 class FakeWorld:
     """The fakes behind one transport, routed by host and path."""
 
@@ -472,10 +504,13 @@ class FakeWorld:
         self.fal = FakeFal()
         self.openrouter = FakeOpenRouter()
         self.ollama = FakeOllama()
+        self.workos = FakeWorkOS()
 
     async def handle(self, request: httpx.Request) -> httpx.Response:
         if request.url.host == "openrouter.ai":
             return await self.openrouter.handle(request)
+        if request.url.host == "api.workos.com":
+            return await self.workos.handle(request)
         if request.url.path in ("/api/chat", "/api/tags"):
             return await self.ollama.handle(request)
         return await self.fal.handle(request)

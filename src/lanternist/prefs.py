@@ -1,14 +1,15 @@
-"""Settings people change in the app, stored in the database's `settings` table.
+"""Settings people change in the app, stored per user in the database's `settings` table.
 
 A value saved here wins over lanternist.toml, which wins over the built-in default. Removing a
 saved value falls back to the file. Only the keys in EDITABLE can be saved, and never API keys:
-those live in the keychain (see keys.py).
+those live in the keychain (see keys.py). In the hosted edition the settings in PLATFORM_SETTINGS
+come from lanternist.toml alone.
 """
 
 from pydantic import ValidationError
 
 from . import registry
-from .config import Settings, file_data
+from .config import MODEL_DEFAULTS, Settings, file_data
 from .db import Database
 
 EDITABLE = {
@@ -24,14 +25,22 @@ EDITABLE = {
     "fal.max_concurrency": "fal requests running at once",
     "fal.media_ttl_hours": "Hours fal keeps the files it makes for us",
 }
-MODEL_KEYS = {
-    "defaults.tts": "tts.speak",
-    "defaults.image": "image.keyframe",
-    "defaults.video": "video.image_to_video",
-    "defaults.ambience": "audio.ambience",
+# Provider tuning the hosted edition sets for everyone: a user there can't take more of fal's slots,
+# or let providers store prompts.
+PLATFORM_SETTINGS = {
+    "openrouter.recommended",
+    "openrouter.data_collection",
+    "fal.max_concurrency",
+    "fal.media_ttl_hours",
 }
+MODEL_KEYS = {f"defaults.{field}": capability for field, capability in MODEL_DEFAULTS.items()}
 # Model settings that may be "none", and what that means.
 OFF = {"defaults.ambience": "Their scenes stay silent under the narration."}
+
+
+def editable(cfg: Settings) -> list[str]:
+    """The keys this edition lets its users save."""
+    return [k for k in EDITABLE if not (cfg.hosted_edition and k in PLATFORM_SETTINGS)]
 
 
 def default_model(cfg: Settings, capability: str) -> str:
@@ -50,9 +59,10 @@ def _apply(cfg: Settings, values: dict) -> Settings:
     return Settings.model_validate(data)
 
 
-def effective(cfg: Settings, db: Database) -> Settings:
-    """`cfg` with the values saved in the app applied on top."""
-    saved = {k: v for k, v in db.saved_settings().items() if k in EDITABLE}
+def effective(cfg: Settings, db: Database, owner: str) -> Settings:
+    """`cfg` with the values the owner saved in the app applied on top."""
+    keys = editable(cfg)
+    saved = {k: v for k, v in db.saved_settings(owner).items() if k in keys}
     return _apply(cfg, saved) if saved else cfg
 
 
@@ -61,11 +71,12 @@ def _get(cfg: Settings, key: str):
     return getattr(getattr(cfg, section), field)
 
 
-def describe(cfg: Settings, db: Database) -> list[dict]:
-    saved, written = db.saved_settings(), file_data()
-    eff = effective(cfg, db)
+def describe(cfg: Settings, db: Database, owner: str) -> list[dict]:
+    saved, written = db.saved_settings(owner), file_data()
+    eff = effective(cfg, db, owner)
     out = []
-    for key, label in EDITABLE.items():
+    for key in editable(cfg):
+        label = EDITABLE[key]
         section, field = key.split(".", 1)
         source = "app" if key in saved else "file" if field in written.get(section, {}) else "default"
         out.append(
@@ -81,20 +92,29 @@ def describe(cfg: Settings, db: Database) -> list[dict]:
     return out
 
 
-def _check_model(key: str, value, library) -> None:
+def _said(err) -> str:
+    """A validation error as a sentence: a validator's own words as it wrote them, else the field and
+    what's wrong with it."""
+    if err["type"] == "value_error":
+        return str(err["ctx"]["error"])
+    return f"{'.'.join(map(str, err['loc']))}: {err['msg']}"
+
+
+def _check_model(key: str, value, cfg: Settings) -> None:
     if key in OFF and value == "none":
         return
-    entry = registry.get(value, library)  # KeyError names the known ids
+    entry = registry.get(value, cfg.library, hosted=cfg.hosted_edition)  # KeyError names the known ids
     if entry.capability != MODEL_KEYS[key]:
         raise ValueError(f"{value} is a {entry.capability} model, not {MODEL_KEYS[key]}")
 
 
-def update(cfg: Settings, db: Database, changes: dict) -> None:
-    """Save `changes`; a value of None removes the saved value. All or nothing."""
-    unknown = sorted(set(changes) - set(EDITABLE))
+def update(cfg: Settings, db: Database, owner: str, changes: dict) -> None:
+    """Save the owner's `changes`; a value of None removes the saved value. All or nothing."""
+    keys = editable(cfg)
+    unknown = sorted(set(changes) - set(keys))
     if unknown:
         raise ValueError(f"can't change {', '.join(unknown)} here")
-    current = {k: v for k, v in db.saved_settings().items() if k in EDITABLE}
+    current = {k: v for k, v in db.saved_settings(owner).items() if k in keys}
     merged = {**current, **{k: v for k, v in changes.items() if v is not None}}
     for k, v in changes.items():
         if v is None:
@@ -102,19 +122,17 @@ def update(cfg: Settings, db: Database, changes: dict) -> None:
     try:
         new = _apply(cfg, merged)
     except ValidationError as e:
-        raise ValueError(
-            "; ".join(f"{'.'.join(map(str, err['loc']))}: {err['msg']}" for err in e.errors())
-        ) from None
+        raise ValueError("; ".join(_said(err) for err in e.errors())) from None
     for key in changes:
         if key in MODEL_KEYS:
             try:
-                _check_model(key, _get(new, key), cfg.library)
+                _check_model(key, _get(new, key), cfg)
             except KeyError as e:
                 raise ValueError(str(e).strip("'\"")) from None
     if new.defaults.budget_usd < 0 or new.fal.max_concurrency < 1 or new.fal.media_ttl_hours <= 0:
         raise ValueError("budget must be ≥ 0, concurrency ≥ 1, and media hours > 0")
     for key, value in changes.items():
         if value is None:
-            db.delete_setting(key)
+            db.delete_setting(owner, key)
         else:
-            db.set_setting(key, value)
+            db.set_setting(owner, key, value)

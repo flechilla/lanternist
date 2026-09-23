@@ -56,22 +56,24 @@ def _db():
 
 
 def _effective():
+    """The settings the local user saved in the app, over lanternist.toml."""
+    from .db import LOCAL
     from .prefs import effective
 
     db = _db()
-    return effective(settings(), db), db
+    return effective(settings(), db, LOCAL), db
 
 
 @app.command()
 def doctor():
     """Check that every engine, model and tool a film needs is ready."""
-    from .db import DatabaseError
+    from .db import LOCAL, DatabaseError
     from .doctor import run_checks
     from .prefs import effective
 
     cfg = settings()
     with contextlib.suppress(DatabaseError):  # its row says why; the rest use lanternist.toml's settings
-        cfg = effective(cfg, _db())
+        cfg = effective(cfg, _db(), LOCAL)
     checks = asyncio.run(run_checks(cfg))
     for c in checks:
         print(f" {MARK[c.status]} {c.name:<9} {c.detail}")
@@ -118,6 +120,7 @@ def write(
     ] = None,
 ):
     """Write a storyboard from a one-line idea, with the local LLM or an OpenRouter model."""
+    from .db import LOCAL
     from .llm import Calls
     from .text import word_count
     from .writer import Brief, write_storyboard
@@ -135,7 +138,7 @@ def write(
         writer=writer,
         effort=effort,
     )
-    calls = Calls(db)
+    calls = Calls(db, owner=LOCAL)
     t0 = time.time()
     sb = asyncio.run(write_storyboard(cfg, brief, emit=lambda m: print(f"  {m}", flush=True), calls=calls))
     out = out or Path(f"{slugify(sb.title)}.json")
@@ -176,11 +179,12 @@ def _flagged(b: "Board") -> None:
 @app.command()
 def board(story: Path):
     """Narrate the story and draw the cast sheet and every keyframe."""
+    from .db import LOCAL
     from .pipeline import Pipeline
 
     sb = _load(story)
     cfg, db = _effective()
-    p = Pipeline(cfg, _printer(), db=db)
+    p = Pipeline(cfg, _printer(), db=db, owner=LOCAL)
     try:
         b = asyncio.run(p.board(sb))
     finally:
@@ -199,6 +203,7 @@ def render(
     subtitles: Annotated[Subtitles | None, typer.Option()] = None,
 ):
     """Render the whole film: board, motion, clips, mix."""
+    from .db import LOCAL
     from .pipeline import Pipeline
 
     sb = _load(story)
@@ -208,7 +213,7 @@ def render(
     if subtitles:
         sb.subtitles = subtitles
     cfg, db = _effective()
-    p = Pipeline(cfg, _printer(), db=db)
+    p = Pipeline(cfg, _printer(), db=db, owner=LOCAL)
 
     async def make():
         try:
@@ -331,7 +336,7 @@ def models(
         if capability and cap != capability:
             continue
         print(cap)
-        for e in registry.by_capability(cap, cfg.library, db):
+        for e in registry.by_capability(cap, cfg.library, db, cfg.hosted_edition):
             p = e.price
             price = f"${p.usd}/{p.unit}" if p.usd is not None else f"{p.gpu_seconds} GPU-s/{p.unit}"
             when = f" · list {p.synced}" if p.synced else ""

@@ -67,7 +67,7 @@ class FalTts(FalEngine, TtsEngine):
         self.preset = voice if voice in entry.voices else None
         self.clip: Voice | None = None
         if self.preset is None:
-            if not entry.clone:
+            if not entry.clone or cfg.hosted_edition:  # hosted clones no recording: HOSTED_PLAN §1.9
                 raise VoiceError(
                     f"“{voice}” isn't one of {entry.label}'s voices: pick one of them on the Script step"
                 )

@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from lanternist import jobs, pace
 from lanternist.cli import _printer
 from lanternist.config import Settings
-from lanternist.db import Job, Story
+from lanternist.db import LOCAL, Job, Story
 from lanternist.jobs import THROTTLE, Progress, Runner
 from lanternist.pipeline import ITEM, Event, Pipeline
 from lanternist.storyboard import CastMember
@@ -16,25 +16,25 @@ from lanternist.storyboard import CastMember
 
 async def test_deleting_a_story_while_its_job_runs_keeps_the_queue_going(cfg, db):
     with db.session() as s:
-        s.add(Story(id="s1", slug="a", title="A", version=0))
+        s.add(Story(owner_id=LOCAL, id="s1", slug="a", title="A", version=0))
         s.commit()
     runner = Runner(cfg, db)
-    runner.enqueue("s1", "board", 1)
+    runner.enqueue(LOCAL, "s1", "board", 1)
 
     async def delete_the_story(job, progress):  # what DELETE /api/stories does meanwhile
-        assert db.delete_story("s1")
+        assert db.delete_story(LOCAL, "s1")
         return {}
 
     runner.execute = delete_the_story
     await runner.run(db.claim_job(jobs.FAST, False))  # raised AttributeError on the missing row
-    assert db.jobs(active=False, limit=10) == []
+    assert db.jobs(LOCAL, active=False, limit=10) == []
     assert runner.current is None
 
 
 def test_claim_gives_each_worker_its_own_job(db):
     """Workers asking at the same moment never get the same job, and between them take every one."""
-    queued = {db.add_job(None, "render", None, {}, None).id for _ in range(20)}
-    db.add_job(None, "sample", None, {}, None)  # the other lane's
+    queued = {db.add_job(LOCAL, None, "render", None, {}, None).id for _ in range(20)}
+    db.add_job(LOCAL, None, "sample", None, {}, None)  # the other lane's
     start = threading.Barrier(4)
 
     def worker() -> list[str]:
@@ -48,7 +48,7 @@ def test_claim_gives_each_worker_its_own_job(db):
         claims = [f.result() for f in [pool.submit(worker) for _ in range(4)]]
     every = [job_id for claimed in claims for job_id in claimed]
     assert sorted(every) == sorted(queued)
-    assert {(db.get_job(j).status, db.get_job(j).started_at is not None) for j in every} == {
+    assert {(db.get_job(LOCAL, j).status, db.get_job(LOCAL, j).started_at is not None) for j in every} == {
         ("running", True)
     }
 
@@ -63,7 +63,7 @@ async def test_the_snapshot_follows_every_scene_and_portrait_to_done(fake_cfg, d
     sb = make_story(("still", "video"))
     sb.cast.append(CastMember(id="bo", name="Bo", look="boy in a blue cap"))
     sb.portraits = True
-    job = db.add_job(None, "board", None, {}, None)
+    job = db.add_job(LOCAL, None, "board", None, {}, None)
     progress = Progress(db, job.id)
     seen: dict[tuple[str, str], list[str]] = {}
 
@@ -73,7 +73,7 @@ async def test_the_snapshot_follows_every_scene_and_portrait_to_done(fake_cfg, d
         if e.status in ITEM and whose != "None":
             seen.setdefault((e.stage, whose), []).append(e.status)
 
-    await Pipeline(fake_cfg, follow, db=db, job_id=job.id).board(sb)
+    await Pipeline(fake_cfg, follow, db=db, job_id=job.id, owner=LOCAL).board(sb)
     snap = progress.snap
     assert seen[("keyframes", "1")] == ["queued", "working", "done"]
     assert seen[("portraits", "bo")] == ["queued", "working", "done"]
@@ -87,7 +87,7 @@ async def test_the_snapshot_follows_every_scene_and_portrait_to_done(fake_cfg, d
 
     # Everything is made now: the next board shows each step as it was, from the cache.
     again = Progress(db, job.id)
-    await Pipeline(fake_cfg, again.stage, db=db, job_id=job.id).board(sb)
+    await Pipeline(fake_cfg, again.stage, db=db, job_id=job.id, owner=LOCAL).board(sb)
     assert again.snap["scenes"]["2"]["keyframes"] == {
         "state": "cached",
         "asset": snap["scenes"]["2"]["keyframes"]["asset"],
@@ -99,7 +99,7 @@ async def test_the_snapshot_follows_every_scene_and_portrait_to_done(fake_cfg, d
 
 
 async def test_the_last_of_a_burst_of_events_is_written(cfg, db):
-    job = db.add_job(None, "board", None, {}, None)
+    job = db.add_job(LOCAL, None, "board", None, {}, None)
     progress = Progress(db, job.id)
     progress.stage(Event("keyframes", "start", done=0, total=2))
     progress.stage(Event("keyframes", "queued", scene=1))
@@ -110,7 +110,7 @@ async def test_the_last_of_a_burst_of_events_is_written(cfg, db):
 
 
 async def test_a_step_waiting_at_a_provider_says_how_many_are_ahead(cfg, db):
-    job = db.add_job(None, "render", None, {}, None)
+    job = db.add_job(LOCAL, None, "render", None, {}, None)
     progress = Progress(db, job.id)
     progress.stage(Event("motion", "waiting", scene=4, ahead=2))
     assert progress.snap["scenes"]["4"]["motion"] == {"state": "waiting", "ahead": 2}
@@ -119,7 +119,7 @@ async def test_a_step_waiting_at_a_provider_says_how_many_are_ahead(cfg, db):
 
 
 async def test_the_snapshot_shows_what_each_paid_step_cost(cfg, db):
-    job = db.add_job(None, "render", None, {}, None)
+    job = db.add_job(LOCAL, None, "render", None, {}, None)
     for scene, micros in ((2, 75_000), (2, 25_000), (3, 100_000)):
         db.start_run(
             job_id=job.id, scene=scene, stage="motion", model_id="fal/x", provider="fal", cost_micros=micros
@@ -137,7 +137,7 @@ async def test_the_snapshot_shows_what_each_paid_step_cost(cfg, db):
 
 async def test_a_render_reports_each_scene_through_motion_clips_and_the_mix(fake_cfg, make_story):
     events: list[Event] = []
-    await Pipeline(fake_cfg, events.append).render(make_story(("still", "video")))
+    await Pipeline(fake_cfg, events.append, owner=LOCAL).render(make_story(("still", "video")))
 
     def moves(stage: str, scene: int | None = None) -> list[str]:
         """Where an item went, in order; not the mix's ticks, each time ffmpeg moves on."""
@@ -153,7 +153,7 @@ async def test_a_render_reports_each_scene_through_motion_clips_and_the_mix(fake
 
 
 async def test_the_cli_prints_a_line_for_each_item_made_and_no_more(fake_cfg, make_story, capsys):
-    await Pipeline(fake_cfg, _printer()).render(make_story(("still", "video")))
+    await Pipeline(fake_cfg, _printer(), owner=LOCAL).render(make_story(("still", "video")))
     lines = capsys.readouterr().out.splitlines()
     statuses = {line.split("]", 1)[1].split()[1] for line in lines}  # "[  0.1s] clips     done  3/3 scene 3"
     assert statuses == {"start", "done", "finish", "progress"}
@@ -163,7 +163,7 @@ async def test_paced_fakes_take_that_long_for_each_item(fake_cfg, make_story, mo
     monkeypatch.setenv("LANTERNIST_FAKE_PACE", "0.05")
     cfg = fake_cfg.model_copy(update={"fake_pace": Settings().fake_pace})
     t0 = time.monotonic()
-    await Pipeline(cfg).narrate(make_story(("still", "still", "still")))
+    await Pipeline(cfg, owner=LOCAL).narrate(make_story(("still", "still", "still")))
     assert time.monotonic() - t0 >= 3 * 0.05
 
 
@@ -180,7 +180,7 @@ class Clock:
 async def test_each_row_of_a_batch_counts_its_own_time_and_a_redraw_adds_to_it(db, monkeypatch):
     clock = Clock()
     monkeypatch.setattr(jobs, "time", clock)
-    progress = Progress(db, db.add_job(None, "board", None, {}, None).id)
+    progress = Progress(db, db.add_job(LOCAL, None, "board", None, {}, None).id)
 
     def made(stage: str, scene: int | None, secs: float, done: int, total: int) -> None:
         progress.stage(Event(stage, "working", scene=scene))
@@ -203,7 +203,7 @@ async def test_each_row_of_a_batch_counts_its_own_time_and_a_redraw_adds_to_it(d
 
 
 def test_the_portraits_to_draw_are_on_the_snapshot_before_they_start(db):
-    progress = Progress(db, db.add_job(None, "board", None, {}, None).id)
+    progress = Progress(db, db.add_job(LOCAL, None, "board", None, {}, None).id)
     progress.plan_cast(True, ["a", "bo"])
     progress.stage(Event("portraits", "done", who="a", done=1, total=2, asset="a.png"))
     progress.plan_cast(True, ["a", "bo"])  # planned again (a job run twice): what's made stays made
@@ -216,23 +216,23 @@ def test_the_portraits_to_draw_are_on_the_snapshot_before_they_start(db):
 
 def test_the_library_says_how_far_a_running_job_is(db):
     with db.session() as s:
-        s.add(Story(id="s1", slug="a", title="A", version=0))
+        s.add(Story(owner_id=LOCAL, id="s1", slug="a", title="A", version=0))
         s.commit()
-    queued = db.add_job("s1", "board", 1, {}, None)
-    running = db.add_job("s1", "render", 1, {}, None)
+    queued = db.add_job(LOCAL, "s1", "board", 1, {}, None)
+    running = db.add_job(LOCAL, "s1", "render", 1, {}, None)
     db.update_job(running.id, status="running", progress={"fraction": 0.42})
-    [row] = db.library()
+    [row] = db.library(LOCAL)
     assert (row.active, row.progress) == (2, 0.42)
     db.update_job(running.id, status="done")
     db.update_job(queued.id, status="cancelled")
-    [row] = db.library()
+    [row] = db.library(LOCAL)
     assert (row.active, row.progress) == (0, None)
 
 
 async def test_how_far_a_job_is_never_goes_back_when_an_estimate_grows(db, monkeypatch):
     clock = Clock()
     monkeypatch.setattr(jobs, "time", clock)
-    progress = Progress(db, db.add_job(None, "render", None, {}, None).id)
+    progress = Progress(db, db.add_job(LOCAL, None, "render", None, {}, None).id)
     progress.expect = {"keyframes": pace.Expect(2, 10.0, basis="history")}
     clock.now += 20
     progress.flush()

@@ -10,8 +10,9 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from . import registry
 from .storyboard import LlmId
 
 
@@ -124,6 +125,15 @@ class Defaults(BaseModel):
     budget_usd: float = 5.0  # per story, for remote models
 
 
+# The defaults that name a registry model, and what that model must do.
+MODEL_DEFAULTS = {
+    "tts": "tts.speak",
+    "image": "image.keyframe",
+    "video": "video.image_to_video",
+    "ambience": "audio.ambience",
+}
+
+
 class OpenRouter(BaseModel):
     url: str = "https://openrouter.ai/api/v1"
     # Pinned at the top of the writer picker: the best value from the Phase B trials (plans/M2_PLAN.md).
@@ -147,6 +157,21 @@ class Fal(BaseModel):
     voice_ttl_hours: float = 1  # reference voice clips we upload
 
 
+class Hosted(BaseModel):
+    """The hosted edition's own settings; the local edition ignores them."""
+
+    # The address people use. Sign-in comes back to <url>/api/auth/callback, writes must come from
+    # this origin, and the session cookie is Secure when it's https.
+    url: str = "http://localhost:8420"
+
+
+class WorkOS(BaseModel):
+    """Sign-in for the hosted edition. The client id isn't secret; the API key is WORKOS_API_KEY."""
+
+    api_url: str = "https://api.workos.com"
+    client_id: str = ""
+
+
 class DatabaseConfig(BaseModel):
     model_config = ConfigDict(validate_default=True)
     # Empty: the SQLite file in the library. The hosted edition's Postgres, as
@@ -161,6 +186,11 @@ class DatabaseConfig(BaseModel):
 
 
 class Settings(BaseModel):
+    # local: one person on this machine, with local models and their own keys. hosted: accounts,
+    # and only remote models on the platform's keys (plans/HOSTED_PLAN.md §1.1).
+    edition: Literal["local", "hosted"] = "local"
+    hosted: Hosted = Hosted()
+    workos: WorkOS = WorkOS()
     paths: Paths = Paths()
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)  # reads the environment when made
     ollama: Ollama = Ollama()
@@ -174,9 +204,46 @@ class Settings(BaseModel):
     # Seconds each fake model item takes, so the progress can be watched without a GPU or keys.
     fake_pace: float = Field(default_factory=lambda: float(os.environ.get("LANTERNIST_FAKE_PACE") or 0))
 
+    @model_validator(mode="after")
+    def _hosted_defaults(self) -> "Settings":
+        # The hosted edition runs no model on its own machine, so a local default would fail every story.
+        if self.edition != "hosted":
+            return self
+        d = self.defaults
+        for field in MODEL_DEFAULTS:
+            model = getattr(d, field)
+            if model.startswith("local/"):
+                raise ValueError(
+                    f"defaults.{field} is {model}, a model on this machine, which the hosted edition "
+                    "doesn't run: pick a remote one"
+                )
+        if not d.writer.startswith("openrouter/"):
+            raise ValueError(
+                f"defaults.writer is {d.writer or 'empty (the local Ollama model)'}, which the hosted "
+                "edition doesn't run: pick an OpenRouter writer, openrouter/<model id>"
+            )
+        if d.checker and not d.checker.startswith("openrouter/"):
+            raise ValueError(
+                f"defaults.checker is {d.checker}, which the hosted edition doesn't run: pick an "
+                "OpenRouter model, openrouter/<model id>, or none"
+            )
+        return self
+
+    @property
+    def hosted_edition(self) -> bool:
+        return self.edition == "hosted"
+
     @property
     def library(self) -> Path:
         return self.paths.library
+
+    def library_for(self, owner: str | None) -> Path:
+        """Where an owner's pictures, films and cached steps live: the library itself in the local
+        edition; in hosted, a folder per user, so no one reaches another's files or gets their work for
+        free, and one for what everyone shares (owner None: voice samples)."""
+        if not self.hosted_edition:
+            return self.library
+        return self.library / ("shared" if owner is None else f"u/{owner}")
 
     @property
     def database_url(self) -> str:
@@ -201,6 +268,25 @@ def file_data() -> dict:
     return tomllib.loads(path.read_text()) if path else {}
 
 
+def _check_offered(cfg: Settings) -> None:
+    """The hosted edition's model defaults must be models it offers, or every story fails. This runs once
+    at start-up, not in the validator: a user's saved values go through that on every request, and
+    were checked when they were saved."""
+    offered = registry.load(cfg.library, hosted=True)
+    for field, capability in MODEL_DEFAULTS.items():
+        model = getattr(cfg.defaults, field)
+        entry = offered.get(model)
+        if model != "none" and (entry is None or entry.capability != capability):
+            choices = sorted(m for m, e in offered.items() if e.capability == capability)
+            raise ValueError(
+                f"defaults.{field} is {model}, which the hosted edition doesn't offer here: pick one of "
+                f"{', '.join(choices)} in {config_path()}"
+            )
+
+
 @lru_cache
 def settings() -> Settings:
-    return Settings.model_validate(file_data())
+    cfg = Settings.model_validate(file_data())
+    if cfg.hosted_edition:
+        _check_offered(cfg)
+    return cfg

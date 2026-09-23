@@ -16,9 +16,10 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, create_engine, event, make_url, text
 
-from lanternist import config, providers
+from lanternist import config, keys, providers
+from lanternist.auth import FAKE_USER
 from lanternist.config import Paths, Settings
-from lanternist.db import Database, Story
+from lanternist.db import LOCAL, Database, Story
 from lanternist.providers.fake import FakeWorld
 from lanternist.storyboard import CastMember, Line, Scene, Storyboard
 
@@ -82,8 +83,8 @@ def _isolated_keys(request, tmp_path, monkeypatch):
         return
     monkeypatch.setenv("LANTERNIST_KEYRING", "0")
     monkeypatch.setenv("LANTERNIST_SECRETS_FILE", str(tmp_path / "secrets.toml"))
-    monkeypatch.delenv("FAL_KEY", raising=False)
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    for variable in (*keys.PROVIDERS.values(), *keys.PLATFORM.values()):
+        monkeypatch.delenv(variable, raising=False)
     from lanternist import providers
     from lanternist.providers import openrouter
 
@@ -151,7 +152,7 @@ def make_story():
 def story_row(db) -> str:
     """A story in the database, for pipelines that record spend and check its budget."""
     with db.session() as s:
-        s.add(Story(id="s1", slug="test", title="Test", version=1))
+        s.add(Story(id="s1", owner_id=LOCAL, slug="test", title="Test", version=1))
         s.commit()
     return "s1"
 
@@ -167,15 +168,15 @@ def db(database_url) -> Iterator[Database]:
 @pytest.fixture
 def lands_first():
     """Arranges another save to land at the same moment as the one under test: `save` runs once, on a
-    connection of its own, just as the database is about to update a story, after the save under test
-    has read the version it builds on."""
+    connection of its own, just as the database is about to run a statement starting `before` (by
+    default, updating a story), after the save under test has read what it builds on."""
     listening = []
 
-    def arrange(db: Database, save) -> None:
+    def arrange(db: Database, save, before: str = "UPDATE stories") -> None:
         landed: list[bool] = []
 
         def hook(_conn, _cursor, statement, *_) -> None:
-            if statement.startswith("UPDATE stories") and not landed:
+            if statement.startswith(before) and not landed:
                 landed.append(True)
                 save()
 
@@ -187,12 +188,30 @@ def lands_first():
         event.remove(db.engine, "before_cursor_execute", hook)
 
 
-@pytest.fixture
-def client(tmp_path, voices, database_url, monkeypatch):
-    """The app in fake mode on its own library and database, as `lanternist serve` would run it."""
+# The hosted edition in tests: remote models only, and the test client's own address as its origin.
+HOSTED_TOML = """edition = "hosted"
+
+[hosted]
+url = "http://testserver"
+
+[defaults]
+writer = "openrouter/openai/gpt-5.6-luna"
+tts = "fal/qwen-3-tts-1.7b"
+image = "fal/flux-2-klein-9b"
+video = "fal/h3-max-turbo"
+
+"""
+
+
+def _serve(
+    tmp_path, voices, database_url, monkeypatch, head: str = "", headers: dict | None = None
+) -> Iterator[TestClient]:
+    """The app in fake mode on its own library and database, as `lanternist serve` would run it, with
+    `head` at the top of its lanternist.toml, and `headers` on every request."""
     toml = tmp_path / "lanternist.toml"
     toml.write_text(
-        f'[paths]\nlibrary = "{tmp_path / "lib"}"\nvoices = ["{voices}"]\n\n[database]\nurl = "{database_url}"\n',
+        f'{head}[paths]\nlibrary = "{tmp_path / "lib"}"\nvoices = ["{voices}"]\n\n'
+        f'[database]\nurl = "{database_url}"\n',
         encoding="utf-8",
     )
     monkeypatch.setenv("LANTERNIST_CONFIG", str(toml))
@@ -201,20 +220,37 @@ def client(tmp_path, voices, database_url, monkeypatch):
     import lanternist.api.app as appmod
 
     appmod = importlib.reload(appmod)
-    with TestClient(appmod.app) as c:
+    with TestClient(appmod.app, headers=headers) as c:
         yield c
     appmod.db.close()
     config.settings.cache_clear()
 
 
 @pytest.fixture
-def wait(client):
-    """Waits for a job to finish and returns it; the test fails unless it finished as done."""
+def client(tmp_path, voices, database_url, monkeypatch):
+    """The local edition."""
+    yield from _serve(tmp_path, voices, database_url, monkeypatch)
 
-    def wait_for(job_id: str, timeout: float = 60) -> dict:
+
+@pytest.fixture
+def hosted_client(tmp_path, voices, database_url, monkeypatch):
+    """The hosted edition, signed in as ann, writing from its own pages. A request with
+    `headers={FAKE_USER: "bob"}` is bob's."""
+    headers = {FAKE_USER: "ann", "Origin": "http://testserver"}
+    yield from _serve(tmp_path, voices, database_url, monkeypatch, HOSTED_TOML, headers)
+
+
+@pytest.fixture
+def wait(request):
+    """Waits for a job to finish and returns it; the test fails unless it finished as done. It asks the
+    test's own app, hosted or local: asking for the other would start that one in its place."""
+    client = request.getfixturevalue("hosted_client" if "hosted_client" in request.fixturenames else "client")
+
+    def wait_for(job_id: str, timeout: float = 60, headers: dict | None = None) -> dict:
+        """`headers`: whose job it is, in the hosted edition, when not the test client's own user."""
         deadline = time.time() + timeout
         while time.time() < deadline:
-            job = client.get(f"/api/jobs/{job_id}").json()
+            job = client.get(f"/api/jobs/{job_id}", headers=headers).json()
             if job["status"] in ("done", "failed", "cancelled"):
                 assert job["status"] == "done", job["error"]
                 return job

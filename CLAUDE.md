@@ -7,7 +7,8 @@ writer, fal.ai for media) with the user's own keys.
 
 - `README.md`: what it does and how to run it.
 - `plans/`: `MVP_PLAN.md` (done), `M2_PLAN.md` (in progress: its live checks), `HOSTED_PLAN.md`
-  (next: the SaaS edition, with credits and plans) and `DB_PLAN.md` (the hosted plan's Phase A): the
+  (in progress: the SaaS edition, with credits and plans, tracked in issue #14), and a plan per hosted
+  phase: `DB_PLAN.md` (Phase A, done) and `ACCOUNTS_PLAN.md` (Phase B, in progress). Each holds the
   design, the decisions and why, and the phase checklists. Read the relevant section before changing a
   subsystem. When a PR finishes a plan item, tick its box and update the status line at the top. New
   plans go in `plans/` too.
@@ -42,9 +43,10 @@ user's models and takes the GPU for minutes). Neither runs by default.
 | `voices.py` | The narrator's reference recordings (a model's presets are in the registry) |
 | `workers/` | Scripts that run *inside other venvs* (Qwen3-TTS, klein) |
 | `gpu.py` | The GPU lease: evict other models, wait for free VRAM |
-| `providers/` | OpenRouter and fal clients, and in-process fakes of both |
+| `providers/` | OpenRouter, fal and WorkOS (sign-in) clients, and in-process fakes of all three |
 | `registry/` | Every model the app offers, with limits and prices (TOML) |
 | `db.py`, `migrations/` | SQLite (a local library) or Postgres (hosted) through SQLAlchemy; Alembic migrations |
+| `auth.py` | Who is asking: the local user, or whoever signed in (hosted) |
 | `estimate.py` | What a board or render would cost, before it runs; the budget check uses the same prices |
 | `jobs.py` | The in-process job queue and progress snapshots |
 | `api/app.py` | FastAPI: REST, SSE progress, the built web app |
@@ -72,6 +74,10 @@ a rule file under `.claude/rules/` with the details.
    fakes exercise the real client.
 9. **Narration is in the story's language; visual, motion and sound prompts are English.** The
    character lock lives in `prompts.py`, never in an LLM instruction.
+10. **Every row a user owns is read through their id, in `db.py`.** A route takes `me: Me` and passes
+    `me.id` on; another user's row answers 404, like a missing one. Files live in
+    `cfg.library_for(owner)`. `test_another_users_ids_answer_404` and
+    `test_every_database_method_takes_the_owner_or_is_shared` enforce it.
 
 ## One source for each fact
 
@@ -89,7 +95,7 @@ sends it; the frontend doesn't hard-code it.
 | Models, limits, prices | `registry/*.toml` | pickers, estimator, doctor, adapters |
 | Config defaults | `config.py` | documented in `lanternist.example.toml` (keep it in step) |
 | Settings the app may change | `prefs.EDITABLE` | Settings page |
-| Providers and their env vars | `keys.PROVIDERS` | CLI, API, doctor |
+| Providers and their env vars | `keys.PROVIDERS`; the hosted edition's own secrets in `keys.PLATFORM` | CLI, API, doctor; `redact()` |
 | ffmpeg command lines | `engines/ffmpeg.py` | pipeline |
 | Quality gates | `scripts/check` | CI, `/check` |
 

@@ -3,6 +3,7 @@
 import pytest
 
 from lanternist.config import Paths, Settings, settings
+from lanternist.db import LOCAL
 from lanternist.engines.ffmpeg import probe
 from lanternist.pipeline import Pipeline
 from lanternist.storyboard import CastMember, Line, Scene, Storyboard
@@ -42,7 +43,7 @@ async def test_two_scene_film(tmp_path):
             ),
         ],
     )
-    film = await Pipeline(cfg).render(sb)
-    info = probe(Pipeline(cfg).store.path(film.film))
+    film = await Pipeline(cfg, owner=LOCAL).render(sb)
+    info = probe(Pipeline(cfg, owner=LOCAL).store.path(film.film))
     assert info["width"] == 1920 and info["height"] == 1080 and info["has_audio"]
     assert 6 < info["duration"] < 20

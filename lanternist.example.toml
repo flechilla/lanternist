@@ -1,6 +1,19 @@
 # Copy to ./lanternist.toml or ~/.config/lanternist/lanternist.toml. Every key is optional;
 # the values below are the defaults, which match the machine this was built on.
 
+edition = "local"                                 # local: this machine, local models, your own keys.
+                                                  # hosted: accounts, remote models only, on the platform's
+                                                  # keys; [defaults] must then name remote models
+
+[hosted]                                          # read only by the hosted edition
+url = "http://localhost:8420"                     # the address people use; sign-in returns to
+                                                  # <url>/api/auth/callback, and writes must come from it
+
+[workos]                                          # sign-in, in the hosted edition
+api_url = "https://api.workos.com"
+client_id = ""                                    # client_…, from the WorkOS dashboard; the API key goes in
+                                                  # WORKOS_API_KEY, never in this file
+
 [paths]
 library = "~/Lanternist"                                      # database, assets, step cache, films
 voices = ["~/Lanternist/voices", "~/ai/bedtime-stories/voices"] # <name>.wav + optional <name>.txt

@@ -15,7 +15,7 @@ from decimal import Decimal
 import pytest
 
 from lanternist import keys, registry
-from lanternist.db import StepRun
+from lanternist.db import LOCAL, StepRun
 from lanternist.engines.ffmpeg import probe
 from lanternist.providers.fal import Fal, RunSpec
 from lanternist.providers.openrouter import OpenRouter
@@ -82,6 +82,7 @@ async def test_fal_small_picture_upload_and_billing(cfg, db, tmp_path):
             step_key="live-test",
             unit="megapixel",
             unit_price=entry.price.tiers["text_to_image"],
+            owner=LOCAL,
         ),
         ttl_hours=1,
     )
@@ -124,6 +125,7 @@ async def test_fal_video_billing_units(cfg, db, tmp_path):
             step_key="live-video",
             unit=base.unit,
             unit_price=base.unit_price,
+            owner=LOCAL,
         ),
         ttl_hours=1,
     )
@@ -175,7 +177,7 @@ async def test_a_one_scene_film_all_on_fal(cfg, db, tmp_path):
             )
         ],
     )
-    p = Pipeline(live, db=db)
+    p = Pipeline(live, db=db, owner=LOCAL)
     quote = estimate(p, sb, "render")
     film = await p.render(sb)
     with db.session() as s:

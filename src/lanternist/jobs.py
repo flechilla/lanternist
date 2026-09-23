@@ -275,23 +275,27 @@ class Runner:
 
     def enqueue(
         self,
+        owner: str,
         story_id: str | None,
         kind: str,
         version: int | None,
         params: dict | None = None,
         estimate: dict | None = None,
     ) -> Job:
-        job = self.db.add_job(story_id, kind, version, params or {}, estimate)
+        job = self.db.add_job(owner, story_id, kind, version, params or {}, estimate)
         self._wake(kind in FAST)
         return job
 
-    def cancel(self, job_id: str) -> bool:
+    def cancel(self, owner: str, job_id: str) -> bool:
+        """Cancel one of the owner's jobs, running or queued; False if it had ended, or isn't theirs."""
+        if self.db.get_job(owner, job_id) is None:
+            return False
         for running in (self.current, self.current_fast):
             if running and running[0] == job_id:
                 self.cancel_requested.add(job_id)
                 running[1].cancel()
                 return True
-        return self.db.cancel_queued(job_id)
+        return self.db.cancel_queued(owner, job_id)
 
     # loop -------------------------------------------------------------------------------------
     async def loop(self, fast: bool = False) -> None:
@@ -350,7 +354,9 @@ class Runner:
             )
 
     async def execute(self, job: Job, progress: Progress) -> dict:
-        cfg = prefs.effective(self.cfg, self.db)  # what the Settings page saved applies from the next job
+        """Run a job as its owner: their settings, their story, their files and their spend."""
+        owner = job.owner_id
+        cfg = prefs.effective(self.cfg, self.db, owner)  # what Settings saved applies from the next job
         pipeline = Pipeline(
             cfg,
             progress.stage,
@@ -358,16 +364,18 @@ class Runner:
             story_id=job.story_id,
             job_id=job.id,
             user_cancelled=lambda: self.user_cancelled(job.id),
-            budget_micros=self.db.budget_micros(job.story_id, cfg.defaults.budget_usd)
+            budget_micros=self.db.budget_micros(owner, job.story_id, cfg.defaults.budget_usd)
             if job.story_id
             else None,
+            owner=owner,
+            shared=job.kind == "sample",  # a voice sounds the same to everyone
         )
         if job.kind == "sample":
             p = job.params
             return {"audio": await pipeline.sample(p["tts"], p["voice"], p["language"])}
         if job.story_id is None:
             raise ValueError(f"a {job.kind} job needs a story")
-        calls = Calls(self.db, story_id=job.story_id, job_id=job.id)
+        calls = Calls(self.db, story_id=job.story_id, job_id=job.id, owner=owner)
         if job.kind == "write":
             from .writer import PASSES, Brief, write_storyboard
 
@@ -381,11 +389,11 @@ class Runner:
                 calls=calls,
                 passed=lambda n: progress.stage(Event("write", "progress", done=n, total=len(PASSES))),
             )
-            version = self.db.add_version(job.story_id, sb.model_dump(), note="written")
+            version = self.db.add_version(owner, job.story_id, sb.model_dump(), note="written")
             progress.stage(Event("write", "finish", done=len(PASSES), total=len(PASSES)))
             return {"version": version, **calls.summary()}
 
-        story, row = self.db.storyboard(job.story_id, job.version)
+        story, row = self.db.storyboard(owner, job.story_id, job.version)
         sb = Storyboard.model_validate(row.storyboard)
         if job.kind in ("board", "render"):
             progress.expect = pace.plan(cfg, self.db, job.estimate, job.kind, len(sb.scenes))
@@ -399,7 +407,7 @@ class Runner:
             progress.stage(Event("write", "start", message=f"rewriting scene {n}"))
             new = await rewrite_scene(cfg, sb, n, job.params["instruction"], calls=calls)
             sb.scenes = [new if s.n == n else s for s in sb.scenes]
-            version = self.db.add_version(job.story_id, sb.model_dump(), note=f"rewrote scene {n}")
+            version = self.db.add_version(owner, job.story_id, sb.model_dump(), note=f"rewrote scene {n}")
             progress.stage(Event("write", "finish", done=1, total=1))
             return {"version": version, **calls.summary()}
 
@@ -420,18 +428,20 @@ class Runner:
         if job.kind == "render":
             b, checked, made_from = await self.checked_board(pipeline, job, sb)
             film = await pipeline.render(sb, b)
-            dest = cfg.library / "films" / f"{story.slug}-v{made_from}.mp4"
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(pipeline.store.path(film.film), dest)
-            return {
+            made = {
                 "film": film.film,
                 "srt": film.srt,
                 "vtt": film.vtt,
                 "duration": film.duration,
-                "path": str(dest),
                 "poster": film.poster,
                 **checked,
             }
+            if cfg.hosted_edition:  # the film is downloaded from the page; a path on our disk means nothing
+                return made
+            dest = cfg.library / "films" / f"{story.slug}-v{made_from}.mp4"
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(pipeline.store.path(film.film), dest)
+            return made | {"path": str(dest)}
 
         raise ValueError(f"unknown job kind {job.kind}")
 
@@ -488,7 +498,7 @@ class Runner:
                     kept.append(sc.n)
             return f"the picture check drew scene{'s' if len(kept) > 1 else ''} {', '.join(map(str, kept))} again"
 
-        version = self.db.change_story(job.story_id, change)
+        version = self.db.change_story(job.owner_id, job.story_id, change)
         return (version, kept) if version is not None else None
 
 

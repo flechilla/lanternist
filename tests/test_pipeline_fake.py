@@ -2,6 +2,7 @@
 
 import pytest
 
+from lanternist.db import LOCAL
 from lanternist.engines.ffmpeg import integrated, probe
 from lanternist.pipeline import Pipeline
 
@@ -10,7 +11,7 @@ async def test_a_film_with_cuts_between_shots_has_picture_to_the_end(fake_cfg, m
     """A zero-length crossfade ended the video at the first cut, under narration that ran on."""
     sb = make_story(("still", "still", "video", "still"))
     sb.scenes[1].continues = sb.scenes[3].continues = True
-    p = Pipeline(fake_cfg)
+    p = Pipeline(fake_cfg, owner=LOCAL)
     film = await p.render(sb)
     info = probe(p.store.path(film.film))
     assert info["video_duration"] == pytest.approx(film.duration, abs=0.1)
@@ -18,7 +19,7 @@ async def test_a_film_with_cuts_between_shots_has_picture_to_the_end(fake_cfg, m
 
 async def test_render_then_cache_then_edit(fake_cfg, make_story):
     events = []
-    p = Pipeline(fake_cfg, events.append)
+    p = Pipeline(fake_cfg, events.append, owner=LOCAL)
     film = await p.render(make_story(subtitles="burned"))
     info = probe(p.store.path(film.film))
     assert info["has_audio"] and info["width"] == 1920 and info["height"] == 1080

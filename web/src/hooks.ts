@@ -35,16 +35,27 @@ export function useJobStreams(jobs: Job[], onEnd: (job: Job) => void): Record<st
 
 let optionsCache: Promise<Options> | null = null;
 
-export function useOptions(): Options | null {
-  const [opts, setOpts] = useState<Options | null>(null);
+/** The options, or why the API didn't give them; both null until it answers. */
+export function useOptionsOrError(): { opts: Options | null; error: string | null } {
+  const [state, setState] = useState<{ opts: Options | null; error: string | null }>({
+    opts: null,
+    error: null,
+  });
   useEffect(() => {
     optionsCache ??= api.options().catch((e) => {
       optionsCache = null;
       throw e;
     });
-    optionsCache.then(setOpts, () => setOpts(null));
+    optionsCache.then(
+      (opts) => setState({ opts, error: null }),
+      (e) => setState({ opts: null, error: errorMessage(e) }),
+    );
   }, []);
-  return opts;
+  return state;
+}
+
+export function useOptions(): Options | null {
+  return useOptionsOrError().opts;
 }
 
 /** Run an async action, tracking busy state and the last error message. */

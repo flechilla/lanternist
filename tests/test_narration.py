@@ -6,7 +6,7 @@ import wave
 import pytest
 
 from lanternist import registry, text, timing
-from lanternist.db import Job
+from lanternist.db import LOCAL, Job
 from lanternist.engines import catalog
 from lanternist.engines.fal_tts import FalTts, VoiceError, join_speech
 from lanternist.jobs import Runner
@@ -128,7 +128,7 @@ async def test_a_board_narrated_by_an_elevenlabs_preset(fake_cfg, db, fakes, mak
     sb = make_story(("still", "still"))
     sb.language, sb.models.tts, sb.voice = "es", "fal/elevenlabs-v3", "Aria"
     sb.scenes[0].narration[0].text = " ".join(["Una frase para leer en voz alta."] * 14)  # two chunks
-    p = Pipeline(fake_cfg, db=db)
+    p = Pipeline(fake_cfg, db=db, owner=LOCAL)
     narration = await p.narrate(sb)
     assert endpoints(fakes).count("fal-ai/elevenlabs/tts/eleven-v3") == 3
     first = narration[0]
@@ -147,7 +147,7 @@ async def test_a_board_narrated_by_an_elevenlabs_preset(fake_cfg, db, fakes, mak
 async def test_a_cloned_voice_makes_its_embedding_once(fake_cfg, db, fakes, make_story):
     sb = make_story(("still", "still", "still"))
     sb.models.tts = "fal/qwen-3-tts-1.7b"
-    p = Pipeline(fake_cfg, db=db)
+    p = Pipeline(fake_cfg, db=db, owner=LOCAL)
     await p.narrate(sb)
     sb.scenes[1].narration[0].text = "A new line for the second scene."
     await p.narrate(sb)
@@ -161,10 +161,10 @@ async def test_a_cloned_voice_makes_its_embedding_once(fake_cfg, db, fakes, make
 async def test_a_language_the_app_doesnt_write_is_refused(fake_cfg, db, make_story):
     sb = make_story(("still",))
     sb.models.tts, sb.voice, sb.language = "fal/chatterbox-multilingual", "demo", "de"
-    await Pipeline(fake_cfg, db=db).narrate(sb)  # German is one of Chatterbox's 23
+    await Pipeline(fake_cfg, db=db, owner=LOCAL).narrate(sb)  # German is one of Chatterbox's 23
     sb.language = "ar"  # Chatterbox speaks Arabic, but the app writes no stories in it yet
     with pytest.raises(ValueError, match="set the story's language to one of en,"):
-        await Pipeline(fake_cfg, db=db).narrate(sb)
+        await Pipeline(fake_cfg, db=db, owner=LOCAL).narrate(sb)
 
 
 async def test_a_language_the_model_doesnt_speak_is_refused(fake_cfg, db, make_story):
@@ -175,14 +175,14 @@ async def test_a_language_the_model_doesnt_speak_is_refused(fake_cfg, db, make_s
     sb = make_story(("still",))
     sb.models.tts, sb.voice, sb.language = "fal/elevenlabs-v3", "Aria", "es"
     with pytest.raises(ValueError, match="'es' is not supported by ElevenLabs v3"):
-        await Pipeline(fake_cfg, db=db).narrate(sb)
+        await Pipeline(fake_cfg, db=db, owner=LOCAL).narrate(sb)
 
 
 async def test_a_new_story_seed_doesnt_pay_again_for_a_model_that_takes_none(fake_cfg, db, fakes, make_story):
     """A cast re-roll changes the story's seed; ElevenLabs takes no seed, so its narration stays cached."""
     sb = make_story(("still", "still"))
     sb.models.tts, sb.voice = "fal/elevenlabs-v3", "Aria"
-    p = Pipeline(fake_cfg, db=db)
+    p = Pipeline(fake_cfg, db=db, owner=LOCAL)
     await p.narrate(sb)
     sb.seed = 12345
     fakes.fal.submits.clear()
@@ -236,11 +236,11 @@ async def test_a_sample_doesnt_wait_behind_a_render(cfg, db, until):
     runner.start()
     try:
         with db.session() as s:
-            s.add(Job(id="r1", story_id=None, kind="render", params={}, progress={}))
+            s.add(Job(owner_id=LOCAL, id="r1", story_id=None, kind="render", params={}, progress={}))
             s.commit()
         runner._wake(False)
         await until(lambda: runner.current is not None)
-        sample = runner.enqueue(None, "sample", None, {"voice": "Aria"})
+        sample = runner.enqueue(LOCAL, None, "sample", None, {"voice": "Aria"})
         await until(lambda: db.update_job(sample.id).status == "done")
         assert runner.current is not None and runner.current[0] == "r1"  # the render is still going
     finally:

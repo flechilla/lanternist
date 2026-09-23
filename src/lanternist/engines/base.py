@@ -110,6 +110,7 @@ class StepContext:
     job_id: str | None = None
     user_cancelled: Callable[[], bool] = lambda: False
     note: Callable[[str, int | None], None] = lambda message, scene: None  # a progress line
+    owner: str = field(kw_only=True)  # whose steps these are, and so whose spend
     # Where an item is while it's made: "working" on it, or "waiting" in a provider's queue with a
     # number of requests ahead of it.
     phase: Callable[[Item, str, int | None], None] = lambda item, phase, ahead: None
@@ -223,6 +224,7 @@ class FalEngine(Engine):
         spec = RunSpec(
             stage=item.stage or ctx.stage,
             model_id=self.entry.id,
+            owner=ctx.owner,
             story_id=ctx.story_id,
             job_id=ctx.job_id,
             scene=item.scene,

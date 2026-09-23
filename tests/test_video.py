@@ -5,7 +5,7 @@ import asyncio
 import pytest
 
 from lanternist import timing
-from lanternist.db import StepRun, to_micros
+from lanternist.db import LOCAL, StepRun, to_micros
 from lanternist.engines import catalog, local
 from lanternist.engines.base import Item
 from lanternist.engines.fal_video import FalVideo
@@ -168,7 +168,7 @@ async def test_a_hybrid_film_on_kling_with_ambience(fake_cfg, db, fakes, story_r
     for sc in sb.scenes:
         sc.sound = "soft wind over the sea"
     sb.scenes[2].sound = ""  # no sound line: that scene stays silent
-    p = Pipeline(fake_cfg, db=db, story_id=story_row)
+    p = Pipeline(fake_cfg, db=db, story_id=story_row, owner=LOCAL)
     before = {line["stage"]: line for line in estimate(p, sb, "render")["lines"]}
     assert before["motion"]["todo"] == 2 and before["motion"]["cost_micros"] > 0
     assert before["ambience"]["todo"] == 1
@@ -197,7 +197,7 @@ async def test_a_long_slot_is_two_chained_shots(fake_cfg, db, fakes, make_story)
     sb = make_story(("video",))
     sb.models.video, sb.models.ambience = "fal/kling-v3-standard", "none"
     sb.scenes[0].narration[0].text = " ".join(["Many words to say for a long while here."] * 8)
-    p = Pipeline(fake_cfg, db=db)
+    p = Pipeline(fake_cfg, db=db, owner=LOCAL)
     board = await p.board(sb)
     assert board.timeline.clip_length(0) > 16
     await p.motion(sb, board)
@@ -211,7 +211,7 @@ async def test_a_long_slot_is_two_chained_shots(fake_cfg, db, fakes, make_story)
 async def test_a_new_take_animates_one_scene_again(fake_cfg, db, fakes, make_story):
     sb = make_story(("video", "video"))
     sb.models.video, sb.models.ambience = "fal/h3-max-turbo", "none"
-    p = Pipeline(fake_cfg, db=db)
+    p = Pipeline(fake_cfg, db=db, owner=LOCAL)
     await p.render(sb)
     fakes.fal.submits.clear()
     sb.scenes[1].video_seed = 12345
@@ -225,7 +225,7 @@ async def test_the_prompt_h3_rewrote_is_kept_without_keys(fake_cfg, db, fakes, m
     sb = make_story(("video",))
     sb.models.video, sb.models.ambience = "fal/h3-max-turbo", "none"
     sb.scenes[0].visual = "a note reading fal-secret-5678"
-    p = Pipeline(fake_cfg, db=db)
+    p = Pipeline(fake_cfg, db=db, owner=LOCAL)
     board = await p.board(sb)
     await p.motion(sb, board)
     [item] = p.motion_items(sb, board.timeline, list(board.keyframes), p.video(sb))
@@ -239,7 +239,7 @@ async def test_a_full_video_story_stops_before_the_video_stage_over_budget(
 ):
     sb = make_story(("video", "video", "video"))
     sb.models.video = "fal/kling-v3-pro"
-    p = Pipeline(fake_cfg, db=db, story_id=story_row, budget_micros=to_micros("1"))
+    p = Pipeline(fake_cfg, db=db, story_id=story_row, budget_micros=to_micros("1"), owner=LOCAL)
     with pytest.raises(BudgetExceeded, match="Animation would cost about") as e:
         await p.render(sb)
     assert e.value.stage == "motion" and e.value.short > 0 and not fakes.fal.submits
@@ -268,7 +268,7 @@ async def test_a_restart_polls_the_running_requests_instead_of_paying_again(
 ):
     sb = make_story(("video", "video"))
     sb.models.video, sb.models.ambience = "fal/h3-max-turbo", "none"
-    task = await _start_motion(Pipeline(fake_cfg, db=db), sb, fakes, db, until)
+    task = await _start_motion(Pipeline(fake_cfg, db=db, owner=LOCAL), sb, fakes, db, until)
     task.cancel()  # the server stopping: not the user's cancel
     with pytest.raises(asyncio.CancelledError):
         await task
@@ -278,7 +278,9 @@ async def test_a_restart_polls_the_running_requests_instead_of_paying_again(
     fakes.fal.polls_before_done = 2
     for req in fakes.fal.requests.values():
         req.polls = 0
-    await Pipeline(fake_cfg, db=db).motion(sb, await Pipeline(fake_cfg, db=db).board(sb))
+    await Pipeline(fake_cfg, db=db, owner=LOCAL).motion(
+        sb, await Pipeline(fake_cfg, db=db, owner=LOCAL).board(sb)
+    )
     assert len(fakes.fal.submits) == submitted  # the same two requests, picked up again
 
 
@@ -287,7 +289,7 @@ async def test_the_users_cancel_cancels_the_requests_at_fal(fake_cfg, db, fakes,
     sb.models.video, sb.models.ambience = "fal/h3-max-turbo", "none"
     cancelled = False
     task = await _start_motion(
-        Pipeline(fake_cfg, db=db, user_cancelled=lambda: cancelled), sb, fakes, db, until
+        Pipeline(fake_cfg, db=db, user_cancelled=lambda: cancelled, owner=LOCAL), sb, fakes, db, until
     )
     cancelled = True
     task.cancel()
@@ -311,7 +313,7 @@ async def test_a_film_with_every_stage_remote_never_takes_the_gpu(
     sb.models.tts, sb.voice = "fal/elevenlabs-v3", "Aria"
     sb.models.image, sb.models.video = "fal/flux-2-klein-9b", "fal/kling-v3-standard"
     sb.scenes[1].sound = "rain on a tin roof"
-    film = await Pipeline(fake_cfg, db=db).render(sb)
+    film = await Pipeline(fake_cfg, db=db, owner=LOCAL).render(sb)
     assert film.film and {"elevenlabs", "klein", "kling", "mmaudio"} <= {
         part for e in endpoints(fakes) for part in ("elevenlabs", "klein", "kling", "mmaudio") if part in e
     }

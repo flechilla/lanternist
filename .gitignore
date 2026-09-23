@@ -12,6 +12,7 @@ node_modules/
 web/dist/
 src/lanternist/api/static/
 lanternist.toml
+.env
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/

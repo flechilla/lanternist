@@ -9,9 +9,11 @@ paths:
 tests, the full pipeline and the API on fake engines, the provider clients against in-process fakes,
 and the migrations.
 
-- **Fixtures live in `conftest.py`**: `cfg`, `db`, `voices` and `client` (the app in fake mode on its
-  own library). Keys are always isolated from the real keychain. Use the shared fixtures, and add a
-  new one there once two test files would otherwise repeat it.
+- **Fixtures live in `conftest.py`**: `cfg`, `db`, `voices`, `client` (the app in fake mode on its
+  own library) and `hosted_client` (the hosted edition, signed in as ann; send
+  `headers={FAKE_USER: "bob"}` to act as someone else). Keys are always isolated from the real
+  keychain. Use the shared fixtures, and add a new one there once two test files would otherwise
+  repeat it.
 - **Fakes, not mocks.** Remote behaviour goes through `providers.fake.FakeWorld` (steer it with its
   attributes: `fail_submit`, `polls_before_done`, …). Engines go through fake mode. Don't mock
   `httpx` or the code under test. Patching a delay to zero (`backoff`) is fine.

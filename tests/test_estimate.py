@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from lanternist.db import to_micros
+from lanternist.db import LOCAL, to_micros
 from lanternist.estimate import estimate
 from lanternist.pipeline import BudgetExceeded, Pipeline
 
@@ -18,7 +18,7 @@ async def test_a_board_on_fal_is_priced_step_by_step_then_free_once_made(
 ):
     sb = make_story(("still", "video"))
     sb.models.image = "fal/flux-2-klein-9b"
-    p = Pipeline(fake_cfg, db=db, story_id=story_row)
+    p = Pipeline(fake_cfg, db=db, story_id=story_row, owner=LOCAL)
     before = estimate(p, sb, "board")
     pics = lines(before)["keyframes"]
     # The cast sheet at $0.006/MP, then two keyframes at (2.089 + 1) MP x $0.011.
@@ -41,7 +41,7 @@ async def test_a_stage_over_budget_stops_before_spending_and_carries_on_once_rai
 ):
     sb = make_story(("still", "video"))
     sb.models.image = "fal/nano-banana-pro"  # $0.15 a picture: three of them is $0.45
-    p = Pipeline(fake_cfg, db=db, story_id=story_row, budget_micros=to_micros("0.30"))
+    p = Pipeline(fake_cfg, db=db, story_id=story_row, budget_micros=to_micros("0.30"), owner=LOCAL)
     with pytest.raises(BudgetExceeded, match=r"needs \$0\.15 more") as e:
         await p.board(sb)
     assert e.value.info() == {
@@ -59,7 +59,7 @@ async def test_a_stage_over_budget_stops_before_spending_and_carries_on_once_rai
 
 
 def test_a_cached_story_costs_nothing(fake_cfg, db, make_story):
-    quote = estimate(Pipeline(fake_cfg, db=db), make_story(), "render")
+    quote = estimate(Pipeline(fake_cfg, db=db, owner=LOCAL), make_story(), "render")
     assert quote["total_micros"] == 0 and "budget_micros" not in quote  # all local, and no story row
 
 
