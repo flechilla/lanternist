@@ -9,7 +9,7 @@ paths:
 
 # Remote providers, keys, prices and the registry
 
-Background: M2_PLAN.md §1.2–1.13. Where the plan marks something **verify**, confirm it with a live
+Background: plans/M2_PLAN.md §1.2–1.13. Where the plan marks something **verify**, confirm it with a live
 test before relying on it, and record what you learned in the plan.
 
 ## Keys
@@ -17,7 +17,7 @@ test before relying on it, and record what you learned in the plan.
 - Look keys up only through `keys.get_key(provider, fake=cfg.fake_engines)`, and store them only
   through `keys.set_key`.
 - A key goes in the `Authorization` header to its own provider's API hosts. It never goes to a CDN
-  (`Fal.download` sends no key), and never into SQLite, a log line, a job error, a `step_runs` row or
+  (`Fal.download` sends no key), and never into the database, a log line, a job error, a `step_runs` row or
   an API response. `GET /api/providers` shows `last4` only.
 - Pass any provider text you store or show through `keys.redact()`. Existing examples: job errors,
   `ProviderError` messages, `step_runs.error`.

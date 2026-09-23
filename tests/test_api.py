@@ -1,5 +1,7 @@
 """The API end to end with fake engines: import, board, edit, re-roll, render, download."""
 
+import json
+
 
 def storyboard(n=3):
     return {
@@ -104,3 +106,31 @@ def test_a_picture_that_cant_be_read_says_so(client, tmp_path):
     path.write_bytes(b"not a picture")
     r = client.get(f"/api/assets/{broken}?w=300")
     assert r.status_code == 500 and "Draw its scene again" in r.json()["detail"]
+
+
+def test_two_saves_of_one_version_conflict(client, lands_first):
+    """Two saves from the same version at the same moment (two tabs): the second is refused, rather than
+    both becoming version 2."""
+    import lanternist.api.app as appmod  # the app the client runs, on the test's own database
+
+    sid = client.post("/api/stories", json={"storyboard": storyboard()}).json()["story"]["id"]
+    sb = client.get(f"/api/stories/{sid}").json()["storyboard"]
+    lands_first(appmod.db, lambda: appmod.db.save_edit(sid, sb | {"title": "Saved first"}, 1, "other tab"))
+    second = {"storyboard": sb | {"title": "Saved second"}, "base_version": 1}
+    refused = client.put(f"/api/stories/{sid}", json=second)
+    assert refused.status_code == 409 and "changed since version 1" in refused.json()["detail"]
+    story = client.get(f"/api/stories/{sid}").json()
+    assert [v["version"] for v in story["versions"]] == [2, 1]
+    assert story["storyboard"]["title"] == "Saved first"
+
+
+def test_progress_streams_a_job_to_its_end(client):
+    sid = client.post("/api/stories", json={"storyboard": storyboard(1)}).json()["story"]["id"]
+    job = client.post(f"/api/stories/{sid}/cast").json()
+    with client.stream("GET", f"/api/jobs/{job['id']}/events") as r:
+        snaps = [
+            json.loads(line.removeprefix("data: ")) for line in r.iter_lines() if line.startswith("data: ")
+        ]
+    assert snaps[-1]["id"] == job["id"] and snaps[-1]["status"] == "done"
+    with client.stream("GET", "/api/jobs/gone/events") as r:
+        assert r.read().decode() == "event: gone\ndata: {}\n\n"

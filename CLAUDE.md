@@ -6,17 +6,20 @@ ffmpeg mixes the film. Every stage runs locally on one 32 GB GPU, or remotely (O
 writer, fal.ai for media) with the user's own keys.
 
 - `README.md`: what it does and how to run it.
-- `MVP_PLAN.md` (done) and `M2_PLAN.md` (in progress): the design, the decisions and why, and the phase
-  checklists. Read the relevant section before changing a subsystem. When a PR finishes a plan item,
-  tick its box and update the status line at the top.
+- `plans/`: `MVP_PLAN.md` (done), `M2_PLAN.md` (in progress: its live checks), `HOSTED_PLAN.md`
+  (next: the SaaS edition, with credits and plans) and `DB_PLAN.md` (the hosted plan's Phase A): the
+  design, the decisions and why, and the phase checklists. Read the relevant section before changing a
+  subsystem. When a PR finishes a plan item, tick its box and update the status line at the top. New
+  plans go in `plans/` too.
 
 ## Commands
 
 ```bash
 uv sync && pnpm --dir web install        # once
-scripts/check                            # every gate CI runs; must pass before a PR
+scripts/check                            # every gate CI runs (Postgres when its URL is set); must pass before a PR
 scripts/check fix                        # apply formatters and safe lint fixes
 scripts/check python|web|dup             # one group
+scripts/check postgres                   # the tests on Postgres, with LANTERNIST_TEST_DATABASE_URL set (README)
 uv run pytest -k name                    # a few tests
 LANTERNIST_FAKE_ENGINES=1 uv run lanternist serve   # the whole app on :8420, no GPU, no keys
 pnpm --dir web dev                       # Vite on :5173, proxying /api to :8420
@@ -41,7 +44,7 @@ user's models and takes the GPU for minutes). Neither runs by default.
 | `gpu.py` | The GPU lease: evict other models, wait for free VRAM |
 | `providers/` | OpenRouter and fal clients, and in-process fakes of both |
 | `registry/` | Every model the app offers, with limits and prices (TOML) |
-| `db.py`, `migrations/` | SQLite through SQLAlchemy; Alembic migrations |
+| `db.py`, `migrations/` | SQLite (a local library) or Postgres (hosted) through SQLAlchemy; Alembic migrations |
 | `estimate.py` | What a board or render would cost, before it runs; the budget check uses the same prices |
 | `jobs.py` | The in-process job queue and progress snapshots |
 | `api/app.py` | FastAPI: REST, SSE progress, the built web app |
@@ -57,11 +60,12 @@ a rule file under `.claude/rules/` with the details.
    to a key re-renders every existing story. When output changes on purpose, bump the engine's `@N`.
 2. **Only local engines take the GPU lease**, one stage at a time. A remote stage never touches it.
 3. **Workers import only the standard library and their own venv.** They cannot import `lanternist`.
-4. **API keys go only to their own provider.** Never in SQLite, logs, job errors or the browser. Any
-   text we store passes through `keys.redact()`.
+4. **API keys go only to their own provider.** Never in the database, logs, job errors or the browser.
+   Any text we store passes through `keys.redact()`. The database URL is printed only as
+   `Database.shown`, without its password.
 5. **Money is integer micro-dollars** (`db.to_micros`); prices are decimal strings. No floats for cost.
-6. **Every query goes through `db.py`**, using portable SQLAlchemy types. A model change ships with
-   its migration.
+6. **Every query goes through `db.py`**, and runs the same on SQLite and Postgres. A model change
+   ships with its migration. `test_every_query_lives_in_db_py` enforces the first part.
 7. **Every fal request and upload carries an expiry**, and its `step_runs` row is written before
    polling, so a restart resumes instead of paying twice. Only a user's cancel cancels at fal.
 8. **Fake mode covers every feature.** New remote code goes through `providers.transport()`, so the
@@ -95,7 +99,6 @@ Known duplication, to remove, not to copy (delete a line when it's fixed):
 - `web/src/api.ts` `LANGUAGE_NAMES` and `STYLE_NAMES`, and `NewStory.tsx` `AUDIENCE_NAMES` repeat
   backend lists.
 - `app.options()` lists the cameras again instead of reading `storyboard.Camera`.
-- `api/app.py` builds queries inline instead of calling `db.py`.
 
 ## How code here is written
 
@@ -131,4 +134,4 @@ Read the neighbouring code before writing, and match it.
 6. `/pr` opens the pull request with the template; CI must be green before merging.
 
 Skills: `/check`, `/self-review`, `/pr`, `/add-model` (a registry entry end to end),
-`/add-migration` (a schema change).
+`/add-query` (a new or changed query in `db.py`), `/add-migration` (a schema change).

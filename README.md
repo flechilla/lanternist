@@ -65,7 +65,18 @@ LANTERNIST_FAKE_ENGINES=1 LANTERNIST_FAKE_PACE=1.5 uv run lanternist serve   # e
 cd web && pnpm dev                          # Vite on :5173, proxying /api to :8420
 ```
 
-`MVP_PLAN.md` has the plan this was built from; `M2_PLAN.md` is the one in progress. `CLAUDE.md` holds the
+The tests run on SQLite. To run them on Postgres as well, as CI does:
+
+```bash
+docker run -d --name lanternist-pg -e POSTGRES_PASSWORD=postgres -p 127.0.0.1:5432:5432 postgres:17
+LANTERNIST_TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@127.0.0.1:5432/postgres scripts/check postgres
+```
+
+The app runs on Postgres too, which is how the hosted edition will run it. It needs the `postgres`
+extra (`uv sync` already installs it for development) and a database of its own:
+`LANTERNIST_DATABASE_URL=postgresql+psycopg://user:password@host/lanternist uv run lanternist serve`.
+
+`plans/MVP_PLAN.md` has the plan this was built from; `plans/M2_PLAN.md` is the one in progress, and `plans/HOSTED_PLAN.md` (with `plans/DB_PLAN.md`) comes next. `CLAUDE.md` holds the
 conventions every change follows.
 
 Licences: FLUX.2 [klein] 9B is non-commercial, so it's for personal use. Qwen3-TTS and Ollama's Qwen models are Apache 2.0. LTX-2.5 is free under the LTX Community licence below $10M annual revenue.

@@ -17,12 +17,16 @@ dependencies = [
     "uvicorn[standard]>=0.30",
 ]
 
+[project.optional-dependencies]
+postgres = ["psycopg[binary]>=3.2"]   # the hosted edition's database; a local library is SQLite
+
 [project.scripts]
 lanternist = "lanternist.cli:app"
 
 [dependency-groups]
 dev = [
     "mypy>=2.3.1",
+    "lanternist[postgres]",   # the tests run on Postgres too (scripts/check postgres)
     "pytest>=8",
     "pytest-asyncio>=0.24",
     "ruff>=0.6",
@@ -38,7 +42,8 @@ required-version = ">=0.11.12"   # CI installs the same uv
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 markers = ["gpu: runs real models on the local GPU (slow)",
-           "live: calls the real OpenRouter and fal APIs with your keys (spends a few cents)"]
+           "live: calls the real OpenRouter and fal APIs with your keys (spends a few cents)",
+           "sqlite_only: checks a local SQLite library file; skipped when the tests run on Postgres"]
 addopts = "-m 'not gpu and not live'"
 
 [tool.ruff]

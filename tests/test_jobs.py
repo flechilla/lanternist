@@ -1,7 +1,9 @@
 """The job queue: one job at a time, and nothing a user does to a story stops the queue."""
 
 import asyncio
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from lanternist import jobs, pace
 from lanternist.cli import _printer
@@ -17,20 +19,38 @@ async def test_deleting_a_story_while_its_job_runs_keeps_the_queue_going(cfg, db
         s.add(Story(id="s1", slug="a", title="A", version=0))
         s.commit()
     runner = Runner(cfg, db)
-    job = runner.enqueue("s1", "board", 1)
+    runner.enqueue("s1", "board", 1)
 
     async def delete_the_story(job, progress):  # what DELETE /api/stories does meanwhile
-        with db.session() as s:
-            s.query(Job).filter_by(story_id="s1").delete()
-            s.delete(s.get(Story, "s1"))
-            s.commit()
+        assert db.delete_story("s1")
         return {}
 
     runner.execute = delete_the_story
-    await runner.run(job.id)  # raised AttributeError on the missing row, which ended the queue's loop
-    with db.session() as s:
-        assert s.query(Job).count() == 0
+    await runner.run(db.claim_job(jobs.FAST, False))  # raised AttributeError on the missing row
+    assert db.jobs(active=False, limit=10) == []
     assert runner.current is None
+
+
+def test_claim_gives_each_worker_its_own_job(db):
+    """Workers asking at the same moment never get the same job, and between them take every one."""
+    queued = {db.add_job(None, "render", None, {}, None).id for _ in range(20)}
+    db.add_job(None, "sample", None, {}, None)  # the other lane's
+    start = threading.Barrier(4)
+
+    def worker() -> list[str]:
+        start.wait()
+        claimed = []
+        while job := db.claim_job(jobs.FAST, False):
+            claimed.append(job.id)
+        return claimed
+
+    with ThreadPoolExecutor(4) as pool:
+        claims = [f.result() for f in [pool.submit(worker) for _ in range(4)]]
+    every = [job_id for claimed in claims for job_id in claimed]
+    assert sorted(every) == sorted(queued)
+    assert {(db.get_job(j).status, db.get_job(j).started_at is not None) for j in every} == {
+        ("running", True)
+    }
 
 
 def written(db, job_id: str) -> dict:

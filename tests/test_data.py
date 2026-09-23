@@ -1,16 +1,23 @@
-"""Phase A data: the 0002 migration, step runs, prices, settings, uploads, keys and the registry."""
+"""The data: migrations, where queries live and what they cost, step runs, prices, settings, uploads,
+keys and the registry."""
 
+import re
 import sqlite3
 import stat
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import timedelta
 from pathlib import Path
 
 import pytest
 from alembic import command
+from sqlalchemy import event, make_url
+from typer.testing import CliRunner
 
-from lanternist import keys, prefs, registry
+import lanternist
+from lanternist import cli, config, keys, prefs, registry
 from lanternist.config import Defaults, Paths, Settings
-from lanternist.db import Database, Job, StepRun, Story, now, to_micros, to_usd
+from lanternist.db import Database, DatabaseError, Job, StepRun, Story, now, to_micros, to_usd
 from lanternist.engines import local as local_engines
 
 REAL_DB = Path.home() / "Lanternist" / "lanternist.db"
@@ -28,8 +35,9 @@ def counts(path: Path) -> dict:
 
 
 # ------------------------------------------------------------------------------------ migration
+@pytest.mark.sqlite_only
 def test_migration_keeps_mvp_rows(tmp_path):
-    d = Database(tmp_path / "old.db")
+    d = Database(f"sqlite:///{tmp_path / 'old.db'}")
     command.upgrade(d.alembic_config(), "0001")
     with sqlite3.connect(tmp_path / "old.db") as c:
         c.execute("insert into stories values ('s1','luna','Luna','es',1,'2026-09-01','2026-09-01')")
@@ -53,8 +61,9 @@ def test_migration_keeps_mvp_rows(tmp_path):
     assert counts(tmp_path / "old.db") == before
 
 
+@pytest.mark.sqlite_only
 def test_migration_0003_keeps_jobs_and_allows_ones_without_a_story(tmp_path):
-    d = Database(tmp_path / "old.db")
+    d = Database(f"sqlite:///{tmp_path / 'old.db'}")
     command.upgrade(d.alembic_config(), "0002")
     with sqlite3.connect(tmp_path / "old.db") as c:
         c.execute(
@@ -82,6 +91,7 @@ def test_models_match_the_migrations(db):
     command.upgrade(db.alembic_config(), "head")
 
 
+@pytest.mark.sqlite_only
 @pytest.mark.skipif(not REAL_DB.is_file(), reason="no library database on this machine")
 def test_migration_on_a_copy_of_the_real_library(tmp_path):
     copy = tmp_path / "copy.db"
@@ -91,7 +101,7 @@ def test_migration_on_a_copy_of_the_real_library(tmp_path):
     src.close()
     dst.close()
     before = counts(copy)
-    Database(copy).migrate()
+    Database(f"sqlite:///{copy}").migrate()
     assert counts(copy) == before
 
 
@@ -112,14 +122,186 @@ def test_deleting_a_story_keeps_what_it_cost(db):
         cost_source="computed",
     )
     assert db.spend_micros(story_id="s1") == 420_000
-    with db.session() as s:
-        s.query(Job).filter_by(story_id="s1").delete()
-        s.delete(s.get(Story, "s1"))
-        s.commit()
+    assert db.delete_story("s1")
     with db.session() as s:
         run = s.query(StepRun).one()
         assert run.story_id is None and run.job_id is None and run.cost_micros == 420_000
     assert db.spend_micros() == 420_000
+
+
+def test_deleting_a_story_deletes_its_versions_and_jobs(db):
+    story = db.create_story("A", "en", {"title": "A"})
+    other = db.create_story("B", "en", {"title": "B"})
+    db.add_job(story.id, "render", 1, {}, None)
+    kept = db.add_job(other.id, "render", 1, {}, None)
+    assert db.delete_story(story.id)
+    assert not db.delete_story(story.id)
+    assert db.get_story(story.id) is None
+    assert db.story_versions(story.id) == [] and db.story_jobs(story.id, limit=10) == []
+    assert [j.id for j in db.jobs(active=False, limit=10)] == [kept.id]
+    assert [v.version for v in db.story_versions(other.id)] == [1]
+
+
+# ------------------------------------------------------------------------------------ queries
+def test_every_query_lives_in_db_py():
+    """Only db.py builds queries and opens sessions, so the hosted edition can scope every query to the
+    user who owns the row, in one file."""
+    src = Path(lanternist.__file__).parent
+    found = [
+        f"{path.relative_to(src)}:{n}: {line.strip()}"
+        for path in sorted(src.rglob("*.py"))
+        if path.relative_to(src) != Path("db.py") and path.relative_to(src).parts[0] != "migrations"
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if re.match(r"\s*(from|import) sqlalchemy\b", line)
+        or re.search(r"\b\w*(db|database)\w*\.(session\(|engine\b)", line)
+    ]
+    assert found == [], "move these into a Database method in db.py"
+
+
+@contextmanager
+def statements(db: Database) -> Iterator[list[str]]:
+    """The statements the database is sent while the block runs."""
+    sent: list[str] = []
+
+    def count(_conn, _cursor, statement, *_) -> None:
+        sent.append(statement)
+
+    event.listen(db.engine, "before_cursor_execute", count)
+    try:
+        yield sent
+    finally:
+        event.remove(db.engine, "before_cursor_execute", count)
+
+
+def test_library_queries_do_not_grow_with_stories(db):
+    def add_story(n: int) -> None:
+        story = db.create_story(f"Story {n}", "en", {"title": f"Story {n}"})
+        board = db.add_job(story.id, "board", 1, {}, None)
+        db.update_job(board.id, status="done", finished_at=now(), result={"poster": f"{n}.png"})
+        db.add_job(story.id, "render", 1, {}, None)
+
+    add_story(0)
+    db.library()  # opens the pool's first connection, which may ask the server a few things
+    with statements(db) as one:
+        db.library()
+    for n in range(1, 20):
+        add_story(n)
+    with statements(db) as twenty:
+        rows = db.library()
+    assert len(rows) == 20 and all(r.drawn and r.active == 1 for r in rows)
+    assert len(one) == len(twenty) == 4
+
+
+def test_the_library_shows_the_latest_film_and_the_latest_picture(db):
+    story = db.create_story("A", "en", {"title": "A"})
+    empty = db.create_story("B", "en", {"title": "B"})
+
+    def ended(kind: str, minutes_ago: int, status: str = "done") -> str:
+        job = db.add_job(story.id, kind, 1, {}, None)
+        db.update_job(job.id, status=status, finished_at=now() - timedelta(minutes=minutes_ago))
+        return job.id
+
+    ended("render", 40)
+    film = ended("render", 30)
+    board = ended("board", 20)
+    ended("cast", 10)  # a cast sheet is no poster
+    ended("render", 5, status="failed")
+    rows = {r.story.id: r for r in db.library()}
+    assert (rows[story.id].film.id, rows[story.id].drawn.id) == (film, board)
+    assert (rows[empty.id].film, rows[empty.id].drawn, rows[empty.id].storyboard) == (
+        None,
+        None,
+        {"title": "B"},
+    )
+
+
+def test_a_change_made_as_another_save_lands_is_applied_to_that_save(db, make_story):
+    story = db.create_story("Test", "en", make_story().model_dump())
+    edited = make_story()
+    edited.title = "Edited"
+    seen = []
+
+    def reroll_the_cast(sb) -> None:
+        seen.append(sb.title)
+        if len(seen) == 1:  # the editor saves version 2 while this change is being made
+            db.add_version(story.id, edited.model_dump(), note="edited")
+        sb.seed = 8
+
+    assert db.change_story(story.id, reroll_the_cast, "re-rolled the cast sheet") == 3
+    assert seen == ["Test", "Edited"]
+    _, row = db.storyboard(story.id)
+    assert (row.storyboard["title"], row.storyboard["seed"], row.note) == (
+        "Edited",
+        8,
+        "re-rolled the cast sheet",
+    )
+
+
+def test_the_doctor_reports_a_database_url_it_cant_use_and_checks_the_rest(tmp_path, monkeypatch):
+    toml = tmp_path / "lanternist.toml"
+    toml.write_text(f'[paths]\nlibrary = "{tmp_path / "lib"}"\n', encoding="utf-8")
+    monkeypatch.setenv("LANTERNIST_CONFIG", str(toml))
+    monkeypatch.setenv("LANTERNIST_DATABASE_URL", "mysql://lantern:s3cret@db/lanternist")
+    config.settings.cache_clear()
+    try:
+        out = CliRunner().invoke(cli.app, ["doctor"]).output
+    finally:
+        config.settings.cache_clear()
+    assert "✗ database  Lanternist can't use a mysql database URL: write it as sqlite:///" in out
+    assert "ffmpeg" in out and "library" in out and "s3cret" not in out
+
+
+def test_a_job_saving_a_version_as_an_edit_lands_saves_the_one_after_it(db, make_story, lands_first):
+    story = db.create_story("Test", "en", make_story().model_dump())
+    edited, rewritten = make_story(), make_story()
+    edited.title, rewritten.title = "Edited", "Rewritten"
+    lands_first(db, lambda: db.save_edit(story.id, edited.model_dump(), 1, "edited"))
+    assert db.add_version(story.id, rewritten.model_dump(), note="rewrote scene 1") == 3
+    assert [(v.version, v.storyboard["title"]) for v in db.story_versions(story.id)] == [
+        (3, "Rewritten"),
+        (2, "Edited"),
+        (1, "Test"),
+    ]
+
+
+def test_the_database_is_the_library_file_unless_a_url_is_given(tmp_path, monkeypatch):
+    assert Settings(paths=Paths(library=tmp_path)).database_url == f"sqlite:///{tmp_path}/lanternist.db"
+    given = {"database": {"url": "postgresql+psycopg://lantern@db/lanternist"}}
+    assert Settings.model_validate(given).database_url == "postgresql+psycopg://lantern@db/lanternist"
+    monkeypatch.setenv("LANTERNIST_DATABASE_URL", "postgresql+psycopg://hosted@db/lanternist")
+    assert Settings.model_validate(given).database_url == "postgresql+psycopg://hosted@db/lanternist"
+    assert Settings().database_url == "postgresql+psycopg://hosted@db/lanternist"
+
+
+def test_the_database_password_is_never_printed():
+    d = Database("postgresql+psycopg://lantern:s3cret%25pw@127.0.0.1:1/lanternist")
+    assert d.shown == "postgresql+psycopg://lantern:***@127.0.0.1:1/lanternist"
+    as_parameter = Database("postgresql+psycopg://lantern@127.0.0.1:1/lanternist?password=s3cret")
+    assert as_parameter.shown == "postgresql+psycopg://lantern@127.0.0.1:1/lanternist?password=%2A%2A%2A"
+    with pytest.raises(DatabaseError, match="doesn't answer") as unreachable:
+        d.revision()  # what the doctor shows
+    with pytest.raises(DatabaseError, match="start it, or fix") as unmigrated:
+        as_parameter.migrate()  # what `lanternist serve` says, in place of Alembic's traceback
+    with pytest.raises(DatabaseError, match="can't read the database URL") as malformed:
+        Database("postgresql+psycopg://lantern:s3cret%25pw@127.0.0.1:port/lanternist")
+    for e in (unreachable, unmigrated, malformed):
+        assert "s3cret" not in str(e.value) and e.value.__cause__ is None
+    # Alembic's config reads % as interpolation: the password reaches it whole.
+    assert make_url(d.alembic_config().get_main_option("sqlalchemy.url")).password == "s3cret%pw"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "postgresql://lantern:s3cret@db/lanternist",  # psycopg2, which Lanternist doesn't install
+        "postgres://lantern:s3cret@db/lanternist",
+        "mysql://lantern:s3cret@db/lanternist",
+    ],
+)
+def test_a_database_url_lanternist_cant_use_says_what_to_write(url):
+    with pytest.raises(DatabaseError, match=r"write it as sqlite:///<file>, or postgresql\+psycopg://") as e:
+        Database(url)
+    assert "s3cret" not in str(e.value)
 
 
 # ------------------------------------------------------------------------------------ helpers
@@ -244,6 +426,7 @@ def test_registry_entries_are_consistent():
 
 def test_registry_user_file_and_synced_prices(tmp_path, db):
     lib = tmp_path / "lib"
+    lib.mkdir(exist_ok=True)  # on SQLite, the database made it
     registry.user_file(lib).write_text(
         '[[model]]\nid = "fal/veo-3.1-fast"\ndisabled = true\n\n'
         '[[model]]\nid = "fal/kling-v3-standard"\nprice = { usd = "0.07" }\n'

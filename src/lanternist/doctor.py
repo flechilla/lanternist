@@ -11,6 +11,7 @@ import httpx
 
 from . import registry
 from .config import Settings
+from .db import Database, DatabaseError
 from .gpu import vram
 from .keys import LABELS, get_key
 from .voices import find_voice
@@ -131,6 +132,18 @@ def _ram() -> tuple[str, str]:
     if avail < 40:
         return "warn", f"{avail:.0f} GB available; klein's CPU offload wants about 40 GB"
     return "ok", f"{avail:.0f} GB available"
+
+
+def _database(cfg: Settings) -> tuple[str, str]:
+    """Whether the database answers, and the migration it's at. Its own connection, so that a URL the
+    app can't use is a row here, like any other fault."""
+    try:
+        db = Database(cfg.database_url)
+        shown, revision = db.shown, db.revision()
+    except DatabaseError as e:
+        return "fail", str(e)
+    db.close()
+    return "ok", f"{shown}, at revision {revision}"
 
 
 async def run_checks(cfg: Settings) -> list[Check]:
@@ -270,6 +283,7 @@ async def run_checks(cfg: Settings) -> list[Check]:
     cfg.library.mkdir(parents=True, exist_ok=True)
     free = shutil.disk_usage(cfg.library).free / 1e9
     add("library", "ok" if free > 20 else "warn", f"{cfg.library}, {free:.0f} GB free")
+    add("database", *await asyncio.to_thread(_database, cfg))
 
     # Remote providers
     for row in await provider_rows(cfg):

@@ -1,6 +1,7 @@
 """lanternist: doctor · import · write · board · render · serve · keys · models"""
 
 import asyncio
+import contextlib
 import json
 import shutil
 import sys
@@ -48,7 +49,8 @@ def _printer():
 def _db():
     from .db import Database
 
-    db = Database(settings().library / "lanternist.db")
+    cfg = settings()
+    db = Database(cfg.database_url, cfg.database.pool_size)
     db.migrate()
     return db
 
@@ -63,9 +65,14 @@ def _effective():
 @app.command()
 def doctor():
     """Check that every engine, model and tool a film needs is ready."""
+    from .db import DatabaseError
     from .doctor import run_checks
+    from .prefs import effective
 
-    checks = asyncio.run(run_checks(_effective()[0]))
+    cfg = settings()
+    with contextlib.suppress(DatabaseError):  # its row says why; the rest use lanternist.toml's settings
+        cfg = effective(cfg, _db())
+    checks = asyncio.run(run_checks(cfg))
     for c in checks:
         print(f" {MARK[c.status]} {c.name:<9} {c.detail}")
     if any(c.status == "fail" for c in checks):

@@ -1,13 +1,15 @@
-"""SQLite: stories, their versions, jobs, and what every step cost. Assets and the step cache stay
-plain files (see store.py).
+"""The database: stories, their versions, jobs, and what every step cost. Assets and the step cache
+stay plain files (see store.py).
 
 Every save of a storyboard is a new version, and a job points at the version it ran on, so a film
 always matches the script it came from. `step_runs` logs each step that actually ran (local or
 remote, with its cost), and doubles as the record that lets a restart resume a remote request
 instead of paying for it twice.
 
-Portable on purpose, so a later move off SQLite is a copy: money is integer micro-dollars, prices
-are decimal strings, columns use SQLAlchemy's own types, and every query goes through here.
+A local library is a SQLite file; the hosted edition runs the same code on Postgres, and the tests
+run on both. So everything here is portable: money is integer micro-dollars, prices are decimal
+strings, columns use SQLAlchemy's own types, and every query goes through here, so that no other
+module needs to know which database it is.
 """
 
 import uuid
@@ -32,9 +34,12 @@ from sqlalchemy import (
     create_engine,
     event,
     func,
+    make_url,
     select,
+    update,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
+from sqlalchemy.exc import ArgumentError, DBAPIError, IntegrityError
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, aliased, mapped_column, sessionmaker
 
 if TYPE_CHECKING:
     from alembic.config import Config
@@ -42,12 +47,27 @@ if TYPE_CHECKING:
     from .storyboard import Storyboard
 
 
+class DatabaseError(Exception):
+    pass
+
+
+URLS = "sqlite:///<file>, or postgresql+psycopg://user:password@host:port/name"  # what Database takes
+WHERE = "[database] url in lanternist.toml, or LANTERNIST_DATABASE_URL"  # where the URL comes from
+
+
+class StaleVersion(DatabaseError):
+    """A save made from a version that is no longer the story's latest."""
+
+    def __init__(self, base: int):
+        super().__init__(f"the story changed since version {base}: reload it, then make the change again")
+
+
 def now() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
 def new_id() -> str:
-    return uuid.uuid4().hex[:12]
+    return uuid.uuid4().hex
 
 
 def to_micros(usd: Decimal | float | str) -> int:
@@ -76,6 +96,9 @@ class Story(Base):
 
 class StoryVersion(Base):
     __tablename__ = "story_versions"
+    # Two saves from the same version can't both become the next one. Unnamed, as migration 0001
+    # made it; a new constraint gets a name (see /add-migration).
+    __table_args__ = (UniqueConstraint("story_id", "version"),)
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     story_id: Mapped[str] = mapped_column(ForeignKey("stories.id", ondelete="CASCADE"), index=True)
     version: Mapped[int] = mapped_column(Integer)
@@ -103,6 +126,7 @@ class Job(Base):
 
 
 TERMINAL = ("done", "failed", "cancelled")
+ACTIVE = ("queued", "running")
 OPEN_RUN = ("submitted", "running")
 
 
@@ -191,41 +215,109 @@ class LibraryRow:
     progress: float | None  # how far through the running one is, by time, when it knows
 
 
+def _sqlite_pragmas(conn, _) -> None:
+    cur = conn.cursor()
+    cur.execute("PRAGMA journal_mode=WAL")
+    cur.execute("PRAGMA foreign_keys=ON")  # SQLite ignores ON DELETE without it
+    cur.close()
+
+
+def _commit_version(s: Session, base: int) -> None:
+    """Commit a new version saved from `base`. Two saves from the same version both make the next one,
+    and the story_versions unique constraint refuses the later: StaleVersion, as if it had seen the
+    first."""
+    try:
+        s.commit()
+    except IntegrityError:
+        s.rollback()
+        raise StaleVersion(base) from None
+
+
 class Database:
-    def __init__(self, path: Path):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self.url = f"sqlite:///{path}"
-        self.engine = create_engine(self.url, connect_args={"check_same_thread": False})
+    """One database, by its URL: `sqlite:///<file>` for a local library, `postgresql+psycopg://…` for
+    the hosted edition."""
 
-        @event.listens_for(self.engine, "connect")
-        def _pragmas(conn, _):
-            cur = conn.cursor()
-            cur.execute("PRAGMA journal_mode=WAL")
-            cur.execute("PRAGMA foreign_keys=ON")
-            cur.close()
-
+    def __init__(self, url: str, pool_size: int | None = None):
+        """`pool_size`: the connections kept open to Postgres; None leaves SQLAlchemy's default."""
+        try:
+            self.url = make_url(url)
+        except (ArgumentError, ValueError):  # ValueError: a port that isn't a number
+            raise DatabaseError(f"can't read the database URL: write it as {URLS}, in {WHERE}") from None
+        if self.url.drivername not in ("sqlite", "postgresql+psycopg"):
+            raise DatabaseError(
+                f"Lanternist can't use a {self.url.drivername} database URL: write it as {URLS}, in {WHERE}"
+            )
+        try:
+            if self.url.drivername == "sqlite":
+                Path(self.url.database or "").parent.mkdir(parents=True, exist_ok=True)
+                self.engine = create_engine(self.url, connect_args={"check_same_thread": False})
+                event.listen(self.engine, "connect", _sqlite_pragmas)
+            else:
+                # Managed Postgres closes idle connections, so each one is tested before use.
+                pool = {} if pool_size is None else {"pool_size": pool_size}
+                self.engine = create_engine(self.url, pool_pre_ping=True, **pool)
+        except ImportError:
+            raise DatabaseError(
+                f"no driver for {self.url.drivername}: install the postgres extra "
+                "(`uv sync --extra postgres`, or `pip install 'lanternist[postgres]'`)"
+            ) from None
         self.session = sessionmaker(self.engine, expire_on_commit=False)
+
+    def close(self) -> None:
+        """Close the connections this database holds open, for one made for a single look."""
+        self.engine.dispose()
+
+    @property
+    def shown(self) -> str:
+        """The URL as it may be printed: without its password, which libpq also takes as a parameter."""
+        secret = {k: "***" for k in self.url.query if "password" in k}
+        return self.url.update_query_dict(secret).render_as_string(hide_password=True)
 
     def alembic_config(self) -> "Config":
         from alembic.config import Config
 
         cfg = Config()
         cfg.set_main_option("script_location", str(Path(__file__).parent / "migrations"))
-        cfg.set_main_option("sqlalchemy.url", self.url)
+        # The config interpolates %, which a URL-encoded password can hold.
+        cfg.set_main_option(
+            "sqlalchemy.url", self.url.render_as_string(hide_password=False).replace("%", "%%")
+        )
         return cfg
 
     def migrate(self) -> None:
+        """Upgrade to the latest migration; DatabaseError when the database doesn't answer."""
         from alembic import command
 
+        self.revision()  # one sentence for a database that doesn't answer, not Alembic's traceback
         command.upgrade(self.alembic_config(), "head")
 
+    def revision(self) -> str | None:
+        """The migration the database is at, None before the first; DatabaseError when it doesn't answer."""
+        from alembic.runtime.migration import MigrationContext
+
+        try:
+            with self.engine.connect() as conn:
+                return MigrationContext.configure(conn).get_current_revision()
+        except DBAPIError as e:  # the driver's own words, without SQLAlchemy's wrapping
+            raise DatabaseError(
+                f"the database at {self.shown} doesn't answer ({str(e.orig).splitlines()[0]}): start it, "
+                f"or fix {WHERE}"
+            ) from None
+
     # stories ----------------------------------------------------------------------------------
-    def storyboard(self, s: Session, story_id: str, version: int | None = None) -> tuple[Story, StoryVersion]:
+    def storyboard(self, story_id: str, version: int | None = None) -> tuple[Story, StoryVersion]:
+        """A story and one of its versions, the latest by default; KeyError when either is missing."""
+        with self.session() as s:
+            return self._storyboard(s, story_id, version)
+
+    def _storyboard(
+        self, s: Session, story_id: str, version: int | None = None
+    ) -> tuple[Story, StoryVersion]:
         story = s.get(Story, story_id)
         if story is None:
             raise KeyError(story_id)
         v = version or story.version
-        row = s.query(StoryVersion).filter_by(story_id=story_id, version=v).one_or_none()
+        row = s.scalars(select(StoryVersion).filter_by(story_id=story_id, version=v)).one_or_none()
         if row is None:
             raise KeyError(f"{story_id} v{v}")
         return story, row
@@ -235,19 +327,44 @@ class Database:
     ) -> int | None:
         """Apply `change` to the story's latest version and save the result as its next, noted with what
         `change` returns (what it found to change), else `note`; returns its number, or None when the
-        change left the story as it was."""
+        change left the story as it was. When another save takes that number first, the change is
+        applied once more, to the version that save made: so `change` may run twice, and what it does
+        must depend only on the storyboard it's given."""
+        try:
+            return self._change_story(story_id, change, note)
+        except StaleVersion:
+            return self._change_story(story_id, change, note)
+
+    def _change_story(
+        self, story_id: str, change: "Callable[[Storyboard], str | None]", note: str
+    ) -> int | None:
         from .storyboard import Storyboard
 
         with self.session() as s:
-            story, row = self.storyboard(s, story_id)
+            story, row = self._storyboard(s, story_id)
             sb = Storyboard.model_validate(row.storyboard)
             was = sb.model_dump()
             said = change(sb)
             if sb.model_dump() == was:
                 return None
-            new = self.save_version(s, story, sb.model_dump(), note=said or note)
-            s.commit()
+            new = self._save_version(s, story, sb.model_dump(), note=said or note)
+            _commit_version(s, row.version)
             return new.version
+
+    def save_edit(
+        self, story_id: str, storyboard: dict, base_version: int, note: str
+    ) -> tuple[Story, StoryVersion]:
+        """Save an edit made from `base_version` as the story's next version. StaleVersion when the story
+        has moved on since, even by a save landing at the same moment; KeyError when it's gone."""
+        with self.session() as s:
+            story = s.get(Story, story_id)
+            if story is None:
+                raise KeyError(story_id)
+            if story.version != base_version:
+                raise StaleVersion(base_version)
+            row = self._save_version(s, story, storyboard, note=note)
+            _commit_version(s, base_version)
+            return story, row
 
     def create_story(self, title: str, language: str, storyboard: dict | None = None) -> Story:
         """A new story; with a storyboard (an import) it starts at version 1, else at 0 until it's written."""
@@ -258,34 +375,60 @@ class Database:
             s.add(story)
             s.flush()
             if storyboard is not None:
-                self.save_version(s, story, storyboard, note="imported")
+                self._save_version(s, story, storyboard, note="imported")
             s.commit()
             return story
 
-    def library(self) -> list["LibraryRow"]:
-        """Every story, newest edit first, with what the library shows of it."""
+    def library(self) -> list[LibraryRow]:
+        """Every story, newest edit first, with what the library shows of it. Four queries however many
+        stories there are, since the Library page asks every few seconds."""
+        current = (
+            select(Story, StoryVersion.storyboard)
+            .outerjoin(
+                StoryVersion, (StoryVersion.story_id == Story.id) & (StoryVersion.version == Story.version)
+            )
+            .order_by(Story.updated_at.desc())
+        )
+        newest = Job.finished_at.desc().nulls_last()  # Postgres puts NULLs first when descending
+        ranked = (
+            select(
+                Job,
+                func.row_number().over(partition_by=Job.story_id, order_by=newest).label("drawn"),
+                func.row_number()
+                .over(partition_by=(Job.story_id, Job.kind), order_by=newest)
+                .label("of_kind"),
+            )
+            .where(Job.status == "done", Job.kind.in_(("board", "render")))
+            .subquery()
+        )
+        finished = select(aliased(Job, ranked), ranked.c.drawn, ranked.c.of_kind).where(
+            (ranked.c.drawn == 1) | ((ranked.c.kind == "render") & (ranked.c.of_kind == 1))
+        )
+        active = select(Job.story_id, func.count()).where(Job.status.in_(ACTIVE)).group_by(Job.story_id)
+        running = select(Job.story_id, Job.progress).where(Job.status == "running")
         with self.session() as s:
-            out = []
-            for st in s.scalars(select(Story).order_by(Story.updated_at.desc())):
-                done = (
-                    select(Job)
-                    .where(Job.story_id == st.id, Job.status == "done")
-                    .order_by(Job.finished_at.desc())
+            films: dict[str, Job] = {}
+            drawn: dict[str, Job] = {}
+            for job, first, first_of_kind in s.execute(finished).tuples():
+                if first == 1 and job.story_id:
+                    drawn[job.story_id] = job
+                if job.kind == "render" and first_of_kind == 1 and job.story_id:
+                    films[job.story_id] = job
+            counts = dict(s.execute(active).tuples().all())
+            fractions = {
+                sid: (progress or {}).get("fraction") for sid, progress in s.execute(running).tuples()
+            }
+            return [
+                LibraryRow(
+                    st,
+                    sb or {},
+                    films.get(st.id),
+                    drawn.get(st.id),
+                    counts.get(st.id, 0),
+                    fractions.get(st.id),
                 )
-                film = s.scalars(done.where(Job.kind == "render")).first()
-                drawn = s.scalars(done.where(Job.kind.in_(("board", "render")))).first()
-                active = list(
-                    s.scalars(select(Job).where(Job.story_id == st.id, Job.status.in_(("queued", "running"))))
-                )
-                running = next((j for j in active if j.status == "running"), None)
-                row = s.scalars(
-                    select(StoryVersion).where(
-                        StoryVersion.story_id == st.id, StoryVersion.version == st.version
-                    )
-                ).first()
-                fraction = (running.progress or {}).get("fraction") if running else None
-                out.append(LibraryRow(st, row.storyboard if row else {}, film, drawn, len(active), fraction))
-            return out
+                for st, sb in s.execute(current).tuples()
+            ]
 
     def get_story(self, story_id: str) -> Story | None:
         with self.session() as s:
@@ -308,7 +451,18 @@ class Database:
                 s.query(Job).filter_by(story_id=story_id).order_by(Job.created_at.desc()).limit(limit).all()
             )
 
-    def save_version(self, s: Session, story: Story, storyboard: dict, note: str = "") -> StoryVersion:
+    def delete_story(self, story_id: str) -> bool:
+        """Delete a story, and with it (ON DELETE CASCADE) its versions and jobs; what it cost stays
+        counted (SET NULL). False if there was no such story."""
+        with self.session() as s:
+            story = s.get(Story, story_id)
+            if story is None:
+                return False
+            s.delete(story)
+            s.commit()
+            return True
+
+    def _save_version(self, s: Session, story: Story, storyboard: dict, note: str = "") -> StoryVersion:
         from .storyboard import slugify
 
         story.version += 1
@@ -321,13 +475,21 @@ class Database:
         return row
 
     def add_version(self, story_id: str, storyboard: dict, note: str = "") -> int:
-        """Save a storyboard as the story's next version, in a session of its own; returns the version."""
+        """Save a storyboard as the story's next version, whichever that is by then: once more when
+        another save takes the number first. Returns the version."""
+        try:
+            return self._add_version(story_id, storyboard, note)
+        except StaleVersion:
+            return self._add_version(story_id, storyboard, note)
+
+    def _add_version(self, story_id: str, storyboard: dict, note: str) -> int:
         with self.session() as s:
             story = s.get(Story, story_id)
             if story is None:
                 raise KeyError(story_id)  # deleted while a job was writing it
-            row = self.save_version(s, story, storyboard, note=note)
-            s.commit()
+            base = story.version
+            row = self._save_version(s, story, storyboard, note=note)
+            _commit_version(s, base)
             return row.version
 
     # jobs -------------------------------------------------------------------------------------
@@ -359,11 +521,47 @@ class Database:
             s.commit()
             return True
 
-    def next_job(self, fast_kinds: tuple[str, ...], fast: bool) -> Job | None:
-        """The oldest queued job of one lane: the fast kinds, or everything else."""
-        lane = Job.kind.in_(fast_kinds) if fast else Job.kind.not_in(fast_kinds)
+    def claim_job(self, fast_kinds: tuple[str, ...], fast: bool) -> Job | None:
+        """Mark the oldest queued job of one lane (the fast kinds, or everything else) running, and return
+        it. One statement, so two workers asking at once never get the same job: on Postgres each skips
+        the row the other has locked, and SQLite runs one write at a time."""
+        queued = aliased(Job)  # the subquery reads the table the statement updates
+        lane = queued.kind.in_(fast_kinds) if fast else queued.kind.not_in(fast_kinds)
+        oldest = (
+            select(queued.id)
+            .where(queued.status == "queued", lane)
+            .order_by(queued.created_at)
+            .limit(1)
+            .with_for_update(skip_locked=True)
+            .scalar_subquery()
+        )
+        claim = (
+            update(Job)
+            .where(Job.id == oldest)
+            .values(status="running", started_at=now(), error=None)
+            .returning(Job)
+        )
         with self.session() as s:
-            return s.scalars(select(Job).where(Job.status == "queued", lane).order_by(Job.created_at)).first()
+            job = s.scalars(claim).one_or_none()
+            s.commit()
+            return job
+
+    def get_job(self, job_id: str) -> Job | None:
+        with self.session() as s:
+            return s.get(Job, job_id)
+
+    def jobs(self, active: bool, limit: int) -> list[Job]:
+        """The newest `limit` jobs, newest first; with `active`, only those queued or running."""
+        q = select(Job).order_by(Job.created_at.desc()).limit(limit)
+        if active:
+            q = q.where(Job.status.in_(ACTIVE))
+        with self.session() as s:
+            return list(s.scalars(q))
+
+    def active_jobs(self, story_id: str) -> list[str]:
+        """The ids of a story's jobs that are queued or running."""
+        with self.session() as s:
+            return list(s.scalars(select(Job.id).where(Job.story_id == story_id, Job.status.in_(ACTIVE))))
 
     def update_job(self, job_id: str, **fields) -> Job | None:
         """Set fields on a job; None if it's gone, deleted with its story."""
