@@ -152,8 +152,10 @@ class ModelEntry(BaseModel):
     @property
     def sellable(self) -> bool:
         """Whether the hosted edition may offer it: a remote model, licensed for commercial use with no
-        condition to check."""
-        return self.remote and self.commercial_use is True
+        condition to check; and a narrator with voices of its own, since hosted clones no one's voice
+        until they've recorded their consent (plans/HOSTED_PLAN.md §1.9)."""
+        speaks = self.capability != "tts.speak" or bool(self.voices)
+        return self.remote and self.commercial_use is True and speaks
 
     def list_price(self, tier: str | None = None) -> Decimal:
         """USD per unit today, at a tier (a quality, a second endpoint) when it has its own price."""

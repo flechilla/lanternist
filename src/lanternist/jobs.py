@@ -375,7 +375,7 @@ class Runner:
             return {"audio": await pipeline.sample(p["tts"], p["voice"], p["language"])}
         if job.story_id is None:
             raise ValueError(f"a {job.kind} job needs a story")
-        calls = Calls(self.db, owner, story_id=job.story_id, job_id=job.id)
+        calls = Calls(self.db, story_id=job.story_id, job_id=job.id, owner=owner)
         if job.kind == "write":
             from .writer import PASSES, Brief, write_storyboard
 

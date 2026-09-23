@@ -6,6 +6,7 @@ import pytest
 
 from lanternist import prompts, registry, timing
 from lanternist.config import Paths, Settings
+from lanternist.db import LOCAL
 from lanternist.engines import catalog
 from lanternist.engines.base import Item, keyframe_size
 from lanternist.engines.fal_image import FalImage, aspect_ratio
@@ -48,7 +49,7 @@ def golden() -> Storyboard:
 def test_local_step_keys_are_unchanged(tmp_path):
     """The keys the pipeline made before the engine interface (computed on main), so a library stays cached."""
     cfg = Settings(paths=Paths(library=tmp_path / "lib", voices=[tmp_path]))
-    p, sb = Pipeline(cfg), golden()
+    p, sb = Pipeline(cfg, owner=LOCAL), golden()
     tts = LocalQwenTts(
         cfg,
         registry.get("local/qwen3-tts-1.7b"),
@@ -107,7 +108,7 @@ def test_a_clip_length_a_hair_over_a_whole_second_keeps_its_frames(tmp_path):
         Scene(n=i, narration=[Line(text="x")], visual=f"v{i}", cast=["luna"], mode="video") for i in (1, 2, 3)
     ]
     tl = timing.timeline([3.07, 5.75, 5.0], 0.45, 0.5, 1.5, 0.8)
-    p = Pipeline(cfg)
+    p = Pipeline(cfg, owner=LOCAL)
     items = p.motion_items(sb, tl, ["k1.png", "k2.png", "k3.png"], p.video(sb))
     assert items[1].key == "c6f0043af794e429f77645ec290dc55b11fdcd7d45f350e5c4cd0d219674f240"
 
@@ -126,7 +127,7 @@ def test_a_story_whose_video_model_left_the_registry_still_opens(client, wait):
 
 
 def test_a_picture_model_change_is_a_new_key(cfg):
-    p, sb = Pipeline(cfg), golden()
+    p, sb = Pipeline(cfg, owner=LOCAL), golden()
     local = p._cast_key(p.image(sb), sb, "a cast")
     sb.models.image = "fal/nano-banana-pro"
     pro = p._cast_key(p.image(sb), sb, "a cast")
@@ -244,7 +245,7 @@ async def test_a_board_on_fal_draws_the_cast_first_and_uploads_it_once(fake_cfg,
     sb = golden()
     sb.models.image = "fal/flux-2-klein-9b"
     events = []
-    p = Pipeline(fake_cfg, events.append, db=db, story_id=None)
+    p = Pipeline(fake_cfg, events.append, db=db, story_id=None, owner=LOCAL)
     cast, keyframes = await p.draw(sb)
     reqs = [fakes.fal.requests[r] for r in fakes.fal.submits]
     assert [r.endpoint for r in reqs] == ["fal-ai/flux-2/klein/9b"] + ["fal-ai/flux-2/klein/9b/edit"] * 2
@@ -284,7 +285,7 @@ async def test_a_blanked_picture_is_an_error_not_a_black_frame(fake_cfg, db, fak
 
     monkeypatch.setattr(fakes.fal, "_make", nsfw)
     with pytest.raises(FalError, match="safety check blanked the cast sheet"):
-        await Pipeline(fake_cfg, db=db).draw(sb)
+        await Pipeline(fake_cfg, db=db, owner=LOCAL).draw(sb)
 
 
 def test_the_picture_catalog_prices_every_model(cfg):
@@ -312,7 +313,7 @@ def test_fal_step_keys_are_pinned(tmp_path):
         "fal/elevenlabs-v3",
         "Aria",
     )
-    p = Pipeline(cfg)
+    p = Pipeline(cfg, owner=LOCAL)
     img = p.image(sb)
     assert (
         p._cast_key(img, sb, "a cast") == "7f5577c05795157a562c9395a593f1ae3cfed5f1c92636f2d2e219be9b0b8b9d"
@@ -360,7 +361,7 @@ def portrait_story() -> Storyboard:
 async def test_each_picture_is_drawn_from_the_portraits_of_who_is_in_it(fake_cfg, db, fakes):
     sb = portrait_story()
     sb.models.image = "fal/flux-2-klein-9b"
-    p = Pipeline(fake_cfg, db=db)
+    p = Pipeline(fake_cfg, db=db, owner=LOCAL)
     assert (
         estimate(p, sb, "board")["lines"][1]["steps"] == 1 + 2 + 3
     )  # the sheet, two portraits, three pictures
@@ -412,7 +413,7 @@ async def test_each_picture_is_drawn_from_the_portraits_of_who_is_in_it(fake_cfg
 async def test_portraits_are_drawn_locally_in_one_batch_on_a_row_of_their_own(fake_cfg, db):
     sb = portrait_story()
     events = []
-    cast, keyframes = await Pipeline(fake_cfg, events.append, db=db).draw(sb)
+    cast, keyframes = await Pipeline(fake_cfg, events.append, db=db, owner=LOCAL).draw(sb)
     assert cast and len(keyframes) == 3
     # One batch, so one klein load: every row starts before anything is drawn.
     first = next(i for i, e in enumerate(events) if e.status == "done")
@@ -428,9 +429,9 @@ async def test_a_picture_is_drawn_from_a_stored_portrait_and_one_drawn_beside_it
     """A board that stopped after Luna's portrait: the next one draws Sol's and the pictures Sol is in,
     and the one with both reads Luna's from the library and Sol's from the batch."""
     sb = portrait_story()
-    cast, keyframes = await Pipeline(fake_cfg, db=db).draw(sb)
+    cast, keyframes = await Pipeline(fake_cfg, db=db, owner=LOCAL).draw(sb)
     events = []
-    p = Pipeline(fake_cfg, events.append, db=db)
+    p = Pipeline(fake_cfg, events.append, db=db, owner=LOCAL)
     sol = p.portrait_items(p.image(sb), sb, cast)[1]
     assert sol.key
     p.store._step_path(sol.key).unlink()
@@ -440,4 +441,4 @@ async def test_a_picture_is_drawn_from_a_stored_portrait_and_one_drawn_beside_it
         ("keyframes", 1),
         ("keyframes", 2),
     ]
-    assert Pipeline(fake_cfg, db=db).peek(sb)["cast"] == cast
+    assert Pipeline(fake_cfg, db=db, owner=LOCAL).peek(sb)["cast"] == cast

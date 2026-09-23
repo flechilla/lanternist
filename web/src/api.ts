@@ -151,7 +151,8 @@ export interface FilmResult {
   srt: string | null;
   vtt: string | null;
   duration: number;
-  path: string;
+  /** Where the local edition saved a copy; the hosted one keeps none (the film downloads from the page). */
+  path?: string;
 }
 
 /** Why a job stopped before a remote stage: it would have gone past the story's budget. */

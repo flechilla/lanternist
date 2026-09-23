@@ -7,6 +7,8 @@ from test_api import storyboard
 from lanternist import registry
 from lanternist.config import Settings
 
+PRESET = "Vivian"  # a voice of the hosted tests' narrator (HOSTED_TOML): hosted clones no recording
+
 
 def test_the_hosted_edition_refuses_models_it_cant_run():
     with pytest.raises(
@@ -56,6 +58,22 @@ def test_the_hosted_edition_leaves_out_keys_the_doctor_and_recordings(hosted_cli
     assert c.post("/api/voices", data={"name": "Grandma"}, files=upload).status_code == 405
 
 
+def test_the_hosted_edition_clones_no_ones_recording(hosted_client):
+    """The recordings on the server (the test voices hold "demo") are neither offered, played nor
+    cloned: cloning waits for recorded consent."""
+    c = hosted_client
+    qwen = c.get("/api/voices/catalog", params={"tts": "fal/qwen-3-tts-1.7b"}).json()
+    assert qwen["clone"] and qwen["recordings"] == [] and qwen["presets"]
+    assert c.get("/api/voices/demo/audio").status_code == 404
+    narrators = [m["id"] for m in c.get("/api/models", params={"capability": "tts.speak"}).json()["models"]]
+    assert "fal/chatterbox-multilingual" not in narrators  # it only clones
+    sid = c.post("/api/stories", json={"storyboard": storyboard(voice="demo")}).json()["story"]["id"]
+    r = c.get(f"/api/stories/{sid}/estimate")
+    assert r.status_code == 422 and r.json()["detail"].startswith(
+        "“demo” isn't one of Qwen3-TTS 1.7B · fal's voices"
+    )
+
+
 def test_the_hosted_pickers_offer_no_model_on_this_machine(hosted_client):
     c = hosted_client
     for capability in ("tts.speak", "image.keyframe", "video.image_to_video"):
@@ -89,7 +107,7 @@ def test_hosted_settings_are_only_the_story_defaults(hosted_client):
 
 def test_a_hosted_story_renders_on_remote_models(hosted_client, wait):
     c = hosted_client
-    sid = c.post("/api/stories", json={"storyboard": storyboard()}).json()["story"]["id"]
+    sid = c.post("/api/stories", json={"storyboard": storyboard(voice=PRESET)}).json()["story"]["id"]
     job = wait(c.post(f"/api/stories/{sid}/render").json()["id"])
     stages = job["progress"]["stages"]
     assert not any(stages[s]["local"] for s in ("narration", "keyframes", "motion"))

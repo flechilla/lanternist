@@ -25,7 +25,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from .config import Settings
 from .db import LOCAL, Database, User
 from .keys import platform_secret
-from .providers.workos import FAKE_CODE, WorkOS, WorkOSError
+from .providers.workos import FAKE_CODE, FAKE_PAGES, WorkOS, WorkOSError
 
 FAKE_USER = "X-Lanternist-User"  # fake mode only: the name of the user a test acts as
 SESSION = "lanternist_session"  # the cookie
@@ -95,24 +95,21 @@ def _failed(why: str) -> RedirectResponse:
 
 @router.get("/api/auth/sign-in")
 def sign_in(request: Request, screen: str = "sign-in"):
-    """To AuthKit's page (or, in fake mode, ours), with a state only this browser holds."""
+    """To AuthKit's page (or, in fake mode, its stand-in), with a state only this browser holds."""
     cfg: Settings = request.app.state.cfg
     state = secrets.token_urlsafe(24)
-    if cfg.fake_engines:
-        target = f"/api/auth/fake?state={state}"
-    else:
-        try:
-            target = WorkOS(cfg).sign_in_url(
-                f"{cfg.hosted.url.rstrip('/')}/api/auth/callback", state, sign_up=screen == "sign-up"
-            )
-        except WorkOSError as e:
-            return _failed(str(e))
+    try:
+        target = WorkOS(cfg).sign_in_url(
+            f"{cfg.hosted.url.rstrip('/')}/api/auth/callback", state, sign_up=screen == "sign-up"
+        )
+    except WorkOSError as e:
+        return _failed(str(e))
     response = RedirectResponse(target, status_code=303)
     _cookie(cfg, response, STATE, state, STATE_SECONDS, path="/api/auth")
     return response
 
 
-@router.get("/api/auth/fake", response_class=HTMLResponse)
+@router.get(f"{FAKE_PAGES}/authorize", response_class=HTMLResponse)
 def fake_sign_in(request: Request, state: str):
     """Fake mode's stand-in for AuthKit's page: sign in as any email."""
     if not request.app.state.cfg.fake_engines:
@@ -156,9 +153,18 @@ def sign_out(request: Request, response: Response):
     token = request.cookies.get(SESSION)
     ended = request.app.state.db.end_session(_hash(token)) if token else None
     response.delete_cookie(SESSION, path="/")
-    if ended and not cfg.fake_engines:
+    if ended:
         return {"url": WorkOS(cfg).sign_out_url(ended, cfg.hosted.url)}
     return {"url": "/sign-in"}
+
+
+@router.get(f"{FAKE_PAGES}/sessions/logout")
+def fake_sign_out(request: Request, return_to: str):
+    """Fake mode's stand-in for AuthKit's sign-out: back to the app, as AuthKit does."""
+    cfg: Settings = request.app.state.cfg
+    if not cfg.fake_engines or _origin(return_to) != _origin(cfg.hosted.url):
+        raise HTTPException(404)
+    return RedirectResponse(return_to, status_code=303)
 
 
 def _signed(secret: str, header: str, body: bytes) -> bool:

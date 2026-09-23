@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { api, type Me } from "./api";
-import { useOptions } from "./hooks";
+import { useAction, useOptions } from "./hooks";
 import Doctor from "./pages/Doctor";
 import Library from "./pages/Library";
 import NewStory from "./pages/NewStory";
@@ -19,6 +19,7 @@ export default function App() {
   // Hosted: who is signed in; null when no one is, undefined until we know.
   const [me, setMe] = useState<Me | null | undefined>(undefined);
   const { pathname } = useLocation();
+  const { busy, error, run } = useAction();
   useEffect(() => {
     if (hosted) api.me().then(setMe, () => setMe(null));
   }, [hosted]);
@@ -28,7 +29,8 @@ export default function App() {
     location.assign(url);
   }
 
-  if (hosted && me === undefined) return null; // a page would ask the API first, and be sent to sign in
+  // Until the edition (and, hosted, who's signed in) is known, a page would ask the API as the wrong one.
+  if (!opts || (hosted && me === undefined)) return null;
   if (hosted && me === null && pathname !== "/sign-in") return <Navigate to="/sign-in" replace />;
   if (hosted && me && pathname === "/sign-in") return <Navigate to="/" replace />;
 
@@ -53,9 +55,10 @@ export default function App() {
         {hosted && me && (
           <div className="account">
             <span>{me.email}</span>
-            <button className="quiet small" type="button" onClick={() => void signOut()}>
+            <button className="quiet small" type="button" disabled={busy} onClick={() => void run(signOut)}>
               Sign out
             </button>
+            {error && <span className="error">{error}</span>}
           </div>
         )}
       </header>

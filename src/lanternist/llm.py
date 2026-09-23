@@ -76,11 +76,11 @@ class Calls:
     logged as step_runs rows."""
 
     db: Database | None = None
-    owner: str = LOCAL
     story_id: str | None = None
     job_id: str | None = None
     stage: str = "write"  # a key of pipeline.LABELS
     replies: list[Reply] = field(default_factory=list)
+    owner: str = field(kw_only=True)  # whose calls these are, and so whose spend
 
     def start(self, llm: "LLM") -> int | None:
         if self.db is None:
@@ -154,7 +154,7 @@ class LLM:
     provider: str
 
     def __init__(self, calls: Calls | None = None):
-        self.calls = calls or Calls()
+        self.calls = calls or Calls(owner=LOCAL)  # with no database it logs nothing, for no one
 
     def session(self) -> AbstractAsyncContextManager:
         """Held around a whole story, so the local model loads once."""

@@ -27,7 +27,7 @@ from urllib.parse import urlparse
 
 from .. import registry
 from ..config import Settings
-from ..db import LOCAL, Database, to_micros
+from ..db import Database, to_micros
 from ..providers.fal import Fal, FalResult, RunSpec
 from ..registry import ModelEntry
 from ..store import Store
@@ -110,7 +110,7 @@ class StepContext:
     job_id: str | None = None
     user_cancelled: Callable[[], bool] = lambda: False
     note: Callable[[str, int | None], None] = lambda message, scene: None  # a progress line
-    owner: str = LOCAL  # whose steps these are, and so whose spend
+    owner: str = field(kw_only=True)  # whose steps these are, and so whose spend
     # Where an item is while it's made: "working" on it, or "waiting" in a provider's queue with a
     # number of requests ahead of it.
     phase: Callable[[Item, str, int | None], None] = lambda item, phase, ahead: None

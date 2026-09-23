@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from fastapi.routing import APIRoute
 from test_api import storyboard
+from test_editions import PRESET
 
 from lanternist import keys, providers
 from lanternist.auth import FAKE_USER, SESSION
@@ -22,7 +23,7 @@ GONE = "event: gone\ndata: {}\n\n"  # what the progress stream says of a job tha
 # How to call each route that takes an id, as someone who doesn't own it.
 CALLS: dict[tuple[str, str], dict] = {
     ("GET", "/api/stories/{story_id}"): {},
-    ("PUT", "/api/stories/{story_id}"): {"json": {"storyboard": storyboard(), "base_version": 1}},
+    ("PUT", "/api/stories/{story_id}"): {"json": {"storyboard": storyboard(voice=PRESET), "base_version": 1}},
     ("DELETE", "/api/stories/{story_id}"): {},
     ("GET", "/api/stories/{story_id}/estimate"): {},
     ("PUT", "/api/stories/{story_id}/budget"): {"json": {"usd": 100}},
@@ -40,7 +41,7 @@ CALLS: dict[tuple[str, str], dict] = {
 
 def test_another_users_ids_answer_404(hosted_client, wait):
     c = hosted_client
-    sid = c.post("/api/stories", json={"storyboard": storyboard()}).json()["story"]["id"]
+    sid = c.post("/api/stories", json={"storyboard": storyboard(voice=PRESET)}).json()["story"]["id"]
     job = wait(c.post(f"/api/stories/{sid}/render").json()["id"])
     ids = {"story_id": sid, "job_id": job["id"], "asset": job["result"]["film"], "n": 2, "kind": "board"}
 
@@ -58,6 +59,8 @@ def test_another_users_ids_answer_404(hosted_client, wait):
         else:
             assert r.status_code == 404, (method, path, r.text)
 
+    film = c.get(f"/api/assets/{ids['asset']}")  # hers, and no cache in between may keep it for another
+    assert film.status_code == 200 and film.headers["cache-control"].startswith("private")
     story = c.get(f"/api/stories/{sid}").json()  # ann's story is as she left it
     assert story["version"] == 1 and story["budget"]["default"]
     assert c.get(f"/api/jobs/{job['id']}").json()["status"] == "done"
@@ -65,7 +68,7 @@ def test_another_users_ids_answer_404(hosted_client, wait):
 
 def test_two_users_see_only_their_own(hosted_client, wait):
     c = hosted_client
-    ann = c.post("/api/stories", json={"storyboard": storyboard()}).json()["story"]["id"]
+    ann = c.post("/api/stories", json={"storyboard": storyboard(voice=PRESET)}).json()["story"]["id"]
     wait(c.post(f"/api/stories/{ann}/board").json()["id"])
     brief = {"idea": "a fox who can't sleep", "writer": "openrouter/fake/frontier"}
     written = c.post("/api/stories", json={"brief": brief}, headers=BOB).json()
@@ -86,9 +89,11 @@ def test_two_users_see_only_their_own(hosted_client, wait):
 
 def test_each_user_pays_for_their_own_cache(hosted_client, wait):
     c = hosted_client
-    ann = c.post("/api/stories", json={"storyboard": storyboard()}).json()["story"]["id"]
+    ann = c.post("/api/stories", json={"storyboard": storyboard(voice=PRESET)}).json()["story"]["id"]
     first = wait(c.post(f"/api/stories/{ann}/board").json()["id"])
-    bob = c.post("/api/stories", json={"storyboard": storyboard()}, headers=BOB).json()["story"]["id"]
+    bob = c.post("/api/stories", json={"storyboard": storyboard(voice=PRESET)}, headers=BOB).json()["story"][
+        "id"
+    ]
     second = wait(c.post(f"/api/stories/{bob}/board", headers=BOB).json()["id"], headers=BOB)
 
     # The same pictures, made again for bob and paid for by him, in his own folder.
@@ -121,9 +126,13 @@ def test_signing_in_starts_a_session_that_the_progress_stream_uses(hosted_client
     assert c.get("/api/me").status_code == 401
     to_page = c.get("/api/auth/sign-in", follow_redirects=False)
     assert "HttpOnly" in to_page.headers["set-cookie"] and "Path=/api/auth" in to_page.headers["set-cookie"]
-    sign_in(c)
-    cookie = next(k for k in c.cookies.jar if k.name == SESSION)
-    assert cookie.has_nonstandard_attr("HttpOnly") and not cookie.secure  # http://testserver
+    state = parse_qs(urlsplit(to_page.headers["location"]).query)["state"][0]
+    back = c.get(
+        "/api/auth/callback", params={"state": state, "code": "fake:ann@example.com"}, follow_redirects=False
+    )
+    session = next(h for h in back.headers.get_list("set-cookie") if h.startswith(f"{SESSION}="))
+    assert {"httponly", "samesite=lax", "path=/"} <= {a.strip().lower() for a in session.split(";")}
+    assert "secure" not in session.lower()  # http://testserver; Secure on https
     assert c.get("/api/me").json()["email"] == "ann@example.com"
     sent = providers.fake_world().workos.authenticated[-1]
     assert sent == {
@@ -133,13 +142,16 @@ def test_signing_in_starts_a_session_that_the_progress_stream_uses(hosted_client
         "code": "fake:ann@example.com",
     }
 
-    sid = c.post("/api/stories", json={"storyboard": storyboard(1)}).json()["story"]["id"]
+    sid = c.post("/api/stories", json={"storyboard": storyboard(1, voice=PRESET)}).json()["story"]["id"]
     job = c.post(f"/api/stories/{sid}/cast").json()
     with c.stream("GET", f"/api/jobs/{job['id']}/events") as r:
         assert '"status": "done"' in r.read().decode()
 
-    assert c.post("/api/auth/sign-out").json() == {"url": "/sign-in"}
+    out = c.post("/api/auth/sign-out").json()["url"]  # ends WorkOS's session too, then comes back
+    assert out == "/api/auth/fake/sessions/logout?session_id=session_1&return_to=http%3A%2F%2Ftestserver"
+    assert c.get(out, follow_redirects=False).headers["location"] == "http://testserver"
     assert c.get("/api/me").status_code == 401
+    assert c.post("/api/auth/sign-out").json() == {"url": "/sign-in"}  # nothing left to end
 
 
 def test_a_callback_this_browser_didnt_start_is_refused(hosted_client):
@@ -166,7 +178,7 @@ def test_a_code_workos_refuses_says_so(hosted_client):
 
 def test_a_write_from_another_site_is_refused(hosted_client):
     c = hosted_client
-    story = {"storyboard": storyboard(1)}
+    story = {"storyboard": storyboard(1, voice=PRESET)}
     assert c.post("/api/stories", json=story, headers={"Origin": "https://evil.example"}).status_code == 403
     assert c.post("/api/stories", json=story, headers={"Origin": ""}).status_code == 403
     assert (
@@ -219,11 +231,12 @@ def test_the_hosted_editions_secrets_are_scrubbed(monkeypatch):
     assert keys.redact("rejected sk_test_workos_abcdef1234") == "rejected <workos secret …1234>"
 
 
-def test_the_workos_addresses_carry_what_authkit_needs():
-    cfg = Settings.model_validate({"workos": {"client_id": "client_01ABC"}})
-    workos = WorkOS(cfg.model_copy(update={"fake_engines": True}))
+def test_the_workos_addresses_carry_what_authkit_needs(monkeypatch):
+    monkeypatch.setenv("WORKOS_API_KEY", "sk_test_workos_abcdef1234")
+    workos = WorkOS(Settings.model_validate({"workos": {"client_id": "client_01ABC"}, "fake_engines": False}))
     url = urlsplit(workos.sign_in_url("https://app.example/api/auth/callback", "s1", sign_up=True))
-    assert url.path == "/user_management/authorize" and parse_qs(url.query) == {
+    assert url.netloc == "api.workos.com" and url.path == "/user_management/authorize"
+    assert parse_qs(url.query) == {
         "client_id": ["client_01ABC"],
         "redirect_uri": ["https://app.example/api/auth/callback"],
         "response_type": ["code"],
@@ -232,6 +245,7 @@ def test_the_workos_addresses_carry_what_authkit_needs():
         "screen_hint": ["sign-up"],
     }
     out = urlsplit(workos.sign_out_url("session_9", "https://app.example"))
+    assert out.path == "/user_management/sessions/logout"
     assert parse_qs(out.query) == {"session_id": ["session_9"], "return_to": ["https://app.example"]}
 
 

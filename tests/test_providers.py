@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from lanternist import registry
-from lanternist.db import StepRun, now
+from lanternist.db import LOCAL, StepRun, now
 from lanternist.providers.fake import FakeWorld, sample
 from lanternist.providers.fal import Fal, FalError, RunSpec
 from lanternist.providers.openrouter import OpenRouter, OpenRouterError
@@ -41,7 +41,8 @@ def spec(**kw) -> RunSpec:
             "unit": "output_second",
             "unit_price": Decimal("0.084"),
         }
-        | kw
+        | kw,
+        owner=LOCAL,
     )
 
 

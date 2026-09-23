@@ -12,13 +12,13 @@ import subprocess
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import APIRouter, Body, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Body, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 
 from .. import auth, keys, llm, prefs
-from ..auth import Me, current_user
+from ..auth import Me
 from ..config import settings
 from ..db import Database, Job, StaleVersion, Story, StoryVersion, to_micros, to_usd
 from ..engines import catalog as engines
@@ -493,13 +493,14 @@ async def get_asset(asset: str, me: Me, download: str | None = None, w: int | No
     smaller JPEG (`Pipeline.thumbnail`). Another user's file is not found, as a missing one is."""
     if not ASSET.match(asset):
         raise HTTPException(400, "bad asset id")
-    stores = (Pipeline(cfg, owner=me.id), Pipeline(cfg, owner=me.id, shared=True))
-    pipeline = next((p for p in stores if p.store.path(asset).is_file()), None)
-    if pipeline is None:
+    pipeline = Pipeline(cfg, owner=me.id)
+    path = pipeline.find(asset)
+    if path is None:
         raise HTTPException(404, "asset not found")
-    path = pipeline.store.path(asset)
     # An asset never changes under its name; a thumbnail can, when THUMBNAIL does, so it's checked daily.
-    headers = {"Cache-Control": "public, max-age=31536000, immutable"}
+    # A hosted user's file is theirs alone, so no cache in between may keep it for someone else.
+    who = "private" if cfg.hosted_edition else "public"
+    headers = {"Cache-Control": f"{who}, max-age=31536000, immutable"}
     if w is not None:
         try:
             path = await pipeline.thumbnail(asset, w)
@@ -509,7 +510,7 @@ async def get_asset(asset: str, me: Me, download: str | None = None, w: int | No
             raise HTTPException(
                 500, f"The picture {asset} can't be read. Draw its scene again on the Board."
             ) from None
-        headers = {"Cache-Control": "public, max-age=86400"}
+        headers = {"Cache-Control": f"{who}, max-age=86400"}
     media = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
     if asset.endswith(".vtt"):
         media = "text/vtt"
@@ -556,7 +557,7 @@ def voice_sample(body: SampleBody, me: Me):
     return {"audio": None, "job": job_dict(runner.enqueue(me.id, None, "sample", None, params))}
 
 
-@app.get("/api/voices/{name}/audio", dependencies=[Depends(current_user)])
+@local.get("/api/voices/{name}/audio")
 def voice_audio(name: str):
     try:
         v = find_voice(cfg, name)

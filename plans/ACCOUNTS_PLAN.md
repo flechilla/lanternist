@@ -41,7 +41,7 @@ Definition of done:
   - Routes it doesn't register: `/api/providers` (with the key routes), `/api/doctor` and `POST /api/voices`. The first two show the platform's keys and machine, and uploads wait for consent (HOSTED_PLAN §1.9). The admin view in Phase E brings a hosted health view.
   - Models. `registry.load(…, hosted=True)` keeps only entries that are remote and have `commercial_use = true`. The only models without it today are local ones. The writer catalogue skips Ollama.
   - The web app hides the System check, the key cards on Settings, and adding a recording on Voices.
-- **Settings per user, platform settings in config.** `prefs.PLATFORM` names the four provider-tuning keys. In hosted they come from `lanternist.toml` only: they're neither listed nor saved per user, so no one can take more fal slots or turn data collection on. The local user still edits all 11.
+- **Settings per user, platform settings in config.** `prefs.PLATFORM_SETTINGS` names the four provider-tuning keys. In hosted they come from `lanternist.toml` only: they're neither listed nor saved per user, so no one can take more fal slots or turn data collection on. The local user still edits all 11.
 
 ### 1.2 Owners
 
@@ -196,7 +196,7 @@ One pull request, `feat/accounts`, in four commits.
 
 - [x] `edition`, `[hosted]`, `[workos]` in `config.py` and `lanternist.example.toml`. The hosted defaults validator.
 - [x] `/api/options` edition. Hosted leaves out the provider, doctor and voice-upload routes.
-- [x] The registry and writer catalogue filtered in hosted. `prefs.PLATFORM`.
+- [x] The registry and writer catalogue filtered in hosted. `prefs.PLATFORM_SETTINGS`.
 - [x] Web: the System check, key cards and recording upload hidden in hosted.
 
 ### Commit 3: owners (≈ 1.5 days)
@@ -231,6 +231,17 @@ One pull request, `feat/accounts`, in four commits.
 - **`/api/me` answers in both editions**, as the local user locally. The web app asks it only in hosted.
 - **The web app hides its nav until someone signs in**, and the Library no longer says films are made "on this machine", which isn't so in hosted.
 - **The webhook needs `WORKOS_WEBHOOK_SECRET`** in `keys.PLATFORM`, beside `WORKOS_API_KEY`. Without it, every webhook is refused.
+- **Hosted clones no one's recording, found by the self-review.** Taking away the upload route wasn't enough. The recordings already in `paths.voices` (on this machine, your own) were still listed, played and cloned for every account. So in hosted:
+  - the voice catalogue lists no recordings;
+  - `/api/voices/{name}/audio` is on the `local` router;
+  - a fal narrator refuses a voice that isn't one of its presets;
+  - a narrator with no presets isn't offered at all.
+
+  That leaves **Chatterbox out of the hosted edition**, though HOSTED_PLAN §1.4 puts it in the Free plan. It only clones, so it needs voices the platform has consent to clone. That's a question for Phase E's plans. The hosted tests narrate with Qwen3-TTS's presets.
+- **A hosted user's files are sent as `Cache-Control: private`**, so no cache between the server and the browser can hand one person's picture to another who has its address.
+- **`owner` has no default** in `Pipeline`, the step context, a fal request or the writer's calls. A server path that forgets it fails mypy, instead of quietly billing, storing and resuming as the local user. The CLI and the tests pass `LOCAL`.
+- **Fake mode has stand-ins for both of AuthKit's pages**, sign-in and sign-out, at the same paths under `/api/auth/fake`. So the real addresses `WorkOS` builds are the ones fake mode follows.
+- **`Pipeline.find(asset)`** looks in the owner's files, then the shared ones, for the asset route.
 - **The `wait` test fixture asks the test's own app.** It used to ask for `client`, and a hosted test that used it restarted the app as the local edition in the middle. It also takes the headers of the user whose job it is.
 
 ## 4. Questions, answered on 23 Sep 2026

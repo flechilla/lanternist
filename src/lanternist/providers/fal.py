@@ -31,7 +31,7 @@ from pathlib import Path
 import httpx
 
 from ..config import Settings
-from ..db import LOCAL, Database, now, to_micros
+from ..db import Database, now, to_micros
 from ..keys import get_key, redact
 from . import ProviderError, backoff, retry_after, transport
 
@@ -53,7 +53,6 @@ class RunSpec:
 
     stage: str
     model_id: str
-    owner: str = LOCAL
     story_id: str | None = None
     job_id: str | None = None
     scene: int | None = None
@@ -62,6 +61,7 @@ class RunSpec:
     unit_price: Decimal | None = None  # USD per billable unit, to compute the cost
     estimate_micros: int | None = None
     user_cancelled: Callable[[], bool] = field(default=lambda: False)
+    owner: str = field(kw_only=True)  # whose request it is, and so whose spend and whose to resume
 
 
 @dataclass

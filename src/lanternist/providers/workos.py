@@ -2,7 +2,8 @@
 code exchange when it sends them back, and the address that ends its session on sign-out.
 
 Plain httpx through `providers.transport()`, like fal and OpenRouter, so fake mode signs in against a
-fake WorkOS with this same code (plans/ACCOUNTS_PLAN.md §1.4).
+fake WorkOS with this same code (plans/ACCOUNTS_PLAN.md §1.4). The pages a browser is sent to are
+AuthKit's, or in fake mode the stand-ins in auth.py, at the same paths under /api/auth/fake.
 """
 
 import base64
@@ -18,6 +19,7 @@ from ..keys import platform_secret, redact
 from . import ProviderError, transport
 
 FAKE_CODE = "fake:"  # fake mode's sign-in page sends fake:<email>, which the fake WorkOS accepts
+FAKE_PAGES = "/api/auth/fake"  # where fake mode's stand-ins for AuthKit's pages are
 
 
 class WorkOSError(ProviderError):
@@ -47,6 +49,7 @@ class WorkOS:
     def __init__(self, cfg: Settings):
         self.cfg = cfg
         self.url = cfg.workos.api_url.rstrip("/")
+        self.pages = FAKE_PAGES if cfg.fake_engines else f"{self.url}/user_management"
         self.client_id = cfg.workos.client_id
         self.key = platform_secret("workos", fake=cfg.fake_engines)
         if not self.key:
@@ -64,12 +67,12 @@ class WorkOS:
             "state": state,
             "screen_hint": "sign-up" if sign_up else "sign-in",
         }
-        return f"{self.url}/user_management/authorize?{urlencode(query)}"
+        return f"{self.pages}/authorize?{urlencode(query)}"
 
     def sign_out_url(self, session: str, return_to: str) -> str:
         """Where the browser goes to end WorkOS's session, which would otherwise sign the same person
         straight back in."""
-        return f"{self.url}/user_management/sessions/logout?{urlencode({'session_id': session, 'return_to': return_to})}"
+        return f"{self.pages}/sessions/logout?{urlencode({'session_id': session, 'return_to': return_to})}"
 
     async def authenticate(self, code: str) -> Identity:
         """Exchange the code AuthKit sent back for who signed in."""

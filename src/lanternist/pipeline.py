@@ -20,7 +20,7 @@ from typing import Any
 from . import check, prompts, registry, text, timing
 from . import llm as llms
 from .config import Settings
-from .db import LOCAL, Database, now
+from .db import Database, now
 from .engines import catalog, ffmpeg
 from .engines.base import (
     CAST_SIZE,
@@ -211,7 +211,8 @@ class Pipeline:
         job_id: str | None = None,
         user_cancelled: Callable[[], bool] = lambda: False,
         budget_micros: int | None = None,
-        owner: str = LOCAL,
+        *,
+        owner: str,
         shared: bool = False,
     ):
         """`owner`: whose steps these are, and so whose files and spend. `shared` makes them in the store
@@ -576,7 +577,9 @@ class Pipeline:
         if not model:
             return Checked({}, set())
         checker = check.Checker(
-            self.cfg, model, llms.Calls(self.db, self.owner, self.story_id, self.job_id, stage="check")
+            self.cfg,
+            model,
+            llms.Calls(self.db, self.story_id, self.job_id, stage="check", owner=self.owner),
         )
         items = self.check_items(sb, keyframes, model)
         if any(not self.cached(it) for it in items):
@@ -778,6 +781,14 @@ class Pipeline:
         return out
 
     # ---------------------------------------------------------------- for the pages
+    def find(self, asset: str) -> Path | None:
+        """One of the owner's files, or one everyone shares (a voice's sample); None when it's neither,
+        which is also what another user's file is."""
+        if (own := self.store.path(asset)).is_file():
+            return own
+        shared = Store(self.cfg.library_for(None)).path(asset)
+        return shared if shared.is_file() else None
+
     async def thumbnail(self, asset: str, width: int) -> Path:
         """A picture as a JPEG as wide as the smallest of THUMBNAIL_WIDTHS that's at least `width`, else
         the largest; made the first time it's asked for and kept, so a page never loads a 3 MB PNG."""

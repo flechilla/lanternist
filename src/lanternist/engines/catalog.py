@@ -95,8 +95,9 @@ def cached_sample(store: Store, eng: TtsEngine, language: str) -> str | None:
 
 
 def voices(cfg: Settings, db: Database | None, store: Store, model_id: str, language: str) -> dict:
-    """The voices a narration model offers: its presets and, if it clones, the recordings in voices/.
-    Each comes with its sample when one was made; `sample_usd` is what making one costs."""
+    """The voices a narration model offers: its presets and, if it clones, the recordings in voices/
+    (none in the hosted edition, which clones no one's voice). Each comes with its sample when one was
+    made; `sample_usd` is what making one costs."""
     e = entry(cfg, db, model_id, "tts.speak")
 
     def sample(voice: str) -> str | None:
@@ -104,7 +105,7 @@ def voices(cfg: Settings, db: Database | None, store: Store, model_id: str, lang
             return None  # the recording itself is the sample
         return cached_sample(store, tts(cfg, db, e.id, voice, language), language)
 
-    recordings = list_voices(cfg) if e.clone else []
+    recordings = list_voices(cfg) if e.clone and not cfg.hosted_edition else []
     price = None
     if e.remote and (e.voices or recordings):
         first = e.voices[0] if e.voices else recordings[0]["name"]

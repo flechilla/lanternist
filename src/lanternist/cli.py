@@ -120,6 +120,7 @@ def write(
     ] = None,
 ):
     """Write a storyboard from a one-line idea, with the local LLM or an OpenRouter model."""
+    from .db import LOCAL
     from .llm import Calls
     from .text import word_count
     from .writer import Brief, write_storyboard
@@ -137,7 +138,7 @@ def write(
         writer=writer,
         effort=effort,
     )
-    calls = Calls(db)
+    calls = Calls(db, owner=LOCAL)
     t0 = time.time()
     sb = asyncio.run(write_storyboard(cfg, brief, emit=lambda m: print(f"  {m}", flush=True), calls=calls))
     out = out or Path(f"{slugify(sb.title)}.json")
@@ -178,11 +179,12 @@ def _flagged(b: "Board") -> None:
 @app.command()
 def board(story: Path):
     """Narrate the story and draw the cast sheet and every keyframe."""
+    from .db import LOCAL
     from .pipeline import Pipeline
 
     sb = _load(story)
     cfg, db = _effective()
-    p = Pipeline(cfg, _printer(), db=db)
+    p = Pipeline(cfg, _printer(), db=db, owner=LOCAL)
     try:
         b = asyncio.run(p.board(sb))
     finally:
@@ -201,6 +203,7 @@ def render(
     subtitles: Annotated[Subtitles | None, typer.Option()] = None,
 ):
     """Render the whole film: board, motion, clips, mix."""
+    from .db import LOCAL
     from .pipeline import Pipeline
 
     sb = _load(story)
@@ -210,7 +213,7 @@ def render(
     if subtitles:
         sb.subtitles = subtitles
     cfg, db = _effective()
-    p = Pipeline(cfg, _printer(), db=db)
+    p = Pipeline(cfg, _printer(), db=db, owner=LOCAL)
 
     async def make():
         try:

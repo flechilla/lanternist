@@ -55,7 +55,7 @@ async def test_a_picture_that_fails_its_check_is_drawn_again_with_a_new_seed(fak
     first = sb.scene_seed(sb.scenes[0])
     fakes.openrouter.replies = [TWICE]  # the second look at it passes
     events = []
-    p = Pipeline(checking(fake_cfg), events.append, db=db)
+    p = Pipeline(checking(fake_cfg), events.append, db=db, owner=LOCAL)
     b = await p.board(sb)
     assert b.redrawn == {1: "Ann appears twice."} and not b.flagged
     assert sb.scenes[0].seed == next_seed(first)
@@ -92,7 +92,9 @@ async def test_the_progress_shows_a_failed_picture_until_its_redraw_lands(fake_c
                 (e.stage, e.status, check.get("state"), check.get("note"), steps["keyframes"].get("asset"))
             )
 
-    await Pipeline(checking(fake_cfg), follow, db=db, job_id=job.id).board(make_story(("still",)))
+    await Pipeline(checking(fake_cfg), follow, db=db, job_id=job.id, owner=LOCAL).board(
+        make_story(("still",))
+    )
     failed = next(
         i for i, (stage, _, state, _, _) in enumerate(seen) if stage == "check" and state == "failed"
     )
@@ -124,7 +126,9 @@ async def test_a_fail_with_no_reason_is_still_a_fail(fake_cfg, db, fakes, make_s
         if e.stage == "check" and e.status == "done":
             states.append(progress.snap["scenes"]["1"]["check"]["state"])
 
-    b = await Pipeline(checking(fake_cfg), follow, db=db, job_id=job.id).board(make_story(("still",)))
+    b = await Pipeline(checking(fake_cfg), follow, db=db, job_id=job.id, owner=LOCAL).board(
+        make_story(("still",))
+    )
     assert b.redrawn == {1: ""}
     assert states == ["failed", "done"]
 
@@ -133,14 +137,14 @@ async def test_a_flagged_picture_is_not_drawn_again_on_the_next_board(fake_cfg, 
     sb = make_story(("still",))
     first = sb.scene_seed(sb.scenes[0])
     fakes.openrouter.replies = [TWICE] * 3
-    p = Pipeline(checking(fake_cfg), db=db)
+    p = Pipeline(checking(fake_cfg), db=db, owner=LOCAL)
     b = await p.board(sb)
     assert b.flagged == {1: "Ann appears twice."} and sb.scenes[0].seed == next_seed(next_seed(first))
 
     # Its verdict is cached: the next board flags it again, and asks and draws nothing.
     fakes.openrouter.chats.clear()
     events = []
-    again = await Pipeline(checking(fake_cfg), events.append, db=db).board(sb)
+    again = await Pipeline(checking(fake_cfg), events.append, db=db, owner=LOCAL).board(sb)
     assert again.flagged == b.flagged and not again.redrawn and again.keyframes == b.keyframes
     assert not fakes.openrouter.chats and not [e for e in events if e.status == "done"]
 
@@ -148,12 +152,14 @@ async def test_a_flagged_picture_is_not_drawn_again_on_the_next_board(fake_cfg, 
 def test_the_check_step_key_is_pinned(fake_cfg, make_story):
     """A change to what a verdict keys on asks the checker again about every picture."""
     sb = make_story(("still",))
-    [item] = Pipeline(fake_cfg).check_items(sb, ["k" * 64 + ".png"], "openrouter/openai/gpt-5.6-luna")
+    [item] = Pipeline(fake_cfg, owner=LOCAL).check_items(
+        sb, ["k" * 64 + ".png"], "openrouter/openai/gpt-5.6-luna"
+    )
     assert item.key == "6b65eca3598439b273e58a49745c43cb22b03dbea34d334edec030afca565f11"
 
 
 async def test_the_check_stops_before_it_would_pass_the_budget(fake_cfg, db, fakes, story_row, make_story):
-    p = Pipeline(checking(fake_cfg), db=db, story_id=story_row, budget_micros=0)
+    p = Pipeline(checking(fake_cfg), db=db, story_id=story_row, budget_micros=0, owner=LOCAL)
     with pytest.raises(BudgetExceeded) as e:
         await p.board(make_story(("still", "still")))
     # Two pictures at the fake model's prices: 1,500 tokens in at $0.1/M, 500 out at $0.4/M.
@@ -162,14 +168,16 @@ async def test_the_check_stops_before_it_would_pass_the_budget(fake_cfg, db, fak
 
 
 async def test_a_local_checker_is_shown_the_picture_through_ollama(fake_cfg, db, fakes, make_story):
-    b = await Pipeline(checking(fake_cfg, "ollama/qwen3.8:latest"), db=db).board(make_story(("still",)))
+    b = await Pipeline(checking(fake_cfg, "ollama/qwen3.8:latest"), db=db, owner=LOCAL).board(
+        make_story(("still",))
+    )
     asked = fakes.ollama.chats[-1]["messages"][1]
     assert len(asked["images"]) == 1 and asked["content"].startswith("This picture was drawn")
     assert not b.flagged and not fakes.openrouter.chats
 
 
 async def test_without_a_checker_nothing_is_asked(fake_cfg, db, fakes, make_story):
-    b = await Pipeline(fake_cfg, db=db).board(make_story())
+    b = await Pipeline(fake_cfg, db=db, owner=LOCAL).board(make_story())
     assert not fakes.openrouter.chats and not b.redrawn and not check_runs(db)
 
 
@@ -181,7 +189,7 @@ async def test_with_portraits_only_the_failing_picture_is_drawn_again(fake_cfg, 
     first = sb.scene_seed(sb.scenes[0])
     fakes.openrouter.replies = [TWICE]
     events = []
-    b = await Pipeline(checking(fake_cfg), events.append, db=db).board(sb)
+    b = await Pipeline(checking(fake_cfg), events.append, db=db, owner=LOCAL).board(sb)
     assert b.redrawn == {1: "Ann appears twice."} and sb.scenes[0].seed == next_seed(first)
     # The sheet and the portraits come from the cache; only the picture is drawn again.
     drawn = [e.stage for e in events if e.status == "done" and e.stage in ("cast", "portraits", "keyframes")]
@@ -193,12 +201,14 @@ async def test_a_checker_that_cant_see_pictures_says_to_pick_another(fake_cfg, d
     with pytest.raises(
         CheckError, match=r"couldn't judge scene 1's picture.*Pick a checker that takes pictures"
     ):
-        await Pipeline(checking(fake_cfg), db=db).board(make_story(("still",)))
+        await Pipeline(checking(fake_cfg), db=db, owner=LOCAL).board(make_story(("still",)))
 
 
 async def test_a_checker_openrouter_doesnt_list_says_to_pick_another(fake_cfg, db, fakes, make_story):
     with pytest.raises(CheckError, match=r"can't use openrouter/fake/nowhere.*Pick a checker"):
-        await Pipeline(checking(fake_cfg, "openrouter/fake/nowhere"), db=db).board(make_story(("still",)))
+        await Pipeline(checking(fake_cfg, "openrouter/fake/nowhere"), db=db, owner=LOCAL).board(
+            make_story(("still",))
+        )
 
 
 @pytest.mark.parametrize(
@@ -218,7 +228,7 @@ async def test_a_checker_openrouter_doesnt_list_says_to_pick_another(fake_cfg, d
 async def test_a_check_that_fails_says_what_to_do_about_it(fake_cfg, db, fakes, make_story, reply, says):
     fakes.openrouter.replies = [reply]
     with pytest.raises(CheckError) as e:
-        await Pipeline(checking(fake_cfg), db=db).board(make_story(("still",)))
+        await Pipeline(checking(fake_cfg), db=db, owner=LOCAL).board(make_story(("still",)))
     assert str(e.value) == (
         f"The picture check with openrouter/fake/cheap couldn't judge scene 1's picture: {says}"
     )
@@ -228,14 +238,14 @@ async def test_a_fail_given_before_the_check_broke_draws_that_picture_again(fake
     sb = make_story(("still", "still"))
     seeds = [sb.scene_seed(sc) for sc in sb.scenes]
     fakes.openrouter.replies = [TWICE, NO_PICTURES]  # one picture fails; the other can't be judged
-    p = Pipeline(checking(fake_cfg), db=db)
+    p = Pipeline(checking(fake_cfg), db=db, owner=LOCAL)
     with pytest.raises(CheckError):
         await p.board(sb)
     [n] = p.redrawn
     assert sb.scenes[n - 1].seed == next_seed(seeds[n - 1])
     # The next board draws that picture again and asks about it, rather than only flagging the one
     # that failed, whose verdict is cached.
-    assert not (await Pipeline(checking(fake_cfg), db=db).board(sb)).flagged
+    assert not (await Pipeline(checking(fake_cfg), db=db, owner=LOCAL).board(sb)).flagged
 
 
 async def test_a_check_that_breaks_on_its_last_look_draws_nothing_past_the_limit(
@@ -246,7 +256,7 @@ async def test_a_check_that_breaks_on_its_last_look_draws_nothing_past_the_limit
     assert check.MAX_REDRAWS == 2
     fakes.openrouter.replies = [TWICE] * 4 + [TWICE, NO_PICTURES]  # both fail twice; then one breaks
     with pytest.raises(CheckError):
-        await Pipeline(checking(fake_cfg), db=db).board(sb)
+        await Pipeline(checking(fake_cfg), db=db, owner=LOCAL).board(sb)
     assert [sc.seed for sc in sb.scenes] == limit  # the last look's fail is only flagged, as it would be
 
 
@@ -263,13 +273,13 @@ def test_the_doctor_counts_the_checkers_provider_and_model(fake_cfg):
 
 async def test_a_cached_board_needs_no_prices(fake_cfg, db, fakes, make_story, monkeypatch):
     sb = make_story(("still",))
-    await Pipeline(checking(fake_cfg), db=db).board(sb)
+    await Pipeline(checking(fake_cfg), db=db, owner=LOCAL).board(sb)
 
     async def offline(self):
         raise AssertionError("a board with every verdict cached asked for prices")
 
     monkeypatch.setattr(check.Checker, "price", offline)
-    assert not (await Pipeline(checking(fake_cfg), db=db).board(sb)).flagged
+    assert not (await Pipeline(checking(fake_cfg), db=db, owner=LOCAL).board(sb)).flagged
 
 
 def job_row(db, story_id: str, version: int, kind: str = "board") -> Job:
@@ -287,7 +297,7 @@ async def test_the_new_seeds_keep_an_edit_saved_while_the_job_ran(
 ):
     before = make_story(("still", "still"))
     started = db.add_version(LOCAL, story_row, before.model_dump(), note="the version the board runs")
-    p = Pipeline(fake_cfg, db=db, story_id=story_row)
+    p = Pipeline(fake_cfg, db=db, story_id=story_row, owner=LOCAL)
     await p.draw(before)
     # While the board runs, the user retitles the story and changes scene 2's picture.
     edited = before.model_copy(deep=True)
@@ -321,7 +331,7 @@ async def test_the_new_seeds_keep_an_edit_saved_while_the_job_ran(
 async def test_a_look_edited_while_the_job_ran_keeps_its_new_seed_out(fake_cfg, db, story_row, make_story):
     before = with_portraits(make_story(("still",)))
     started = db.add_version(LOCAL, story_row, before.model_dump(), note="the version the board runs")
-    p = Pipeline(fake_cfg, db=db, story_id=story_row)
+    p = Pipeline(fake_cfg, db=db, story_id=story_row, owner=LOCAL)
     await p.draw(before)
     edited = before.model_copy(deep=True)
     edited.cast[1].look = "boy in a red cap"  # a new cast sheet and portraits, so a new picture
@@ -353,10 +363,10 @@ async def test_a_board_stopped_after_a_redraw_keeps_its_new_seed(
     job, runner = job_row(db, story_row, started), Runner(fake_cfg, db)
     if ending == "error":
         fakes.openrouter.replies = [TWICE, NO_PICTURES]  # the second look fails outright
-        p = Pipeline(checking(fake_cfg), db=db, story_id=story_row)
+        p = Pipeline(checking(fake_cfg), db=db, story_id=story_row, owner=LOCAL)
     else:
         fakes.openrouter.replies = [TWICE]
-        p = Pipeline(checking(fake_cfg), stop_when_drawing_again, db=db, story_id=story_row)
+        p = Pipeline(checking(fake_cfg), stop_when_drawing_again, db=db, story_id=story_row, owner=LOCAL)
         if ending == "cancel":
             runner.cancel_requested.add(job.id)
     with pytest.raises((CheckError, asyncio.CancelledError)):

@@ -73,7 +73,7 @@ async def test_the_snapshot_follows_every_scene_and_portrait_to_done(fake_cfg, d
         if e.status in ITEM and whose != "None":
             seen.setdefault((e.stage, whose), []).append(e.status)
 
-    await Pipeline(fake_cfg, follow, db=db, job_id=job.id).board(sb)
+    await Pipeline(fake_cfg, follow, db=db, job_id=job.id, owner=LOCAL).board(sb)
     snap = progress.snap
     assert seen[("keyframes", "1")] == ["queued", "working", "done"]
     assert seen[("portraits", "bo")] == ["queued", "working", "done"]
@@ -87,7 +87,7 @@ async def test_the_snapshot_follows_every_scene_and_portrait_to_done(fake_cfg, d
 
     # Everything is made now: the next board shows each step as it was, from the cache.
     again = Progress(db, job.id)
-    await Pipeline(fake_cfg, again.stage, db=db, job_id=job.id).board(sb)
+    await Pipeline(fake_cfg, again.stage, db=db, job_id=job.id, owner=LOCAL).board(sb)
     assert again.snap["scenes"]["2"]["keyframes"] == {
         "state": "cached",
         "asset": snap["scenes"]["2"]["keyframes"]["asset"],
@@ -137,7 +137,7 @@ async def test_the_snapshot_shows_what_each_paid_step_cost(cfg, db):
 
 async def test_a_render_reports_each_scene_through_motion_clips_and_the_mix(fake_cfg, make_story):
     events: list[Event] = []
-    await Pipeline(fake_cfg, events.append).render(make_story(("still", "video")))
+    await Pipeline(fake_cfg, events.append, owner=LOCAL).render(make_story(("still", "video")))
 
     def moves(stage: str, scene: int | None = None) -> list[str]:
         """Where an item went, in order; not the mix's ticks, each time ffmpeg moves on."""
@@ -153,7 +153,7 @@ async def test_a_render_reports_each_scene_through_motion_clips_and_the_mix(fake
 
 
 async def test_the_cli_prints_a_line_for_each_item_made_and_no_more(fake_cfg, make_story, capsys):
-    await Pipeline(fake_cfg, _printer()).render(make_story(("still", "video")))
+    await Pipeline(fake_cfg, _printer(), owner=LOCAL).render(make_story(("still", "video")))
     lines = capsys.readouterr().out.splitlines()
     statuses = {line.split("]", 1)[1].split()[1] for line in lines}  # "[  0.1s] clips     done  3/3 scene 3"
     assert statuses == {"start", "done", "finish", "progress"}
@@ -163,7 +163,7 @@ async def test_paced_fakes_take_that_long_for_each_item(fake_cfg, make_story, mo
     monkeypatch.setenv("LANTERNIST_FAKE_PACE", "0.05")
     cfg = fake_cfg.model_copy(update={"fake_pace": Settings().fake_pace})
     t0 = time.monotonic()
-    await Pipeline(cfg).narrate(make_story(("still", "still", "still")))
+    await Pipeline(cfg, owner=LOCAL).narrate(make_story(("still", "still", "still")))
     assert time.monotonic() - t0 >= 3 * 0.05
 
 

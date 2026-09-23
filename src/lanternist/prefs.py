@@ -2,8 +2,8 @@
 
 A value saved here wins over lanternist.toml, which wins over the built-in default. Removing a
 saved value falls back to the file. Only the keys in EDITABLE can be saved, and never API keys:
-those live in the keychain (see keys.py). In the hosted edition the PLATFORM keys come from
-lanternist.toml alone.
+those live in the keychain (see keys.py). In the hosted edition the settings in PLATFORM_SETTINGS
+come from lanternist.toml alone.
 """
 
 from pydantic import ValidationError
@@ -27,7 +27,7 @@ EDITABLE = {
 }
 # Provider tuning the hosted edition sets for everyone: a user there can't take more of fal's slots,
 # or let providers store prompts.
-PLATFORM = {
+PLATFORM_SETTINGS = {
     "openrouter.recommended",
     "openrouter.data_collection",
     "fal.max_concurrency",
@@ -45,7 +45,7 @@ OFF = {"defaults.ambience": "Their scenes stay silent under the narration."}
 
 def editable(cfg: Settings) -> list[str]:
     """The keys this edition lets its users save."""
-    return [k for k in EDITABLE if not (cfg.hosted_edition and k in PLATFORM)]
+    return [k for k in EDITABLE if not (cfg.hosted_edition and k in PLATFORM_SETTINGS)]
 
 
 def default_model(cfg: Settings, capability: str) -> str:

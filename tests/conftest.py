@@ -196,7 +196,7 @@ url = "http://testserver"
 
 [defaults]
 writer = "openrouter/openai/gpt-5.6-luna"
-tts = "fal/chatterbox-multilingual"
+tts = "fal/qwen-3-tts-1.7b"
 image = "fal/flux-2-klein-9b"
 video = "fal/h3-max-turbo"
 

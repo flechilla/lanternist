@@ -142,7 +142,7 @@ def test_a_story_without_a_title_is_storyboarded_as_untitled():
 
 
 async def test_openrouter_writer_end_to_end(cfg, db, world, leases):
-    calls = Calls(db)
+    calls = Calls(db, owner=LOCAL)
     passes: list[int] = []
     sb = await write_storyboard(
         cfg,
@@ -229,7 +229,7 @@ async def test_without_the_provider_list_the_models_own_parameters_are_used(cfg,
 
 
 async def test_ollama_path_is_unchanged(cfg, db, world, leases):
-    calls = Calls(db)
+    calls = Calls(db, owner=LOCAL)
     sb = await write_storyboard(cfg, brief(), calls=calls)
     assert sb.models.writer == "ollama/qwen3.8:latest" and len(sb.scenes) == 4
     assert leases == ["ollama"]  # one lease around the whole story
@@ -282,7 +282,7 @@ async def test_a_length_stop_retries_with_more_room(cfg, db, world, leases):
         "usage": {"prompt_tokens": 100, "completion_tokens": 200, "cost": 0.012345},
     }
     world.openrouter.replies += [empty_reply(0.5), story]
-    calls = Calls(db)
+    calls = Calls(db, owner=LOCAL)
     await write_storyboard(cfg, brief(writer="openrouter/fake/frontier"), calls=calls)
     assert [c["max_tokens"] for c in world.openrouter.chats[:2]] == [32000, 64000]
     first = calls.replies[0]  # the wasted attempt is paid for, so it's counted
@@ -307,7 +307,7 @@ async def test_a_length_stop_that_fails_still_records_what_it_cost(
 ):
     world.openrouter.replies += [empty_reply(c) for c in replies]
     with pytest.raises(LLMError, match="spent its whole token budget"):
-        await write_storyboard(cfg, brief(writer=writer), calls=Calls(db))
+        await write_storyboard(cfg, brief(writer=writer), calls=Calls(db, owner=LOCAL))
     assert [c["max_tokens"] for c in world.openrouter.chats] == max_tokens
     (run,) = write_runs(db)
     assert (run.status, run.cost_micros, run.cost_source) == ("failed", paid, "reported")
@@ -319,13 +319,13 @@ async def test_failed_calls_are_logged(cfg, db, world, leases):
         (403, {"error": {"code": 403, "message": "flagged", "metadata": {"reasons": ["violence"]}}})
     )
     with pytest.raises(OpenRouterError, match="refused"):
-        await write_storyboard(cfg, brief(writer="openrouter/fake/frontier"), calls=Calls(db))
+        await write_storyboard(cfg, brief(writer="openrouter/fake/frontier"), calls=Calls(db, owner=LOCAL))
     (run,) = write_runs(db)
     assert run.status == "failed" and "violence" in run.error and run.cost_micros is None
 
 
 async def test_a_cancelled_call_is_recorded_as_cancelled(cfg, db, world, leases):
-    calls = Calls(db)
+    calls = Calls(db, owner=LOCAL)
     writer = llm.make(cfg, "openrouter/fake/cheap", calls=calls)
     run_id = calls.start(writer)
     calls.failed(run_id, asyncio.CancelledError(), 1.5)
@@ -379,7 +379,9 @@ async def test_measured_tokens_replace_the_typical_ones(cfg, db, world, leases):
         s.add(job)
         s.commit()
         sid, jid = st.id, job.id
-    await write_storyboard(cfg, brief(writer="openrouter/fake/frontier"), calls=Calls(db, LOCAL, sid, jid))
+    await write_storyboard(
+        cfg, brief(writer="openrouter/fake/frontier"), calls=Calls(db, story_id=sid, job_id=jid, owner=LOCAL)
+    )
     with db.session() as s:
         runs = s.query(StepRun).filter_by(job_id=jid).all()
         tin, tout = sum(r.meta["tokens_in"] for r in runs), sum(r.meta["tokens_out"] for r in runs)

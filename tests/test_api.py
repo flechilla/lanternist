@@ -5,9 +5,11 @@ import json
 from lanternist.db import LOCAL
 
 
-def storyboard(n=3):
+def storyboard(n=3, voice="demo"):
+    """A storyboard to import; `voice` is a recording in the test voices, or a narrator's preset."""
     return {
         "title": "Test story",
+        "voice": voice,
         "cast": [{"id": "a", "name": "Ann", "look": "girl in a red coat"}],
         "scenes": [
             {

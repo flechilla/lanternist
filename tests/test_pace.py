@@ -96,7 +96,9 @@ async def test_the_snapshot_says_how_long_is_left_and_where_the_time_goes(fake_c
     job = db.add_job(LOCAL, None, "render", None, {}, None)
     progress = Progress(db, job.id)
     progress.expect = {"narration": Expect(2, 3.0, basis="history"), "mix": Expect(1, 30.0)}
-    await Pipeline(fake_cfg, progress.stage, db=db, job_id=job.id).narrate(make_story(("still", "still")))
+    await Pipeline(fake_cfg, progress.stage, db=db, job_id=job.id, owner=LOCAL).narrate(
+        make_story(("still", "still"))
+    )
     progress.flush()
     snap = progress.snap
     assert "secs" in snap["stages"]["narration"] and "mix" not in snap["stages"]
@@ -111,7 +113,7 @@ async def test_the_snapshot_says_how_long_is_left_and_where_the_time_goes(fake_c
 
 async def test_the_mix_says_how_far_through_the_film_it_is(fake_cfg, make_story):
     events: list[Event] = []
-    await Pipeline(fake_cfg, events.append).render(make_story(("still",)))
+    await Pipeline(fake_cfg, events.append, owner=LOCAL).render(make_story(("still",)))
     at = [e.at for e in events if e.stage == "mix" and e.at is not None]
     assert at and at == sorted(at) and at[-1] == pytest.approx(1.0, abs=0.05)
 
