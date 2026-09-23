@@ -1,6 +1,6 @@
 # Lanternist: the database, ready for Postgres
 
-> **Status, 22 Sep 2026: built, in one pull request (`feat/postgres`) rather than the two below.** This is Phase A of `HOSTED_PLAN.md`. It needs no product decision, and it changes nothing a local user sees. It adds no migration, so a local library needs no backup. §3 lists where the build departed from this design.
+> **Status, 23 Sep 2026: done, merged as #13 (`feat/postgres`), in one pull request rather than the two below.** This is Phase A of `HOSTED_PLAN.md`. It needs no product decision, and it changes nothing a local user sees. It adds no migration, so a local library needs no backup. §3 lists where the build departed from this design.
 >
 > **Measured before writing.** The whole test suite ran against a throwaway Postgres 17, with every `Database` pointed at a fresh database of its own:
 > - 225 of the 228 tests passed unchanged.

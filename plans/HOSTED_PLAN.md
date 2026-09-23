@@ -1,8 +1,8 @@
 # Lanternist Hosted: the SaaS edition
 
-> **Status, 22 Sep 2026: Phase A built (`DB_PLAN.md`); the rest planned.** The product direction changed on 22 Sep: Lanternist is to be a hosted service. People buy credits and spend them on films, and a plan (tier) decides which models they may use. Running on your own GPU stays, as the way we develop the app. Phase A, the database, has its own plan: `DB_PLAN.md`. §5 lists the decisions only you can make; Phases A–D need none of them.
+> **Status, 23 Sep 2026: Phase A done (`DB_PLAN.md`, merged as #13); Phase B in progress (`ACCOUNTS_PLAN.md`); the rest planned.** The product direction changed on 22 Sep: Lanternist is to be a hosted service. People buy credits and spend them on films, and a plan (tier) decides which models they may use. Running on your own GPU stays, as the way we develop the app. Each phase gets its own plan in `plans/` when it starts, and the work is tracked in the epic, issue #14. §5 lists the decisions only you can make: sign-in (6) and where the business is registered (2) were settled on 23 Sep.
 >
-> Facts about Stripe, Paddle, Polar, Clerk, R2, Neon, Hetzner, fal, OpenRouter, moderation models and the law were read from their own pages on 22 Sep 2026 (sources in §6). Anything marked **verify** wasn't confirmed. The legal points are research, not legal advice: §1.10 needs a lawyer before the public launch.
+> Facts about Stripe, Paddle, Polar, Clerk, WorkOS, R2, Neon, Hetzner, fal, OpenRouter, moderation models and the law were read from their own pages on 22 Sep 2026 (sources in §6). Anything marked **verify** wasn't confirmed. The legal points are research, not legal advice: §1.10 needs a lawyer before the public launch.
 
 **Goal:** someone with a phone and a card signs up, gets enough free credits for a first short film, and makes story films on hosted models, with no GPU, keys or install. They see the price in credits before anything is spent, and pay only for what ran. Credits come from packs and monthly plans; the plan decides which models, resolutions and lengths they may pick. The same code still runs on one machine with local models for development (the local edition), and in fake mode with no keys at all.
 
@@ -69,7 +69,7 @@ A new top-level setting, `edition = "local" | "hosted"`, decides what differs. E
 
 | | Local (today, and our development setup) | Hosted |
 |---|---|---|
-| Who | One person on this machine; no sign-in | Accounts, through Clerk (§1.2) |
+| Who | One person on this machine; no sign-in | Accounts, through WorkOS AuthKit (§1.2) |
 | Database | SQLite in the library | Postgres (Neon) |
 | Files | `~/Lanternist` | R2, one prefix per user (§1.6) |
 | Jobs | The runner inside `lanternist serve` | `lanternist worker` processes (§1.7) |
@@ -85,21 +85,23 @@ A new top-level setting, `edition = "local" | "hosted"`, decides what differs. E
 
 ### 1.2 Accounts and tenancy
 
-**Sign-in is Clerk.**
-- **Why Clerk:**
-  - Its session token can be verified with no network call: `clerk-backend-api`'s `authenticate_request` with the instance's public key.
-  - It arrives as the `__session` cookie on same-origin requests. EventSource sends cookies, so SSE needs no change.
-  - Bot protection and disposable-email blocking come on every plan.
-  - The free plan covers 50,000 retained users.
-- **Where it lives.** One module, `auth.py`, behind a `current_user` dependency. Swapping providers later touches that file and the sign-in components.
+**Sign-in is WorkOS AuthKit** (decided 23 Sep 2026, #23), with email codes and Google, and no passwords. The design is in `ACCOUNTS_PLAN.md` §1.4.
+- **Why AuthKit:**
+  - Its hosted pages and emails come in es-419 and pt-BR, the languages of the people we expect.
+  - Our own FastAPI sets the session cookie, HttpOnly, after the sign-in callback. EventSource sends it, so SSE needs no token refresh.
+  - Free to a million users. The custom domain ($99/month) is optional: until paying users justify it, the sign-in pages and emails use WorkOS's domain.
+  - Invitations and a waitlist for the closed beta, free.
+  - With no passwords there are no hashes to be locked in, so moving provider later is cheap.
+- **Where it lives.** One module, `auth.py`, behind a `current_user` dependency, and the client in `providers/workos.py`. Swapping providers later touches those and the sign-in page.
 - **The rejected alternatives:**
-  - WorkOS AuthKit: free to a million users, but $99/month for a custom domain.
-  - Supabase Auth.
-  - Our own magic links with Authlib: we would own email delivery and account recovery.
+  - Clerk: localization is experimental, its emails are in English without paid templates, its token is a 60 s script-readable cookie, and it costs about $1,025/month at 100k users.
+  - Supabase Auth, unless data must stay in the EU or Brazil. Auth0.
+  - Our own email codes with Authlib: we would own email delivery, its translations, rate limits and account linking.
+  - Better Auth: a TypeScript library, so a Node service beside FastAPI, with tables outside `db.py`.
 - **Details:**
-  - The token lives 60 s and is refreshed by Clerk's script. The SSE route verifies it once, at connect. When a long-sleeping tab's stream fails, the client gets a fresh token and reopens the stream.
-  - Verification checks `azp` against our own origins, which is the CSRF defence.
-  - The `users` row is created on the first authenticated request. Clerk's `user.created` and `user.deleted` webhooks (Svix-signed) are a backup, since Clerk doesn't guarantee delivery.
+  - The callback exchanges the code for the user, then stores a session of our own (a random token in the cookie, its hash in `sessions`), for 30 days.
+  - SameSite=Lax, plus an `Origin` check on every write, is the CSRF defence.
+  - The `users` row is created at the callback, the only way in. Signed `user.updated`, `user.deleted` and `session.revoked` webhooks keep it current.
 
 **Every row a user owns carries `owner_id`,** and every `Database` method that reads or changes one takes the user first. That's why Phase A puts every query in `db.py`: the filter is written once per method, and nowhere else.
 - **Rows that carry an owner:** `stories` (and through them, versions and jobs), `jobs`, `step_runs`, `settings` (now per user) and the ledger.
@@ -207,7 +209,7 @@ Credit packs (say $10, $25, $50) are sold to every plan, Free included. Packs un
 | `customer.subscription.deleted` | Back to Free at the period end. The credits stay. |
 | `charge.refunded`, `charge.dispute.created` | An `adjust` row taking back up to the refunded credits. Map a charge to its invoice through the Invoice Payments list: since API 2025-03-31, a charge no longer names its invoice. |
 
-**Merchant of record.** Selling to consumers in the EU and Latin America means collecting and filing VAT/GST in many countries. A merchant of record does that for us. Decision 2 depends on where the business is registered:
+**Merchant of record.** Selling to consumers in the EU and Latin America means collecting and filing VAT/GST in many countries. A merchant of record does that for us. **Decided 23 Sep 2026 (#24): Stripe Managed Payments.** Lanternist is a product of Monsoft Solutions, a US company that already has a Stripe account, so Paddle is out; #31 tracks turning Managed Payments on for that account. The options as they were weighed:
 - **Stripe Managed Payments** (generally available since 22 Apr 2026, AI services eligible since 2 Jun):
   - The same Checkout, webhooks and portal as plain Stripe, so the code above doesn't change. +3.5% on top of Stripe's fees.
   - Pix in Brazil.
@@ -272,7 +274,7 @@ Credit packs (say $10, $25, $50) are sold to every plan, Free included. Packs un
 ### 1.8 Providers on the platform's keys
 
 - **Keys come from the environment only in hosted.** The `PUT/DELETE /api/providers/{name}/key` routes don't exist there, and Settings shows no keys.
-- **`keys.PROVIDERS` grows** to Stripe (or Paddle), Clerk and R2, so `redact()` scrubs their secrets too (invariant 4).
+- **`keys.PLATFORM`** holds the hosted edition's own secrets, from the environment only: WorkOS now, Stripe and R2 later. `redact()` scrubs them with the model providers' keys (invariant 4).
 - **OpenRouter:**
   - One runtime key per environment, created with a management key and given a monthly limit. It's a circuit breaker against runaway spend.
   - `user` = a hash of our user id, so a provider's abuse block lands on that user, not the whole account.
@@ -309,7 +311,7 @@ The blueprint put it plainly: open sign-up, any audience and cloning together ar
 - the NO FAKES Act passed its Senate committee in June 2026.
 
 **Abuse and spend:**
-- The sign-up grant comes only after the email is verified: one per normalised email, a few per IP a day, with Turnstile on sign-up.
+- The sign-up grant comes only after the email is verified: one per normalised email, a few per IP a day, with Turnstile and a throwaway-domain list guarding the grant rather than the sign-up form.
 - Per-user rate limits on enqueue.
 - `hosted.daily_spend_cap_usd`: before each remote batch, today's platform spend (a sum over `step_runs`) is checked. Over the cap, remote stages pause for everyone with a polite message, and admins get an alert. A stolen card can't turn into a fal bill.
 
@@ -347,14 +349,14 @@ Micro and small enterprises are exempt from the transparency reports. **Share li
 - answering data requests within a month (GDPR Art. 12);
 - account deletion that really deletes (definition of done 8).
 
-A lawyer reviews this section before Phase I, and it depends on where the business is registered (decision 2).
+A lawyer reviews this section before Phase I (#29). The business is in the US (decision 2), so the terms follow US law, and EU representatives are needed if we sell to EU consumers.
 
 ### 1.11 Deploy and operations
 
 **Start small:**
 - **Servers.** Docker Compose on one Hetzner server: Caddy (TLS), the API and one worker. A CX43 (8 shared vCPU, 16 GB) is €15.99/month after Hetzner's June price rise. A dedicated-CPU CCX13 for the worker (€42.99) comes when encodes need it. A second, smaller server (CX33, €8.49) is staging.
 - **Postgres** on Neon's Launch plan, with scale-to-zero off: about $19/month, and 7 days of point-in-time restore we don't have to run. The worker connects directly, not through Neon's transaction pooler.
-- **Also:** R2 (about $0 at first), Clerk (free) and Sentry (free tier).
+- **Also:** R2 (about $0 at first), WorkOS AuthKit (free; $99/month for our own domain on its pages and emails, once paying users justify it) and Sentry (free tier).
 - **Total:** about $50–100 a month before the first customer.
 - **The platforms, compared:**
   - Fly's shared CPUs throttle under long x264 encodes.
@@ -380,7 +382,7 @@ A lawyer reviews this section before Phase I, and it depends on where the busine
 
 ### 1.12 The web app
 
-- **Sign-in.** Clerk's React components: the sign-in and sign-up pages, and the account menu.
+- **Sign-in.** AuthKit's hosted pages for signing in and up; our own sign-in page in front of them, and the account menu.
 - **The header** shows the balance in credits.
 - **The estimate box** speaks credits, and "Raise budget" becomes "Buy credits and carry on" when it's the balance that's short.
 - **Model pickers** show locked models with the plan that unlocks them.
@@ -413,10 +415,11 @@ New and changed tables. Money is `_micros` `BigInteger`; spend history outlives 
 
 | Table | Change | Holds |
 |---|---|---|
-| `users` | **new** | `id`, `auth_subject` (Clerk's user id, unique; `local` for the local user), `email`, `role` (`user`/`admin`), `plan`, `plan_status`, `plan_renews_at`, `billing_customer_id`, `created_at`, `deleted_at` |
+| `users` | **new** | `id`, `auth_subject` (WorkOS's user id, unique; `local` for the local user), `email`, `role` (`user`/`admin`), `created_at`, `deleted_at`. Phases E and H add `plan`, `plan_status`, `plan_renews_at` and `billing_customer_id` |
 | `stories`, `jobs`, `step_runs` | add `owner_id` | `stories`, `jobs` → `users` `ON DELETE CASCADE`; `step_runs` → `SET NULL`, so spend outlives accounts |
 | `jobs` | add `heartbeat_at`, `worker`, `cancel_requested` | Workers across processes (§1.7) |
 | `settings` | add `owner_id`, part of the key | Settings per user |
+| `sessions` | **new** | `id` (the hash of the cookie's token), `user_id`, `provider_session`, `created_at`, `expires_at` |
 | `ledger` | **new** | `id`, `user_id` (`SET NULL`), `kind`, `amount_micros` (signed), `job_id`, `step_run_id` (unique when set), `external_id` (unique when set), `note`, `created_at` |
 | `holds` | **new** | `job_id` (unique), `user_id`, `amount_micros`, `captured_micros`, `status` (`open`/`closed`), `created_at`, `closed_at` |
 | `steps` | **new** (hosted) | `owner_id`, `key`, `record` (JSON), `created_at`; primary key (`owner_id`, `key`) |
@@ -429,7 +432,7 @@ The migration that adds `users` and the owners runs on local libraries too: it b
 
 ```
 src/lanternist/
-  auth.py               # current_user: Clerk in hosted, the local user locally, a test header in fake mode
+  auth.py               # current_user: a WorkOS sign-in in hosted, the local user locally, a test header in fake mode
   ledger.py             # holds, captures, grants; available credit; CreditsShort
   plans.py  plans.toml  # plans, their limits, which models each unlocks
   billing.py            # Checkout Sessions, the webhook handlers (Stripe or Paddle), the portal link
@@ -437,15 +440,17 @@ src/lanternist/
   provenance.py         # the C2PA manifest and the watermark on exported films
   store.py              # Store interface; the local folder and R2 (+ the steps table) behind it
   providers/s3.py       # httpx + botocore signing: put, get, head, delete, list, presign
-  providers/fake.py     # + fake Stripe, fake S3
+  providers/workos.py   # the sign-in callback's calls to WorkOS
+  providers/fake.py     # + fake WorkOS, fake Stripe, fake S3
   registry/writers.toml # the hosted writer list, with plans
   jobs.py               # claim, heartbeats, requeue_stale, cancel across processes, per-user limits
   pipeline.py           # _check_budget also holds and tops up credits; captures per step
-  keys.py               # + stripe, clerk, r2
+  keys.py               # PLATFORM: + workos, stripe, r2
   config.py             # edition, [hosted], [database]
   cli.py                # worker, db upgrade, admin grant/suspend
   api/app.py            # user on every route; billing, webhooks, admin; edition-aware routes
-  migrations/versions/  # 0004 users and owners, 0005 credits, 0006 steps and webhooks, 0007 moderation
+  migrations/versions/  # in build order: 0004 accounts (users, sessions, owners), 0005 steps, 0006 the worker
+                        # columns on jobs, 0007 ledger and holds, 0008 moderation_events, 0009 webhook_events
 web/src/
   pages/Billing.tsx  components/SignIn.tsx  Balance.tsx
 deploy/
@@ -466,9 +471,11 @@ Each phase ends with something that runs end to end. Sizes assume one developer 
 
 ### Phase B: editions and accounts (≈3 days)
 
+`ACCOUNTS_PLAN.md`, issue #15.
+
 - [ ] `edition` and the `[hosted]` config section. `/api/options` says which edition it is.
 - [ ] `users`, `owner_id` everywhere, settings per user. The migration backfills the local user and is tested on a copy of the real library.
-- [ ] `auth.py`: Clerk session verification, the local user, the fake-mode header. `current_user` on every route; every `Database` method scoped.
+- [ ] `auth.py`: WorkOS AuthKit sign-in and our own sessions, the local user, the fake-mode header. `current_user` on every route; every `Database` method scoped.
 - [ ] Hosted leaves out the key routes, voice uploads and local engines. The registry is filtered to hosted-eligible models.
 - [ ] Sign-in in the web app; Settings without keys in hosted.
 - [ ] The cross-user test over `app.routes`.
@@ -536,7 +543,7 @@ Needs decisions 3 and 4, at least as placeholders.
 - [ ] `deploy/`: Dockerfile, Compose, Caddy. Staging and production. CI builds and deploys on a tag; `lanternist db upgrade` runs first.
 - [ ] Neon; R2 buckets and lifecycle rules (unfinished uploads, scratch); secrets.
 - [ ] Sentry, the uptime check, the alerts in §1.11, the nightly spend comparison, and nightly `pg_dump`.
-- [ ] Invite-only sign-up (a Clerk allowlist); credits granted by hand.
+- [ ] Invite-only sign-up (AuthKit invitations, or its waitlist); credits granted by hand.
 
 **Exit:**
 - [ ] Ten invited people make films on staging and then production, with no help beyond an invite.
@@ -544,7 +551,7 @@ Needs decisions 3 and 4, at least as placeholders.
 
 ### Phase H: payments (≈3 days)
 
-Needs decision 2.
+On Stripe Managed Payments (decision 2), once it's on for Monsoft's account (#31).
 
 - [ ] `billing.py` on the chosen provider: packs, plans, the portal, webhooks through `webhook_events`, refunds and disputes.
 - [ ] The Billing page. Fake Stripe (or Paddle) in `providers/fake.py`.
@@ -601,7 +608,7 @@ Needs decision 2.
 ## 5. Decisions to confirm
 
 1. **Open source.** Publish the local edition as the AGPL self-hosted app (the blueprint's plan), or keep the code closed and the local edition as our development setup only? *Recommended:* decide at launch; nothing before then depends on it.
-2. **Where the business is registered.** This decides:
+2. **Where the business is registered.** *Decided 23 Sep 2026 (#24):* the US, as a product of Monsoft Solutions, with Stripe Managed Payments as merchant of record. It decided:
    - the merchant of record: Stripe Managed Payments if it's the US, Canada, the EU/EEA, the UK, Australia, Hong Kong, Japan or Singapore, else Paddle;
    - whether EU representatives are needed;
    - which law the terms follow.
@@ -611,8 +618,8 @@ Needs decision 2.
    - +100% markup by default, set per model;
    - credits don't expire at launch.
 5. **Hosting.** *Recommended:* one Hetzner server with Compose, Neon for Postgres, and R2 (§1.11).
-6. **Sign-in.** *Recommended:* Clerk, behind `auth.py`.
-7. **The interface's language.** Translate the app into Spanish and Brazilian Portuguese before the public launch, or after? The Customer Portal and Clerk's pages already speak both.
+6. **Sign-in.** *Decided 23 Sep 2026 (#23):* WorkOS AuthKit, behind `auth.py`, with email codes and Google and no passwords. The custom domain waits for paying users.
+7. **The interface's language.** Translate the app into Spanish and Brazilian Portuguese before the public launch, or after? The Customer Portal and AuthKit's pages already speak both.
 8. **The domain and the name.** The blueprint's advice stands: a trademark search, then register the domains on the same day.
 9. **The beta.** How many people, whose (friends, parents' groups, a waiting list), and how many credits each.
 
@@ -634,6 +641,13 @@ Needs decision 2.
   - How Clerk works: https://clerk.com/docs/guides/how-clerk-works/overview
   - Pricing: https://clerk.com/pricing
   - Python SDK: https://github.com/clerk/clerk-sdk-python
+- WorkOS (read 23 Sep 2026):
+  - Pricing: https://workos.com/pricing
+  - Custom domains: https://workos.com/docs/custom-domains
+  - Authorize: https://workos.com/docs/reference/authkit/authentication/get-authorization-url
+  - Authenticate with a code: https://workos.com/docs/reference/authkit/authentication/code
+  - Sign-out: https://workos.com/docs/reference/authkit/logout
+  - Webhooks: https://workos.com/docs/events/data-syncing/webhooks · events: https://workos.com/docs/events
 - Cloudflare:
   - R2 pricing: https://developers.cloudflare.com/r2/pricing/
   - R2 presigned URLs: https://developers.cloudflare.com/r2/api/s3/presigned-urls/
