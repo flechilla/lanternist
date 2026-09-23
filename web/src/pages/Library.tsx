@@ -40,7 +40,7 @@ export default function Library() {
       <div className="page-head">
         <div>
           <h1>Your stories</h1>
-          <p>Each story becomes a narrated film, drawn and voiced on this machine.</p>
+          <p>Each story becomes a narrated film, drawn and voiced.</p>
         </div>
         <div className="spacer" />
         <input

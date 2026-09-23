@@ -203,6 +203,28 @@ main {
   }
 }
 
+.account {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-2);
+  font-size: 0.9rem;
+  min-width: 0;
+}
+.account span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sign-in {
+  max-width: 30rem;
+  margin: 10vh auto 0;
+}
+.sign-in .actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 /* ------------------------------------------------------------------ controls */
 button,
 .btn {

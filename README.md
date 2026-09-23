@@ -76,6 +76,12 @@ The app runs on Postgres too, which is how the hosted edition will run it. It ne
 extra (`uv sync` already installs it for development) and a database of its own:
 `LANTERNIST_DATABASE_URL=postgresql+psycopg://user:password@host/lanternist uv run lanternist serve`.
 
+The hosted edition (accounts, remote models only) runs from a `lanternist.toml` of its own, with
+`edition = "hosted"`, `[hosted] url` and remote models in `[defaults]` (`lanternist.example.toml` has
+them all). Point `LANTERNIST_CONFIG` at it, and use another library than `~/Lanternist`. In fake mode
+it signs in anyone, through a test page. With WorkOS, set `[workos] client_id` and `WORKOS_API_KEY`,
+and add `<url>/api/auth/callback` as a redirect URI in the WorkOS dashboard.
+
 `plans/MVP_PLAN.md` has the plan this was built from; `plans/M2_PLAN.md` has its live checks still to run; `plans/HOSTED_PLAN.md` is the hosted edition in progress, with a plan per phase (`plans/DB_PLAN.md` done, `plans/ACCOUNTS_PLAN.md` in progress). `CLAUDE.md` holds the
 conventions every change follows.
 

@@ -1,6 +1,6 @@
 # Lanternist: editions and accounts
 
-> **Status, 23 Sep 2026: planned; building on `feat/accounts`, as one pull request.** This is Phase B of `HOSTED_PLAN.md` (issue #15). The sign-in provider is WorkOS AuthKit (#23), on its free plan: the custom domain ($99/month) waits until paying users justify it. The questions in §4 are answered.
+> **Status, 23 Sep 2026: built on `feat/accounts`, as one pull request; the sign-in against WorkOS staging waits for its keys.** This is Phase B of `HOSTED_PLAN.md` (issue #15). The sign-in provider is WorkOS AuthKit (#23), on its free plan: the custom domain ($99/month) waits until paying users justify it. The questions in §4 are answered.
 >
 > **Measured before writing:**
 > - `Database` has 42 public methods. 24 read or change a row a user will own; the rest run the queue, keep prices and uploads, or open the database.
@@ -210,15 +210,15 @@ One pull request, `feat/accounts`, in four commits.
 
 ### Commit 4: sign-in (≈ 1 day)
 
-- [ ] `providers/workos.py` and the fake WorkOS. `keys.PLATFORM`, scrubbed by `redact()`.
-- [ ] `auth.py`: the sign-in, callback, sign-out, `/api/me`, the session cookie, the Origin check and the webhook.
-- [ ] The fake sign-in form.
-- [ ] Web: the sign-in page, the account menu, and 401 sending people back to sign-in.
+- [x] `providers/workos.py` and the fake WorkOS. `keys.PLATFORM`, scrubbed by `redact()`.
+- [x] `auth.py`: the sign-in, callback, sign-out, `/api/me`, the session cookie, the Origin check and the webhook.
+- [x] The fake sign-in form.
+- [x] Web: the sign-in page, the account menu, and 401 sending people back to sign-in.
 - [ ] A manual run against WorkOS staging, once its keys are set (§4): sign in by email code and by Google, sign out, sign in again.
 
 **Exit** (the definition of done above):
-- [ ] Items 1–5, with the suite passing on SQLite and Postgres.
-- [ ] A copy of `~/Lanternist` opens after 0004, owned by `local`.
+- [x] Items 1–5, with the suite passing on SQLite and Postgres: 268 tests on SQLite, and 265 on Postgres with the 3 `sqlite_only` ones skipped. Item 4 in fake mode; against WorkOS itself with the manual run above.
+- [x] A copy of `~/Lanternist` opens after 0004, owned by `local` (`test_migration_on_a_copy_of_the_real_library`). The library itself hasn't been migrated: the first start on this branch does it.
 
 ## 3. Where the build departed from the design
 
@@ -227,6 +227,10 @@ One pull request, `feat/accounts`, in four commits.
 - **A hosted render doesn't copy its film to `films/`**, and its result has no `path`: a path on the server means nothing to the person, who downloads the film from the page.
 - **`providers/fal.py` passes mypy now**, and has left the exempt list in `pyproject.toml`, since this work touched it (CLAUDE.md). A fal client made without a database refuses to log a request, with a sentence, rather than failing on `None`.
 - **Settings errors read as sentences.** A validator's own words come back as written, rather than as pydantic's `: Value error, …`.
+- **A sign-in that fails goes back to the sign-in page**, with the reason in its address (`/sign-in?error=…`), which the page shows. A JSON error in the browser would say nothing to the person.
+- **`/api/me` answers in both editions**, as the local user locally. The web app asks it only in hosted.
+- **The web app hides its nav until someone signs in**, and the Library no longer says films are made "on this machine", which isn't so in hosted.
+- **The webhook needs `WORKOS_WEBHOOK_SECRET`** in `keys.PLATFORM`, beside `WORKOS_API_KEY`. Without it, every webhook is refused.
 - **The `wait` test fixture asks the test's own app.** It used to ask for `client`, and a hosted test that used it restarted the app as the local edition in the middle. It also takes the headers of the user whose job it is.
 
 ## 4. Questions, answered on 23 Sep 2026

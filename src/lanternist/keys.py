@@ -4,6 +4,9 @@ Lookup order: the environment (OPENROUTER_API_KEY, FAL_KEY), then the OS keychai
 0600 file for machines with no keychain. Keys are never stored in the database, and `redact`
 scrubs them from error text before it is saved or shown.
 
+The hosted edition's own secrets (PLATFORM: sign-in now, payments and storage later) come from the
+environment only: nobody sets them in the app, and `redact` scrubs them too.
+
     LANTERNIST_KEYRING=0        skip the keychain (tests, headless boxes)
     LANTERNIST_SECRETS_FILE     where the fallback file lives
 """
@@ -21,6 +24,7 @@ log = logging.getLogger(__name__)
 SERVICE = "lanternist"
 PROVIDERS = {"openrouter": "OPENROUTER_API_KEY", "fal": "FAL_KEY"}
 LABELS = {"openrouter": "OpenRouter", "fal": "fal.ai"}
+PLATFORM = {"workos": "WORKOS_API_KEY", "workos_webhook": "WORKOS_WEBHOOK_SECRET"}
 
 
 @dataclass
@@ -132,6 +136,13 @@ def clear_key(provider: str) -> None:
     _clear_file(provider)
 
 
+def platform_secret(name: str, fake: bool = False) -> str | None:
+    """One of the hosted edition's own secrets, from the environment; a stand-in in fake mode."""
+    if value := os.environ.get(PLATFORM[name], "").strip():
+        return value
+    return f"fake-{name}-secret" if fake else None
+
+
 @overload
 def redact(text: str) -> str: ...
 @overload
@@ -144,4 +155,8 @@ def redact(text: str | None) -> str | None:
         key = get_key(provider).value
         if key and len(key) >= 8 and key in text:
             text = text.replace(key, f"<{provider} key …{key[-4:]}>")
+    for name in PLATFORM:
+        secret = platform_secret(name)
+        if secret and len(secret) >= 8 and secret in text:
+            text = text.replace(secret, f"<{name} secret …{secret[-4:]}>")
     return text

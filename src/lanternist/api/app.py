@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Streamin
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 
-from .. import keys, llm, prefs
+from .. import auth, keys, llm, prefs
 from ..auth import Me, current_user
 from ..config import settings
 from ..db import Database, Job, StaleVersion, Story, StoryVersion, to_micros, to_usd
@@ -51,6 +51,16 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="Lanternist", lifespan=lifespan)
 app.state.cfg, app.state.db = cfg, db  # for auth.current_user
 local = APIRouter()  # the local edition's routes only: included below, unless hosted
+
+
+if cfg.hosted_edition:
+
+    @app.middleware("http")
+    async def same_origin_writes(request: Request, call_next):
+        """Another site's page can't write through a signed-in visitor's cookie."""
+        if auth.foreign_write(cfg, request):
+            return JSONResponse({"detail": "writes come only from Lanternist's own pages"}, status_code=403)
+        return await call_next(request)
 
 
 @app.exception_handler(StaleVersion)
@@ -210,6 +220,11 @@ async def models(me: Me, capability: str = "writer.chat"):
         return engines.catalog(eff, db, capability)
     except ValueError as e:
         raise HTTPException(404, str(e)) from None
+
+
+@app.get("/api/me")
+def whoami(me: Me):
+    return {"id": me.id, "email": me.email, "role": me.role}
 
 
 @app.get("/api/options")
@@ -576,8 +591,8 @@ def add_voice(name: str = Form(...), transcript: str = Form(""), audio: UploadFi
     return {"name": slug, "path": str(dest), "has_transcript": bool(transcript.strip())}
 
 
-if not cfg.hosted_edition:
-    app.include_router(local)  # before the web app's catch-all route, which would answer first
+# Before the web app's catch-all route, which would answer first.
+app.include_router(auth.router if cfg.hosted_edition else local)
 
 
 # ---------------------------------------------------------------------------------- web app

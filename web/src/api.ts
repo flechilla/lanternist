@@ -320,6 +320,13 @@ export interface VoiceCatalog {
   sample_usd: number | null;
 }
 
+/** Who is signed in; in the local edition, the one local user. */
+export interface Me {
+  id: string;
+  email: string | null;
+  role: string;
+}
+
 export interface Options {
   languages: { id: string; name: string }[];
   audiences: { id: string; name: string }[];
@@ -465,6 +472,8 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
     (init.headers as Record<string, string>)["Content-Type"] = "application/json";
   }
   const res = await fetch(path, init);
+  // A session that ended while the page was open (the hosted edition): sign in again.
+  if (res.status === 401 && location.pathname !== "/sign-in") location.assign("/sign-in");
   if (!res.ok) {
     let message = `${res.status} ${res.statusText}`;
     try {
@@ -483,6 +492,9 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 
 export const api = {
   options: () => call<Options>("GET", "/api/options"),
+  me: () => call<Me>("GET", "/api/me"),
+  /** Ends the session here; `url` ends the sign-in provider's too, then comes back. */
+  signOut: () => call<{ url: string }>("POST", "/api/auth/sign-out"),
   doctor: () => call<Check[]>("GET", "/api/doctor"),
   stories: () => call<StoryListItem[]>("GET", "/api/stories"),
   story: (id: string) => call<StoryDetail>("GET", `/api/stories/${id}`),

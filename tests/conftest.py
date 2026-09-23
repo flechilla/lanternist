@@ -16,7 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, create_engine, event, make_url, text
 
-from lanternist import config, providers
+from lanternist import config, keys, providers
 from lanternist.auth import FAKE_USER
 from lanternist.config import Paths, Settings
 from lanternist.db import LOCAL, Database, Story
@@ -83,8 +83,8 @@ def _isolated_keys(request, tmp_path, monkeypatch):
         return
     monkeypatch.setenv("LANTERNIST_KEYRING", "0")
     monkeypatch.setenv("LANTERNIST_SECRETS_FILE", str(tmp_path / "secrets.toml"))
-    monkeypatch.delenv("FAL_KEY", raising=False)
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    for variable in (*keys.PROVIDERS.values(), *keys.PLATFORM.values()):
+        monkeypatch.delenv(variable, raising=False)
     from lanternist import providers
     from lanternist.providers import openrouter
 
@@ -234,8 +234,10 @@ def client(tmp_path, voices, database_url, monkeypatch):
 
 @pytest.fixture
 def hosted_client(tmp_path, voices, database_url, monkeypatch):
-    """The hosted edition, signed in as ann. A request with `headers={FAKE_USER: "bob"}` is bob's."""
-    yield from _serve(tmp_path, voices, database_url, monkeypatch, HOSTED_TOML, {FAKE_USER: "ann"})
+    """The hosted edition, signed in as ann, writing from its own pages. A request with
+    `headers={FAKE_USER: "bob"}` is bob's."""
+    headers = {FAKE_USER: "ann", "Origin": "http://testserver"}
+    yield from _serve(tmp_path, voices, database_url, monkeypatch, HOSTED_TOML, headers)
 
 
 @pytest.fixture

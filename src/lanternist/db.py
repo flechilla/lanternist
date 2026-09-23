@@ -38,6 +38,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     create_engine,
+    delete,
     event,
     func,
     make_url,
@@ -88,6 +89,12 @@ SHARED = {
     # Sign-in, which is how the owner is found.
     "user",
     "sign_in",
+    "start_session",
+    "session_user",
+    "end_session",
+    "revoke_session",
+    "user_updated",
+    "user_deleted",
 }
 
 
@@ -403,6 +410,60 @@ class Database:
                 user.email = email
                 s.commit()
             return user
+
+    def start_session(self, user_id: str, token_hash: str, provider_session: str | None, days: int) -> None:
+        """A signed-in browser, for `days`. The user's expired sessions go at the same time."""
+        with self.session() as s:
+            s.execute(delete(SignedIn).where(SignedIn.user_id == user_id, SignedIn.expires_at <= now()))
+            s.add(
+                SignedIn(
+                    id=token_hash,
+                    user_id=user_id,
+                    provider_session=provider_session,
+                    expires_at=now() + timedelta(days=days),
+                )
+            )
+            s.commit()
+
+    def session_user(self, token_hash: str) -> User | None:
+        """Who a session signs in: None when it has expired, or ended, or their account was deleted."""
+        q = (
+            select(User)
+            .join(SignedIn, SignedIn.user_id == User.id)
+            .where(SignedIn.id == token_hash, SignedIn.expires_at > now(), User.deleted_at.is_(None))
+        )
+        with self.session() as s:
+            return s.scalars(q).one_or_none()
+
+    def end_session(self, token_hash: str) -> str | None:
+        """Sign a browser out; returns the provider's session, to end that too."""
+        q = delete(SignedIn).where(SignedIn.id == token_hash).returning(SignedIn.provider_session)
+        with self.session() as s:
+            ended = s.scalars(q).one_or_none()
+            s.commit()
+            return ended
+
+    def revoke_session(self, provider_session: str) -> None:
+        """The provider ended one of its sessions: end ours with it."""
+        with self.session() as s:
+            s.execute(delete(SignedIn).where(SignedIn.provider_session == provider_session))
+            s.commit()
+
+    def user_updated(self, subject: str, email: str | None) -> None:
+        with self.session() as s:
+            s.execute(update(User).where(User.auth_subject == subject).values(email=email))
+            s.commit()
+
+    def user_deleted(self, subject: str) -> None:
+        """The provider deleted the account: nobody signs in as them again. Their stories and files stay
+        until the account deletion of HOSTED_PLAN Phase I removes them."""
+        with self.session() as s:
+            user = s.scalars(select(User).where(User.auth_subject == subject)).one_or_none()
+            if user is None:
+                return
+            user.deleted_at = user.deleted_at or now()
+            s.execute(delete(SignedIn).where(SignedIn.user_id == user.id))
+            s.commit()
 
     def _story(self, s: Session, owner: str, story_id: str) -> Story | None:
         """The owner's story; None for another's, exactly as for one that doesn't exist."""

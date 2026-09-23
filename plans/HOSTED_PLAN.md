@@ -1,6 +1,6 @@
 # Lanternist Hosted: the SaaS edition
 
-> **Status, 23 Sep 2026: Phase A done (`DB_PLAN.md`, merged as #13); Phase B in progress (`ACCOUNTS_PLAN.md`); the rest planned.** The product direction changed on 22 Sep: Lanternist is to be a hosted service. People buy credits and spend them on films, and a plan (tier) decides which models they may use. Running on your own GPU stays, as the way we develop the app. Each phase gets its own plan in `plans/` when it starts, and the work is tracked in the epic, issue #14. §5 lists the decisions only you can make: sign-in (6) and where the business is registered (2) were settled on 23 Sep.
+> **Status, 23 Sep 2026: Phase A done (`DB_PLAN.md`, merged as #13); Phase B built (`ACCOUNTS_PLAN.md`, on `feat/accounts`), with its sign-in against WorkOS staging still to run; the rest planned.** The product direction changed on 22 Sep: Lanternist is to be a hosted service. People buy credits and spend them on films, and a plan (tier) decides which models they may use. Running on your own GPU stays, as the way we develop the app. Each phase gets its own plan in `plans/` when it starts, and the work is tracked in the epic, issue #14. §5 lists the decisions only you can make: sign-in (6) and where the business is registered (2) were settled on 23 Sep.
 >
 > Facts about Stripe, Paddle, Polar, Clerk, WorkOS, R2, Neon, Hetzner, fal, OpenRouter, moderation models and the law were read from their own pages on 22 Sep 2026 (sources in §6). Anything marked **verify** wasn't confirmed. The legal points are research, not legal advice: §1.10 needs a lawyer before the public launch.
 
@@ -473,16 +473,16 @@ Each phase ends with something that runs end to end. Sizes assume one developer 
 
 `ACCOUNTS_PLAN.md`, issue #15.
 
-- [ ] `edition` and the `[hosted]` config section. `/api/options` says which edition it is.
-- [ ] `users`, `owner_id` everywhere, settings per user. The migration backfills the local user and is tested on a copy of the real library.
-- [ ] `auth.py`: WorkOS AuthKit sign-in and our own sessions, the local user, the fake-mode header. `current_user` on every route; every `Database` method scoped.
-- [ ] Hosted leaves out the key routes, voice uploads and local engines. The registry is filtered to hosted-eligible models.
-- [ ] Sign-in in the web app; Settings without keys in hosted.
-- [ ] The cross-user test over `app.routes`.
+- [x] `edition` and the `[hosted]` config section. `/api/options` says which edition it is.
+- [x] `users`, `owner_id` everywhere, settings per user. The migration backfills the local user and is tested on a copy of the real library.
+- [x] `auth.py`: WorkOS AuthKit sign-in and our own sessions, the local user, the fake-mode header. `current_user` on every route; every `Database` method scoped.
+- [x] Hosted leaves out the key routes, voice uploads and local engines. The registry is filtered to hosted-eligible models.
+- [x] Sign-in in the web app; Settings without keys in hosted.
+- [x] The cross-user test over `app.routes`.
 
 **Exit:**
-- [ ] Two users in fake hosted mode each write, board and render a story, and see only their own. Every cross-user request gets a 404.
-- [ ] The local edition works exactly as before (the golden keys; `~/Lanternist` opens after its migration).
+- [x] Two users in fake hosted mode each write, board and render a story, and see only their own. Every cross-user request gets a 404.
+- [x] The local edition works exactly as before (the golden keys; `~/Lanternist` opens after its migration).
 
 ### Phase C: storage on R2 (≈3 days)
 

@@ -43,7 +43,7 @@ user's models and takes the GPU for minutes). Neither runs by default.
 | `voices.py` | The narrator's reference recordings (a model's presets are in the registry) |
 | `workers/` | Scripts that run *inside other venvs* (Qwen3-TTS, klein) |
 | `gpu.py` | The GPU lease: evict other models, wait for free VRAM |
-| `providers/` | OpenRouter and fal clients, and in-process fakes of both |
+| `providers/` | OpenRouter, fal and WorkOS (sign-in) clients, and in-process fakes of all three |
 | `registry/` | Every model the app offers, with limits and prices (TOML) |
 | `db.py`, `migrations/` | SQLite (a local library) or Postgres (hosted) through SQLAlchemy; Alembic migrations |
 | `auth.py` | Who is asking: the local user, or whoever signed in (hosted) |
@@ -95,7 +95,7 @@ sends it; the frontend doesn't hard-code it.
 | Models, limits, prices | `registry/*.toml` | pickers, estimator, doctor, adapters |
 | Config defaults | `config.py` | documented in `lanternist.example.toml` (keep it in step) |
 | Settings the app may change | `prefs.EDITABLE` | Settings page |
-| Providers and their env vars | `keys.PROVIDERS` | CLI, API, doctor |
+| Providers and their env vars | `keys.PROVIDERS`; the hosted edition's own secrets in `keys.PLATFORM` | CLI, API, doctor; `redact()` |
 | ffmpeg command lines | `engines/ffmpeg.py` | pipeline |
 | Quality gates | `scripts/check` | CI, `/check` |
 
