@@ -227,6 +227,14 @@ class Settings(BaseModel):
     def library(self) -> Path:
         return self.paths.library
 
+    def library_for(self, owner: str | None) -> Path:
+        """Where an owner's pictures, films and cached steps live: the library itself in the local
+        edition; in hosted, a folder per user, so no one reaches another's files or gets their work for
+        free, and one for what everyone shares (owner None: voice samples)."""
+        if not self.hosted_edition:
+            return self.library
+        return self.library / ("shared" if owner is None else f"u/{owner}")
+
     @property
     def database_url(self) -> str:
         return self.database.url or f"sqlite:///{self.library / 'lanternist.db'}"

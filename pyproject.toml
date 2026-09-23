@@ -92,10 +92,3 @@ exclude = ["src/lanternist/workers/"]   # they run in other venvs, against libra
 module = ["pynvml"]
 ignore_missing_imports = true   # NVIDIA ships it without type hints or stubs
 
-# Modules that failed when mypy was added. Touching one? Make it pass and delete it from this list.
-# Never add a module to it.
-[[tool.mypy.overrides]]
-module = [
-    "lanternist.providers.fal",
-]
-ignore_errors = true

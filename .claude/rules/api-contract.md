@@ -6,9 +6,14 @@ paths:
 
 # The API and its TypeScript mirror
 
-`api/app.py` serves REST under `/api`, SSE at `/api/jobs/{id}/events`, and the built web app. It binds
-to localhost; there are no accounts.
+`api/app.py` serves REST under `/api`, SSE at `/api/jobs/{id}/events`, and the built web app. The
+local edition binds to localhost for one person; the hosted edition serves accounts, and leaves out
+the routes on the `local` router (keys, the doctor, voice uploads).
 
+- **Every route that touches a user's rows or files takes `me: Me`** (`auth.py`) and passes `me.id`
+  to `db`, `prefs`, `Runner` and `Pipeline`. Not yours answers 404, exactly like not found. A new
+  route with a `{story_id}`, `{job_id}` or `{asset}` needs its line in `test_accounts.CALLS`, or
+  `test_another_users_ids_answer_404` fails.
 - **Routes stay thin.** A route validates input, calls the module that owns the work (`db`, `prefs`,
   `keys`, `Runner`, `Pipeline`), and shapes the response. Business rules, queries and file handling
   belong in those modules.

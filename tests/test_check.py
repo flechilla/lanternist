@@ -10,7 +10,7 @@ from lanternist import check
 from lanternist.check import CheckError
 from lanternist.cli import _flagged, _keep_redraws
 from lanternist.config import Settings
-from lanternist.db import Job, StepRun, to_micros
+from lanternist.db import LOCAL, Job, StepRun, to_micros
 from lanternist.doctor import needs, ollama_models
 from lanternist.jobs import Progress, Runner
 from lanternist.pipeline import Board, BudgetExceeded, Event, Pipeline, timing
@@ -79,7 +79,7 @@ async def test_a_picture_that_fails_its_check_is_drawn_again_with_a_new_seed(fak
 
 async def test_the_progress_shows_a_failed_picture_until_its_redraw_lands(fake_cfg, db, fakes, make_story):
     fakes.openrouter.replies = [TWICE]
-    job = db.add_job(None, "board", None, {}, None)
+    job = db.add_job(LOCAL, None, "board", None, {}, None)
     progress = Progress(db, job.id)
     seen = []
 
@@ -115,7 +115,7 @@ async def test_the_progress_shows_a_failed_picture_until_its_redraw_lands(fake_c
 
 async def test_a_fail_with_no_reason_is_still_a_fail(fake_cfg, db, fakes, make_story):
     fakes.openrouter.replies = [TWICE.replace('"Ann appears twice."', '""')]
-    job = db.add_job(None, "board", None, {}, None)
+    job = db.add_job(LOCAL, None, "board", None, {}, None)
     progress = Progress(db, job.id)
     states = []
 
@@ -274,7 +274,7 @@ async def test_a_cached_board_needs_no_prices(fake_cfg, db, fakes, make_story, m
 
 def job_row(db, story_id: str, version: int, kind: str = "board") -> Job:
     with db.session() as s:
-        job = Job(story_id=story_id, kind=kind, version=version, params={}, progress={})
+        job = Job(owner_id=LOCAL, story_id=story_id, kind=kind, version=version, params={}, progress={})
         s.add(job)
         s.commit()
         s.refresh(job)
@@ -286,7 +286,7 @@ async def test_the_new_seeds_keep_an_edit_saved_while_the_job_ran(
     fake_cfg, db, story_row, make_story, lands_first, edit_lands
 ):
     before = make_story(("still", "still"))
-    started = db.add_version(story_row, before.model_dump(), note="the version the board runs")
+    started = db.add_version(LOCAL, story_row, before.model_dump(), note="the version the board runs")
     p = Pipeline(fake_cfg, db=db, story_id=story_row)
     await p.draw(before)
     # While the board runs, the user retitles the story and changes scene 2's picture.
@@ -294,7 +294,7 @@ async def test_the_new_seeds_keep_an_edit_saved_while_the_job_ran(
     edited.title, edited.scenes[1].visual = "Retitled", "a different picture"
 
     def save_the_edit() -> None:
-        db.add_version(story_row, edited.model_dump(), note="saved while it ran")
+        db.add_version(LOCAL, story_row, edited.model_dump(), note="saved while it ran")
 
     if edit_lands == "while the job ran":
         save_the_edit()
@@ -305,7 +305,7 @@ async def test_the_new_seeds_keep_an_edit_saved_while_the_job_ran(
     p.redrawn = {1: "twice", 2: "twice"}
     runner = Runner(fake_cfg, db)
     assert runner.keep_redraws(p, job_row(db, story_row, started), before, after) == (started + 2, [1])
-    _, row = db.storyboard(story_row)
+    _, row = db.storyboard(LOCAL, story_row)
     latest, note = Storyboard.model_validate(row.storyboard), row.note
     assert latest.title == "Retitled" and latest.scenes[1].visual == "a different picture"
     # Scene 1's picture is still the one checked, so it takes its new seed; scene 2 was redrawn by
@@ -320,12 +320,12 @@ async def test_the_new_seeds_keep_an_edit_saved_while_the_job_ran(
 
 async def test_a_look_edited_while_the_job_ran_keeps_its_new_seed_out(fake_cfg, db, story_row, make_story):
     before = with_portraits(make_story(("still",)))
-    started = db.add_version(story_row, before.model_dump(), note="the version the board runs")
+    started = db.add_version(LOCAL, story_row, before.model_dump(), note="the version the board runs")
     p = Pipeline(fake_cfg, db=db, story_id=story_row)
     await p.draw(before)
     edited = before.model_copy(deep=True)
     edited.cast[1].look = "boy in a red cap"  # a new cast sheet and portraits, so a new picture
-    db.add_version(story_row, edited.model_dump(), note="saved while it ran")
+    db.add_version(LOCAL, story_row, edited.model_dump(), note="saved while it ran")
     after = before.model_copy(deep=True)
     after.scenes[0].seed = 111
     p.redrawn = {1: "twice"}
@@ -349,7 +349,7 @@ async def test_a_board_stopped_after_a_redraw_keeps_its_new_seed(
     pictures it drew, which the story page shows its pictures for."""
     sb = make_story(("still",))
     first = sb.scene_seed(sb.scenes[0])
-    started = db.add_version(story_row, sb.model_dump(), note="the version the board runs")
+    started = db.add_version(LOCAL, story_row, sb.model_dump(), note="the version the board runs")
     job, runner = job_row(db, story_row, started), Runner(fake_cfg, db)
     if ending == "error":
         fakes.openrouter.replies = [TWICE, NO_PICTURES]  # the second look fails outright
@@ -361,10 +361,10 @@ async def test_a_board_stopped_after_a_redraw_keeps_its_new_seed(
             runner.cancel_requested.add(job.id)
     with pytest.raises((CheckError, asyncio.CancelledError)):
         await runner.checked_board(p, job, sb)
-    story, row = db.storyboard(story_row)
+    story, row = db.storyboard(LOCAL, story_row)
     assert story.version == started + 1
     assert Storyboard.model_validate(row.storyboard).scenes[0].seed == next_seed(first)
-    assert db.get_job(job.id).version == (started + 1 if job_takes_it else started)
+    assert db.get_job(LOCAL, job.id).version == (started + 1 if job_takes_it else started)
 
 
 def job_with_a_redraw(client, wait, fakes, story: Storyboard, kind: str) -> tuple[str, dict]:

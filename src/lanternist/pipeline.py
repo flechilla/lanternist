@@ -20,7 +20,7 @@ from typing import Any
 from . import check, prompts, registry, text, timing
 from . import llm as llms
 from .config import Settings
-from .db import Database, now
+from .db import LOCAL, Database, now
 from .engines import catalog, ffmpeg
 from .engines.base import (
     CAST_SIZE,
@@ -211,9 +211,14 @@ class Pipeline:
         job_id: str | None = None,
         user_cancelled: Callable[[], bool] = lambda: False,
         budget_micros: int | None = None,
+        owner: str = LOCAL,
+        shared: bool = False,
     ):
+        """`owner`: whose steps these are, and so whose files and spend. `shared` makes them in the store
+        everyone shares, for what sounds the same to everyone: a voice's sample."""
         self.cfg = cfg
-        self.store = Store(cfg.library)
+        self.owner = owner
+        self.store = Store(cfg.library_for(None if shared else owner))
         self._emit = emit or (lambda e: None)
         self.db, self.story_id, self.job_id = db, story_id, job_id
         self.user_cancelled = user_cancelled
@@ -309,6 +314,7 @@ class Pipeline:
                 self.story_id,
                 self.job_id,
                 self.user_cancelled,
+                owner=self.owner,
                 note=lambda message, scene: self.emit(
                     stage,
                     "progress",
@@ -338,7 +344,7 @@ class Pipeline:
         """Stop before a remote stage that would take the story past its budget."""
         if self.budget_micros is None or self.db is None or self.story_id is None:
             return
-        spent = self.db.spend_micros(story_id=self.story_id)
+        spent = self.db.spend_micros(self.owner, story_id=self.story_id)
         if spent + need > self.budget_micros:
             raise BudgetExceeded(stage, need, spent, self.budget_micros)
 
@@ -347,6 +353,7 @@ class Pipeline:
         if maker.remote or not maker.model_id or self.db is None:
             return
         self.db.start_run(
+            owner_id=self.owner,
             story_id=self.story_id,
             job_id=self.job_id,
             scene=it.scene,
@@ -569,7 +576,7 @@ class Pipeline:
         if not model:
             return Checked({}, set())
         checker = check.Checker(
-            self.cfg, model, llms.Calls(self.db, self.story_id, self.job_id, stage="check")
+            self.cfg, model, llms.Calls(self.db, self.owner, self.story_id, self.job_id, stage="check")
         )
         items = self.check_items(sb, keyframes, model)
         if any(not self.cached(it) for it in items):

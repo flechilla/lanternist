@@ -1,4 +1,4 @@
-"""Settings people change in the app, stored in the database's `settings` table.
+"""Settings people change in the app, stored per user in the database's `settings` table.
 
 A value saved here wins over lanternist.toml, which wins over the built-in default. Removing a
 saved value falls back to the file. Only the keys in EDITABLE can be saved, and never API keys:
@@ -64,10 +64,10 @@ def _apply(cfg: Settings, values: dict) -> Settings:
     return Settings.model_validate(data)
 
 
-def effective(cfg: Settings, db: Database) -> Settings:
-    """`cfg` with the values saved in the app applied on top."""
+def effective(cfg: Settings, db: Database, owner: str) -> Settings:
+    """`cfg` with the values the owner saved in the app applied on top."""
     keys = editable(cfg)
-    saved = {k: v for k, v in db.saved_settings().items() if k in keys}
+    saved = {k: v for k, v in db.saved_settings(owner).items() if k in keys}
     return _apply(cfg, saved) if saved else cfg
 
 
@@ -76,9 +76,9 @@ def _get(cfg: Settings, key: str):
     return getattr(getattr(cfg, section), field)
 
 
-def describe(cfg: Settings, db: Database) -> list[dict]:
-    saved, written = db.saved_settings(), file_data()
-    eff = effective(cfg, db)
+def describe(cfg: Settings, db: Database, owner: str) -> list[dict]:
+    saved, written = db.saved_settings(owner), file_data()
+    eff = effective(cfg, db, owner)
     out = []
     for key in editable(cfg):
         label = EDITABLE[key]
@@ -113,13 +113,13 @@ def _check_model(key: str, value, cfg: Settings) -> None:
         raise ValueError(f"{value} is a {entry.capability} model, not {MODEL_KEYS[key]}")
 
 
-def update(cfg: Settings, db: Database, changes: dict) -> None:
-    """Save `changes`; a value of None removes the saved value. All or nothing."""
+def update(cfg: Settings, db: Database, owner: str, changes: dict) -> None:
+    """Save the owner's `changes`; a value of None removes the saved value. All or nothing."""
     keys = editable(cfg)
     unknown = sorted(set(changes) - set(keys))
     if unknown:
         raise ValueError(f"can't change {', '.join(unknown)} here")
-    current = {k: v for k, v in db.saved_settings().items() if k in keys}
+    current = {k: v for k, v in db.saved_settings(owner).items() if k in keys}
     merged = {**current, **{k: v for k, v in changes.items() if v is not None}}
     for k, v in changes.items():
         if v is None:
@@ -138,6 +138,6 @@ def update(cfg: Settings, db: Database, changes: dict) -> None:
         raise ValueError("budget must be ≥ 0, concurrency ≥ 1, and media hours > 0")
     for key, value in changes.items():
         if value is None:
-            db.delete_setting(key)
+            db.delete_setting(owner, key)
         else:
-            db.set_setting(key, value)
+            db.set_setting(owner, key, value)

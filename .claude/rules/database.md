@@ -20,6 +20,13 @@ plans/M2_PLAN.md §1.13 for the tables.
 
 ## Queries
 
+- **Every row a user owns is read through their id.** A method that reads or changes a story, a
+  version, a job, a step run or a setting takes `owner: str` first and filters on it, through
+  `_story`/`_job` or a `where(… .owner_id == owner)`. Another user's row comes back as a missing one
+  does: `None` or `KeyError`. A method that can't take an owner (the worker's, prices, uploads,
+  sign-in) goes in `db.SHARED` with its reason; `test_every_database_method_takes_the_owner_or_is_shared`
+  holds each method to one or the other. A new owned table gets `owner_id` → `users`, `CASCADE`, or
+  `SET NULL` when it records money.
 - **Every query lives in `db.py`**, as a `Database` method. Other modules call those; they don't
   import SQLAlchemy, open a session or touch `db.engine`, and `test_every_query_lives_in_db_py` fails
   if they do. A method opens its own session; one that takes a session is private (`_storyboard`,

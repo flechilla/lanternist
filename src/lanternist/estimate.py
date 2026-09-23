@@ -100,8 +100,8 @@ def estimate(p: Pipeline, sb: Storyboard, kind: Kind) -> dict:
         "retakes": retakes,
     }
     if p.db is not None and p.story_id is not None:
-        budget = p.db.budget_micros(p.story_id, p.cfg.defaults.budget_usd)
-        spent = p.db.spend_micros(story_id=p.story_id)
+        budget = p.db.budget_micros(p.owner, p.story_id, p.cfg.defaults.budget_usd)
+        spent = p.db.spend_micros(p.owner, story_id=p.story_id)
         out |= {
             "budget_micros": budget,
             "spent_micros": spent,

@@ -12,12 +12,13 @@ import subprocess
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import APIRouter, Body, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Body, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 
 from .. import keys, llm, prefs
+from ..auth import Me, current_user
 from ..config import settings
 from ..db import Database, Job, StaleVersion, Story, StoryVersion, to_micros, to_usd
 from ..engines import catalog as engines
@@ -48,6 +49,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Lanternist", lifespan=lifespan)
+app.state.cfg, app.state.db = cfg, db  # for auth.current_user
 local = APIRouter()  # the local edition's routes only: included below, unless hosted
 
 
@@ -102,34 +104,34 @@ def story_dict(st: Story) -> dict:
     }
 
 
-def _get(story_id: str, version: int | None = None) -> tuple[Story, StoryVersion]:
+def _get(owner: str, story_id: str, version: int | None = None) -> tuple[Story, StoryVersion]:
     try:
-        return db.storyboard(story_id, version)
+        return db.storyboard(owner, story_id, version)
     except KeyError:
         raise HTTPException(404, "story or version not found") from None
 
 
-def _pipeline(story_id: str | None = None) -> Pipeline:
-    return Pipeline(prefs.effective(cfg, db), db=db, story_id=story_id)
+def _pipeline(owner: str, story_id: str | None = None) -> Pipeline:
+    return Pipeline(prefs.effective(cfg, db, owner), db=db, story_id=story_id, owner=owner)
 
 
-def _quote(story_id: str, version: int | None, kind: Kind) -> dict:
+def _quote(owner: str, story_id: str, version: int | None, kind: Kind) -> dict:
     """What a board or render of this version would cost now, in micro-dollars."""
-    _, row = _get(story_id, version)
+    _, row = _get(owner, story_id, version)
     try:
-        return estimate(_pipeline(story_id), Storyboard.model_validate(row.storyboard), kind)
+        return estimate(_pipeline(owner, story_id), Storyboard.model_validate(row.storyboard), kind)
     except (FileNotFoundError, ValueError) as e:
         raise HTTPException(422, str(e)) from None
 
 
-def _enqueue(story_id: str, kind: str, version: int | None, params: dict | None = None) -> dict:
+def _enqueue(owner: str, story_id: str, kind: str, version: int | None, params: dict | None = None) -> dict:
     quote = None
     if kind in ("board", "render"):
         try:
-            quote = _quote(story_id, version, "board" if kind == "board" else "render")
+            quote = _quote(owner, story_id, version, "board" if kind == "board" else "render")
         except HTTPException:
             quote = None  # the job itself fails with the reason, where the user sees it
-    return job_dict(runner.enqueue(story_id, kind, version, params, estimate=quote))
+    return job_dict(runner.enqueue(owner, story_id, kind, version, params, estimate=quote))
 
 
 # ---------------------------------------------------------------------------------- meta
@@ -139,18 +141,18 @@ def health():
 
 
 @local.get("/api/doctor")
-async def doctor():
+async def doctor(me: Me):
     from ..doctor import run_checks
 
-    return [c.dict() for c in await run_checks(prefs.effective(cfg, db))]
+    return [c.dict() for c in await run_checks(prefs.effective(cfg, db, me.id))]
 
 
 # ---------------------------------------------------------------------------------- providers & settings
 @local.get("/api/providers")
-async def providers():
+async def providers(me: Me):
     from ..doctor import provider_rows
 
-    return await provider_rows(prefs.effective(cfg, db))
+    return await provider_rows(prefs.effective(cfg, db, me.id))
 
 
 class KeyBody(BaseModel):
@@ -164,14 +166,14 @@ def _provider(name: str) -> str:
 
 
 @local.put("/api/providers/{name}/key")
-async def set_provider_key(name: str, body: KeyBody):
+async def set_provider_key(name: str, body: KeyBody, me: Me):
     from ..doctor import provider_rows
 
     try:
         stored = keys.set_key(_provider(name), body.key)
     except ValueError as e:
         raise HTTPException(422, str(e)) from None
-    row = next(r for r in await provider_rows(prefs.effective(cfg, db)) if r["name"] == name)
+    row = next(r for r in await provider_rows(prefs.effective(cfg, db, me.id)) if r["name"] == name)
     return row | {"stored_in": stored}
 
 
@@ -181,8 +183,8 @@ def clear_provider_key(name: str):
 
 
 @app.get("/api/settings")
-def get_settings():
-    return prefs.describe(cfg, db)
+def get_settings(me: Me):
+    return prefs.describe(cfg, db, me.id)
 
 
 class SettingsBody(BaseModel):
@@ -190,18 +192,18 @@ class SettingsBody(BaseModel):
 
 
 @app.put("/api/settings")
-def put_settings(body: SettingsBody):
+def put_settings(body: SettingsBody, me: Me):
     try:
-        prefs.update(cfg, db, body.changes)
+        prefs.update(cfg, db, me.id, body.changes)
     except ValueError as e:
         raise HTTPException(422, str(e)) from None
-    return prefs.describe(cfg, db)
+    return prefs.describe(cfg, db, me.id)
 
 
 @app.get("/api/models")
-async def models(capability: str = "writer.chat"):
+async def models(me: Me, capability: str = "writer.chat"):
     """The models a stage can use: writers live from Ollama and OpenRouter, media from the registry."""
-    eff = prefs.effective(cfg, db)
+    eff = prefs.effective(cfg, db, me.id)
     if capability == "writer.chat":
         return await llm.catalog(eff, db)
     try:
@@ -225,8 +227,8 @@ def options():
 
 # ---------------------------------------------------------------------------------- stories
 @app.get("/api/stories")
-def list_stories():
-    spent = db.spend_by_story()
+def list_stories(me: Me):
+    spent = db.spend_by_story(me.id)
     return [
         {
             **story_dict(r.story),
@@ -238,7 +240,7 @@ def list_stories():
             "poster": (r.drawn.result or {}).get("poster") if r.drawn else None,
             "spent_usd": to_usd(spent.get(r.story.id, 0)),
         }
-        for r in db.library()
+        for r in db.library(me.id)
     ]
 
 
@@ -248,23 +250,23 @@ class NewStory(BaseModel):
 
 
 @app.post("/api/stories", status_code=201)
-def create_story(body: NewStory):
+def create_story(body: NewStory, me: Me):
     source = body.storyboard or body.brief
     if source is None:
         raise HTTPException(422, "send a brief to write a story, or a storyboard to import one")
     if body.brief:
         try:
-            llm.check_key(prefs.effective(cfg, db), body.brief.writer)
+            llm.check_key(prefs.effective(cfg, db, me.id), body.brief.writer)
         except llm.LLMError as e:
             raise HTTPException(422, str(e)) from None
     title = body.storyboard.title if body.storyboard else "Writing…"
     imported = body.storyboard.model_dump() if body.storyboard else None
-    story = story_dict(db.create_story(title, source.language, imported))
-    job = _enqueue(story["id"], "write", None, body.brief.model_dump()) if body.brief else None
+    story = story_dict(db.create_story(me.id, title, source.language, imported))
+    job = _enqueue(me.id, story["id"], "write", None, body.brief.model_dump()) if body.brief else None
     return {"story": story, "job": job}
 
 
-def writer_dict(story_id: str, sb: Storyboard | None) -> dict | None:
+def writer_dict(owner: str, story_id: str, sb: Storyboard | None) -> dict | None:
     """Who wrote the story, and what writing it has cost: failed attempts too, since OpenRouter bills them."""
     writer = sb.models.writer if sb else None
     if not writer:
@@ -274,24 +276,24 @@ def writer_dict(story_id: str, sb: Storyboard | None) -> dict | None:
         "id": writer,
         "model": model,
         "local": provider == "ollama",
-        "cost_usd": to_usd(db.spend_micros(story_id=story_id, stage="write")),
+        "cost_usd": to_usd(db.spend_micros(owner, story_id=story_id, stage="write")),
     }
 
 
 @app.get("/api/stories/{story_id}")
-def get_story(story_id: str, version: int | None = None):
-    st = db.get_story(story_id)
+def get_story(story_id: str, me: Me, version: int | None = None):
+    st = db.get_story(me.id, story_id)
     if st is None:
         raise HTTPException(404, "story not found")
-    row = db.get_version(story_id, version or st.version) if st.version else None
-    jobs = [job_dict(j) for j in db.story_jobs(story_id, limit=30)]
+    row = db.get_version(me.id, story_id, version or st.version) if st.version else None
+    jobs = [job_dict(j) for j in db.story_jobs(me.id, story_id, limit=30)]
     versions = [
         {"version": v.version, "note": v.note, "created_at": v.created_at.isoformat()}
-        for v in db.story_versions(story_id)
+        for v in db.story_versions(me.id, story_id)
     ]
     # Validated, so a storyboard saved before a field existed comes back with its default.
     sb = Storyboard.model_validate(row.storyboard) if row else None
-    board = _pipeline(story_id).peek(sb) if sb else None
+    board = _pipeline(me.id, story_id).peek(sb) if sb else None
     films = [j for j in jobs if j["kind"] == "render" and j["status"] == "done"]
     return {
         "story": story_dict(st),
@@ -301,23 +303,24 @@ def get_story(story_id: str, version: int | None = None):
         "jobs": jobs,
         "versions": versions,
         "film": films[0] if films else None,
-        "writer": writer_dict(story_id, sb),
+        "writer": writer_dict(me.id, story_id, sb),
         "budget": budget_dict(st),
     }
 
 
 def budget_dict(st: Story) -> dict:
-    """The story's budget (its own, or the default from Settings) and what it has spent."""
+    """The story's budget (its own, or its owner's default from Settings) and what it has spent."""
+    default_usd = prefs.effective(cfg, db, st.owner_id).defaults.budget_usd
     return {
-        "usd": to_usd(db.budget_micros(st.id, prefs.effective(cfg, db).defaults.budget_usd)),
+        "usd": to_usd(db.budget_micros(st.owner_id, st.id, default_usd)),
         "default": st.budget_micros is None,
-        "spent_usd": to_usd(db.spend_micros(story_id=st.id)),
+        "spent_usd": to_usd(db.spend_micros(st.owner_id, story_id=st.id)),
     }
 
 
 @app.get("/api/stories/{story_id}/estimate")
-def get_estimate(story_id: str, kind: Kind = "render", version: int | None = None):
-    return dollars(_quote(story_id, version, kind))
+def get_estimate(story_id: str, me: Me, kind: Kind = "render", version: int | None = None):
+    return dollars(_quote(me.id, story_id, version, kind))
 
 
 class BudgetBody(BaseModel):
@@ -325,8 +328,8 @@ class BudgetBody(BaseModel):
 
 
 @app.put("/api/stories/{story_id}/budget")
-def set_budget(story_id: str, body: BudgetBody):
-    st = db.set_budget(story_id, None if body.usd is None else to_micros(str(body.usd)))
+def set_budget(story_id: str, body: BudgetBody, me: Me):
+    st = db.set_budget(me.id, story_id, None if body.usd is None else to_micros(str(body.usd)))
     if st is None:
         raise HTTPException(404, "story not found")
     return budget_dict(st)
@@ -339,31 +342,31 @@ class SaveStory(BaseModel):
 
 
 @app.put("/api/stories/{story_id}")
-def save_story(story_id: str, body: SaveStory):
+def save_story(story_id: str, body: SaveStory, me: Me):
     body.storyboard.renumber()
     try:
-        st, row = db.save_edit(story_id, body.storyboard.model_dump(), body.base_version, body.note)
+        st, row = db.save_edit(me.id, story_id, body.storyboard.model_dump(), body.base_version, body.note)
     except KeyError:
         raise HTTPException(404, "story not found") from None
     return {"story": story_dict(st), "version": row.version}
 
 
 @app.delete("/api/stories/{story_id}", status_code=204)
-def delete_story(story_id: str):
-    for job_id in db.active_jobs(story_id):
-        runner.cancel(job_id)
-    if not db.delete_story(story_id):
+def delete_story(story_id: str, me: Me):
+    for job_id in db.active_jobs(me.id, story_id):
+        runner.cancel(me.id, job_id)
+    if not db.delete_story(me.id, story_id):
         raise HTTPException(404, "story not found")
 
 
 @app.post("/api/stories/{story_id}/scenes/{n}/rewrite")
-def rewrite(story_id: str, n: int, instruction: str = Body(..., embed=True)):
-    st, _ = _get(story_id)
-    return _enqueue(story_id, "rewrite", st.version, {"n": n, "instruction": instruction})
+def rewrite(story_id: str, n: int, me: Me, instruction: str = Body(..., embed=True)):
+    st, _ = _get(me.id, story_id)
+    return _enqueue(me.id, story_id, "rewrite", st.version, {"n": n, "instruction": instruction})
 
 
 @app.post("/api/stories/{story_id}/scenes/{n}/reroll")
-def reroll(story_id: str, n: int):
+def reroll(story_id: str, n: int, me: Me):
     """A new seed for one scene's picture, then redraw it (everything else comes from the cache)."""
 
     def change(sb: Storyboard):
@@ -372,13 +375,13 @@ def reroll(story_id: str, n: int):
             raise HTTPException(404, f"no scene {n}")
         sc.seed = next_seed(sb.scene_seed(sc))
 
-    _get(story_id)
-    version = db.change_story(story_id, change, f"re-rolled scene {n}")
-    return {"version": version, "job": _enqueue(story_id, "board", version)}
+    _get(me.id, story_id)
+    version = db.change_story(me.id, story_id, change, f"re-rolled scene {n}")
+    return {"version": version, "job": _enqueue(me.id, story_id, "board", version)}
 
 
 @app.post("/api/stories/{story_id}/scenes/{n}/retake")
-def retake(story_id: str, n: int):
+def retake(story_id: str, n: int, me: Me):
     """A new take of one scene's video, then render (every other step comes from the cache)."""
 
     def change(sb: Storyboard):
@@ -387,57 +390,64 @@ def retake(story_id: str, n: int):
             raise HTTPException(404, f"no video scene {n}")
         sc.video_seed = next_seed(sb.video_seed(sc))
 
-    _get(story_id)
-    version = db.change_story(story_id, change, f"new take of scene {n}")
-    return {"version": version, "job": _enqueue(story_id, "render", version)}
+    _get(me.id, story_id)
+    version = db.change_story(me.id, story_id, change, f"new take of scene {n}")
+    return {"version": version, "job": _enqueue(me.id, story_id, "render", version)}
 
 
 @app.post("/api/stories/{story_id}/cast/reroll")
-def reroll_cast(story_id: str):
+def reroll_cast(story_id: str, me: Me):
     def change(sb: Storyboard):
         sb.seed = next_seed(sb.seed)
 
-    _get(story_id)
-    version = db.change_story(story_id, change, "re-rolled the cast sheet")
-    return {"version": version, "job": _enqueue(story_id, "cast", version)}
+    _get(me.id, story_id)
+    version = db.change_story(me.id, story_id, change, "re-rolled the cast sheet")
+    return {"version": version, "job": _enqueue(me.id, story_id, "cast", version)}
 
 
 @app.post("/api/stories/{story_id}/{kind}")
-def run_stage(story_id: str, kind: str, version: int | None = None):
+def run_stage(story_id: str, kind: str, me: Me, version: int | None = None):
     if kind not in ("cast", "board", "render"):
         raise HTTPException(404, "unknown action")
-    _, row = _get(story_id, version)
-    return _enqueue(story_id, kind, row.version)
+    _, row = _get(me.id, story_id, version)
+    return _enqueue(me.id, story_id, kind, row.version)
 
 
 # ---------------------------------------------------------------------------------- jobs
 @app.get("/api/jobs")
-def list_jobs(active: bool = False):
-    return [job_dict(j) for j in db.jobs(active, limit=50)]
+def list_jobs(me: Me, active: bool = False):
+    return [job_dict(j) for j in db.jobs(me.id, active, limit=50)]
+
+
+def _job(owner: str, job_id: str) -> Job:
+    j = db.get_job(owner, job_id)
+    if j is None:
+        raise HTTPException(404, "job not found")
+    return j
 
 
 @app.get("/api/jobs/{job_id}")
-def get_job(job_id: str):
-    j = db.get_job(job_id)
-    if j is None:
-        raise HTTPException(404, "job not found")
-    return job_dict(j)
+def get_job(job_id: str, me: Me):
+    return job_dict(_job(me.id, job_id))
 
 
 @app.post("/api/jobs/{job_id}/cancel")
-def cancel_job(job_id: str):
-    return {"cancelled": runner.cancel(job_id)}
+def cancel_job(job_id: str, me: Me):
+    _job(me.id, job_id)
+    return {"cancelled": runner.cancel(me.id, job_id)}
 
 
 @app.get("/api/jobs/{job_id}/events")
-async def job_events(job_id: str, request: Request):
+async def job_events(job_id: str, request: Request, me: Me):
+    """The job's snapshots as they change, to its end. Another user's job is `gone`, as a deleted one is."""
+
     async def stream():
         last, idle = None, 0
         while True:
             if await request.is_disconnected():
                 return
             # Off the event loop: over the network to Postgres, a query would hold up every request.
-            j = await asyncio.to_thread(db.get_job, job_id)
+            j = await asyncio.to_thread(db.get_job, me.id, job_id)
             snap = job_dict(j) if j else None
             if snap is None:
                 yield "event: gone\ndata: {}\n\n"
@@ -463,14 +473,16 @@ async def job_events(job_id: str, request: Request):
 
 # ---------------------------------------------------------------------------------- assets & voices
 @app.get("/api/assets/{asset}")
-async def get_asset(asset: str, download: str | None = None, w: int | None = Query(None, gt=0)):
-    """A stored file; with `w`, a picture as a smaller JPEG (`Pipeline.thumbnail`)."""
+async def get_asset(asset: str, me: Me, download: str | None = None, w: int | None = Query(None, gt=0)):
+    """One of the user's files, or one everyone shares (a voice's sample); with `w`, a picture as a
+    smaller JPEG (`Pipeline.thumbnail`). Another user's file is not found, as a missing one is."""
     if not ASSET.match(asset):
         raise HTTPException(400, "bad asset id")
-    pipeline = Pipeline(cfg)
-    path = pipeline.store.path(asset)
-    if not path.is_file():
+    stores = (Pipeline(cfg, owner=me.id), Pipeline(cfg, owner=me.id, shared=True))
+    pipeline = next((p for p in stores if p.store.path(asset).is_file()), None)
+    if pipeline is None:
         raise HTTPException(404, "asset not found")
+    path = pipeline.store.path(asset)
     # An asset never changes under its name; a thumbnail can, when THUMBNAIL does, so it's checked daily.
     headers = {"Cache-Control": "public, max-age=31536000, immutable"}
     if w is not None:
@@ -496,11 +508,11 @@ async def get_asset(asset: str, download: str | None = None, w: int | None = Que
 
 
 @app.get("/api/voices/catalog")
-def voice_catalog(language: str = "en", tts: str = ""):
+def voice_catalog(me: Me, language: str = "en", tts: str = ""):
     """The voices a narration model offers, each with its sample if one was made."""
-    eff = prefs.effective(cfg, db)
+    eff = prefs.effective(cfg, db, me.id)
     try:
-        return engines.voices(eff, db, Store(eff.library), tts or eff.defaults.tts, language)
+        return engines.voices(eff, db, Store(eff.library_for(None)), tts or eff.defaults.tts, language)
     except ValueError as e:
         raise HTTPException(422, str(e)) from None
 
@@ -512,23 +524,24 @@ class SampleBody(BaseModel):
 
 
 @app.post("/api/voices/sample")
-def voice_sample(body: SampleBody):
-    """A voice's sample line: at once when it was made before, else a job in the fast lane (seconds)."""
+def voice_sample(body: SampleBody, me: Me):
+    """A voice's sample line: at once when it was made before, else a job in the fast lane (seconds).
+    Samples are shared: the voice sounds the same to everyone."""
     if body.language not in LANGUAGES:
         raise HTTPException(422, f"no sample line in '{body.language}'")
-    eff = prefs.effective(cfg, db)
+    eff = prefs.effective(cfg, db, me.id)
     model = body.tts or eff.defaults.tts
     try:
         eng = engines.sampler(eff, db, model, body.voice, body.language)
     except (FileNotFoundError, ValueError) as e:
         raise HTTPException(422, str(e)) from None
-    if audio := engines.cached_sample(Store(eff.library), eng, body.language):
+    if audio := engines.cached_sample(Store(eff.library_for(None)), eng, body.language):
         return {"audio": audio, "job": None}
     params = {"tts": model, "voice": body.voice, "language": body.language}
-    return {"audio": None, "job": job_dict(runner.enqueue(None, "sample", None, params))}
+    return {"audio": None, "job": job_dict(runner.enqueue(me.id, None, "sample", None, params))}
 
 
-@app.get("/api/voices/{name}/audio")
+@app.get("/api/voices/{name}/audio", dependencies=[Depends(current_user)])
 def voice_audio(name: str):
     try:
         v = find_voice(cfg, name)

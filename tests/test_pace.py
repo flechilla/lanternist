@@ -6,6 +6,7 @@ import pytest
 
 from lanternist import pace
 from lanternist.check import CHECKS_AT_ONCE
+from lanternist.db import LOCAL
 from lanternist.jobs import Progress
 from lanternist.pace import Expect, Seen
 from lanternist.pipeline import Event, Pipeline
@@ -92,7 +93,7 @@ def test_the_plan_prices_time_from_the_estimate_and_the_history(fake_cfg, db):
 
 
 async def test_the_snapshot_says_how_long_is_left_and_where_the_time_goes(fake_cfg, db, make_story):
-    job = db.add_job(None, "render", None, {}, None)
+    job = db.add_job(LOCAL, None, "render", None, {}, None)
     progress = Progress(db, job.id)
     progress.expect = {"narration": Expect(2, 3.0, basis="history"), "mix": Expect(1, 30.0)}
     await Pipeline(fake_cfg, progress.stage, db=db, job_id=job.id).narrate(make_story(("still", "still")))

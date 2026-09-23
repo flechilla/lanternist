@@ -31,7 +31,7 @@ from pathlib import Path
 import httpx
 
 from ..config import Settings
-from ..db import Database, now, to_micros
+from ..db import LOCAL, Database, now, to_micros
 from ..keys import get_key, redact
 from . import ProviderError, backoff, retry_after, transport
 
@@ -53,6 +53,7 @@ class RunSpec:
 
     stage: str
     model_id: str
+    owner: str = LOCAL
     story_id: str | None = None
     job_id: str | None = None
     scene: int | None = None
@@ -112,6 +113,14 @@ class Fal:
         self._transport = transport_ or transport(cfg)
         self._token: dict | None = None
         self.poll_start = 0.05 if cfg.fake_engines or transport_ else 1.0
+
+    @property
+    def database(self) -> Database:
+        """Where requests and uploads are written down: a client made without a database checks a key
+        and reads prices, and runs nothing."""
+        if self.db is None:
+            raise FalError("this fal client has no database to log requests in: make it with one")
+        return self.db
 
     # plumbing ---------------------------------------------------------------------------------
     def client(self, timeout: float = 60) -> httpx.AsyncClient:
@@ -195,7 +204,7 @@ class Fal:
             if status == "IN_PROGRESS" and not running:
                 running = True
                 if run_id:
-                    self.db.update_run(run_id, status="running")
+                    self.database.update_run(run_id, status="running")
             if on_status:
                 on_status(status or "?", d)
             if time.monotonic() > deadline:
@@ -237,7 +246,7 @@ class Fal:
                 if e.type == "timeout":
                     await self._cancel_run(client, run_id, urls, status="failed", error=str(e))
                 else:
-                    self.db.update_run(
+                    self.database.update_run(
                         run_id,
                         status="failed",
                         error=str(e),
@@ -252,8 +261,8 @@ class Fal:
                 if units is not None and spec.unit_price is not None
                 else None
             )
-            run = self.db.get_run(run_id)
-            meta = dict(run.meta or {}) | {
+            run = self.database.get_run(run_id)
+            meta = dict((run.meta if run else None) or {}) | {
                 "billable_units_from": "result"
                 if _billable_units(r) is not None
                 else "status"
@@ -261,7 +270,7 @@ class Fal:
                 else None,
                 "inference_time": (final.json().get("metrics") or {}).get("inference_time"),
             }
-            self.db.update_run(
+            self.database.update_run(
                 run_id,
                 status="done",
                 units=units,
@@ -274,11 +283,11 @@ class Fal:
             return FalResult(data, request_id, run_id, units, cost, resumed)
 
     async def _start(self, client, endpoint, arguments, spec, ttl_hours) -> tuple[int, dict, str, bool]:
-        if spec.step_key and (open_ := self.db.open_run(spec.step_key, "fal")):
-            if open_.urls and now() - open_.created_at < RESUME_WINDOW:
+        if spec.step_key and (open_ := self.database.open_run(spec.owner, spec.step_key, "fal")):
+            if open_.urls and open_.request_id and now() - open_.created_at < RESUME_WINDOW:
                 log.info("resuming fal request %s for step %s", open_.request_id, spec.step_key[:12])
                 return open_.id, open_.urls, open_.request_id, True
-            self.db.update_run(
+            self.database.update_run(
                 open_.id,
                 status="failed",
                 error="expired before a restart could pick it up",
@@ -286,7 +295,8 @@ class Fal:
             )
         sub = await self.submit(client, endpoint, arguments, ttl_hours)
         urls = {k: sub[k] for k in ("status", "response", "cancel")}
-        run_id = self.db.start_run(
+        run_id = self.database.start_run(
+            owner_id=spec.owner,
             story_id=spec.story_id,
             job_id=spec.job_id,
             scene=spec.scene,
@@ -311,7 +321,7 @@ class Fal:
             await self.cancel(client, urls)
         except httpx.HTTPError as e:
             log.warning("couldn't cancel the fal request: %s", e)
-        self.db.update_run(run_id, status=status, error=error, finished_at=now())
+        self.database.update_run(run_id, status=status, error=error, finished_at=now())
 
     # files ------------------------------------------------------------------------------------
     async def _storage_token(self, client: httpx.AsyncClient) -> dict:
@@ -337,7 +347,7 @@ class Fal:
     async def upload(self, path: Path, asset: str | None = None, ttl_hours: float | None = None) -> str:
         """Put a local file on fal's storage; returns its URL. Reused while it has 10+ minutes left."""
         asset = asset or path.name
-        if url := self.db.upload_url("fal", asset):
+        if url := self.database.upload_url("fal", asset):
             return url
         hours = ttl_hours or self.cfg.fal.media_ttl_hours
         ctype = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
@@ -377,7 +387,7 @@ class Fal:
                     client, "PUT", d["upload_url"], "upload", content=data, headers={"Content-Type": ctype}
                 )
                 url = d["file_url"]
-        self.db.save_upload("fal", asset, url, now() + timedelta(hours=hours))
+        self.database.save_upload("fal", asset, url, now() + timedelta(hours=hours))
         return url
 
     async def download(self, url: str, dest: Path) -> Path:

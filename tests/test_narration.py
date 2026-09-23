@@ -6,7 +6,7 @@ import wave
 import pytest
 
 from lanternist import registry, text, timing
-from lanternist.db import Job
+from lanternist.db import LOCAL, Job
 from lanternist.engines import catalog
 from lanternist.engines.fal_tts import FalTts, VoiceError, join_speech
 from lanternist.jobs import Runner
@@ -236,11 +236,11 @@ async def test_a_sample_doesnt_wait_behind_a_render(cfg, db, until):
     runner.start()
     try:
         with db.session() as s:
-            s.add(Job(id="r1", story_id=None, kind="render", params={}, progress={}))
+            s.add(Job(owner_id=LOCAL, id="r1", story_id=None, kind="render", params={}, progress={}))
             s.commit()
         runner._wake(False)
         await until(lambda: runner.current is not None)
-        sample = runner.enqueue(None, "sample", None, {"voice": "Aria"})
+        sample = runner.enqueue(LOCAL, None, "sample", None, {"voice": "Aria"})
         await until(lambda: db.update_job(sample.id).status == "done")
         assert runner.current is not None and runner.current[0] == "r1"  # the render is still going
     finally:

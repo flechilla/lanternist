@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from lanternist import llm, providers
 from lanternist.config import Paths, Settings
-from lanternist.db import Job, StepRun, Story, to_micros, to_usd
+from lanternist.db import LOCAL, Job, StepRun, Story, to_micros, to_usd
 from lanternist.llm import Calls, LLMError, pick_effort, strict_schema
 from lanternist.providers.fake import FAKE_STORY
 from lanternist.providers.openrouter import OpenRouterError
@@ -311,7 +311,7 @@ async def test_a_length_stop_that_fails_still_records_what_it_cost(
     assert [c["max_tokens"] for c in world.openrouter.chats] == max_tokens
     (run,) = write_runs(db)
     assert (run.status, run.cost_micros, run.cost_source) == ("failed", paid, "reported")
-    assert db.spend_micros() == paid
+    assert db.spend_micros(LOCAL) == paid
 
 
 async def test_failed_calls_are_logged(cfg, db, world, leases):
@@ -370,14 +370,16 @@ async def test_the_default_writer_is_listed_even_when_nobody_offers_it(cfg, db, 
 
 async def test_measured_tokens_replace_the_typical_ones(cfg, db, world, leases):
     with db.session() as s:
-        st = Story(slug="s", title="S", language="en", version=0)
+        st = Story(owner_id=LOCAL, slug="s", title="S", language="en", version=0)
         s.add(st)
         s.flush()
-        job = Job(story_id=st.id, kind="write", params={"minutes": 0.5}, progress={}, status="done")
+        job = Job(
+            owner_id=LOCAL, story_id=st.id, kind="write", params={"minutes": 0.5}, progress={}, status="done"
+        )
         s.add(job)
         s.commit()
         sid, jid = st.id, job.id
-    await write_storyboard(cfg, brief(writer="openrouter/fake/frontier"), calls=Calls(db, sid, jid))
+    await write_storyboard(cfg, brief(writer="openrouter/fake/frontier"), calls=Calls(db, LOCAL, sid, jid))
     with db.session() as s:
         runs = s.query(StepRun).filter_by(job_id=jid).all()
         tin, tout = sum(r.meta["tokens_in"] for r in runs), sum(r.meta["tokens_out"] for r in runs)

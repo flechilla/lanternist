@@ -201,12 +201,12 @@ One pull request, `feat/accounts`, in four commits.
 
 ### Commit 3: owners (≈ 1.5 days)
 
-- [ ] Migration 0004 (`/add-migration`), and `users` and `sessions` in `db.py`.
-- [ ] `owner` on every owned `Database` method (`/add-query`), `db.SHARED`, and the method test.
-- [ ] `auth.current_user` for the local user and the fake header. Every route that touches owned rows takes it.
-- [ ] The runner and pipeline carry the owner. `library_for`, the per-user store, shared samples and the asset route.
-- [ ] The cross-user and two-user tests. The migration tests on SQLite and Postgres.
-- [ ] CLAUDE.md invariant 10: "Every row a user owns is read through their id, in `db.py`." The database and API rules say so too.
+- [x] Migration 0004 (`/add-migration`), and `users` and `sessions` in `db.py`.
+- [x] `owner` on every owned `Database` method (`/add-query`), `db.SHARED`, and the method test.
+- [x] `auth.current_user` for the local user and the fake header. Every route that touches owned rows takes it.
+- [x] The runner and pipeline carry the owner. `library_for`, the per-user store, shared samples and the asset route.
+- [x] The cross-user and two-user tests. The migration tests on SQLite and Postgres.
+- [x] CLAUDE.md invariant 10: "Every row a user owns is read through their id, in `db.py`." The database and API rules say so too.
 
 ### Commit 4: sign-in (≈ 1 day)
 
@@ -222,7 +222,12 @@ One pull request, `feat/accounts`, in four commits.
 
 ## 3. Where the build departed from the design
 
-(Filled in as it's built.)
+- **The progress stream of another user's job says `gone`**, with a 200, as it does for a job that was deleted, rather than a 404. It's still the same answer as for a job that doesn't exist, and the web app already closes the stream on it. The cross-user test expects exactly that.
+- **A voice sample's job belongs to whoever asked**, so they can follow it, and its step runs are theirs too. Only its files go to the shared store.
+- **A hosted render doesn't copy its film to `films/`**, and its result has no `path`: a path on the server means nothing to the person, who downloads the film from the page.
+- **`providers/fal.py` passes mypy now**, and has left the exempt list in `pyproject.toml`, since this work touched it (CLAUDE.md). A fal client made without a database refuses to log a request, with a sentence, rather than failing on `None`.
+- **Settings errors read as sentences.** A validator's own words come back as written, rather than as pydantic's `: Value error, …`.
+- **The `wait` test fixture asks the test's own app.** It used to ask for `client`, and a hosted test that used it restarted the app as the local edition in the middle. It also takes the headers of the user whose job it is.
 
 ## 4. Questions, answered on 23 Sep 2026
 

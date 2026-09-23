@@ -1,6 +1,7 @@
 """The data: migrations, where queries live and what they cost, step runs, prices, settings, uploads,
 keys and the registry."""
 
+import inspect
 import re
 import sqlite3
 import stat
@@ -11,13 +12,24 @@ from pathlib import Path
 
 import pytest
 from alembic import command
-from sqlalchemy import event, make_url
+from sqlalchemy import event, make_url, text
 from typer.testing import CliRunner
 
 import lanternist
 from lanternist import cli, config, keys, prefs, registry
 from lanternist.config import Defaults, Paths, Settings
-from lanternist.db import Database, DatabaseError, Job, StepRun, Story, now, to_micros, to_usd
+from lanternist.db import (
+    LOCAL,
+    SHARED,
+    Database,
+    DatabaseError,
+    Job,
+    StepRun,
+    Story,
+    now,
+    to_micros,
+    to_usd,
+)
 from lanternist.engines import local as local_engines
 
 REAL_DB = Path.home() / "Lanternist" / "lanternist.db"
@@ -78,7 +90,7 @@ def test_migration_0003_keeps_jobs_and_allows_ones_without_a_story(tmp_path):
     assert counts(tmp_path / "old.db") == before
     with d.session() as s:
         assert s.get(Job, "j1").story_id == "s1"
-        s.add(Job(id="j2", story_id=None, kind="sample", params={}, progress={}))
+        s.add(Job(owner_id=LOCAL, id="j2", story_id=None, kind="sample", params={}, progress={}))
         s.commit()
     command.downgrade(d.alembic_config(), "0002")
     assert counts(tmp_path / "old.db") == before  # the sample went; the story's job stayed
@@ -91,6 +103,65 @@ def test_models_match_the_migrations(db):
     command.upgrade(db.alembic_config(), "head")
 
 
+def owners(db: Database) -> dict[str, list]:
+    """Who owns each row of the owned tables."""
+    with db.engine.connect() as c:
+        return {
+            t: [row[0] for row in c.execute(text(f"select owner_id from {t} order by owner_id"))]
+            for t in ("stories", "jobs", "step_runs", "settings")
+        }
+
+
+def test_migration_0004_gives_every_row_to_the_local_user(db):
+    cfg = db.alembic_config()
+    command.downgrade(cfg, "0003")
+    with db.engine.begin() as c:
+        c.execute(
+            text(
+                "insert into stories (id, slug, title, language, version, created_at, updated_at) "
+                "values ('s1', 'luna', 'Luna', 'es', 1, '2026-09-01', '2026-09-01')"
+            )
+        )
+        c.execute(
+            text(
+                "insert into story_versions (story_id, version, storyboard, note, created_at) "
+                "values ('s1', 1, '{}', 'written', '2026-09-01')"
+            )
+        )
+        c.execute(
+            text(
+                "insert into jobs (id, story_id, version, kind, status, params, progress, created_at) "
+                "values ('j1', 's1', 1, 'render', 'done', '{}', '{}', '2026-09-01')"
+            )
+        )
+        c.execute(
+            text(
+                "insert into step_runs (story_id, job_id, stage, model_id, provider, status, cost_source, "
+                "meta, cost_micros, created_at) "
+                "values ('s1', 'j1', 'motion', 'fal/x', 'fal', 'done', 'computed', '{}', 420000, '2026-09-01')"
+            )
+        )
+        c.execute(
+            text(
+                "insert into settings (key, value, updated_at) values ('defaults.budget_usd', '2.5', '2026-09-01')"
+            )
+        )
+    command.upgrade(cfg, "head")
+    assert owners(db) == {t: [LOCAL] for t in ("stories", "jobs", "step_runs", "settings")}
+    assert db.user(LOCAL).auth_subject == LOCAL
+    assert [v.version for v in db.story_versions(LOCAL, "s1")] == [1]
+    assert db.spend_micros(LOCAL, story_id="s1") == 420_000
+    assert db.saved_settings(LOCAL) == {"defaults.budget_usd": 2.5}
+    command.downgrade(cfg, "0003")
+    with db.engine.connect() as c:
+        kept = {
+            t: c.execute(text(f"select count(*) from {t}")).scalar()
+            for t in ("stories", "jobs", "step_runs", "settings")
+        }
+    assert kept == {"stories": 1, "jobs": 1, "step_runs": 1, "settings": 1}
+    command.upgrade(cfg, "head")
+
+
 @pytest.mark.sqlite_only
 @pytest.mark.skipif(not REAL_DB.is_file(), reason="no library database on this machine")
 def test_migration_on_a_copy_of_the_real_library(tmp_path):
@@ -101,17 +172,20 @@ def test_migration_on_a_copy_of_the_real_library(tmp_path):
     src.close()
     dst.close()
     before = counts(copy)
-    Database(f"sqlite:///{copy}").migrate()
+    migrated = Database(f"sqlite:///{copy}")
+    migrated.migrate()
     assert counts(copy) == before
+    assert all(set(rows) <= {LOCAL} for rows in owners(migrated).values())  # step runs: every one, too
 
 
 def test_deleting_a_story_keeps_what_it_cost(db):
     with db.session() as s:
-        s.add(Story(id="s1", slug="a", title="A", version=0))
+        s.add(Story(owner_id=LOCAL, id="s1", slug="a", title="A", version=0))
         s.flush()
-        s.add(Job(id="j1", story_id="s1", kind="render", params={}, progress={}))
+        s.add(Job(owner_id=LOCAL, id="j1", story_id="s1", kind="render", params={}, progress={}))
         s.commit()
     db.start_run(
+        owner_id=LOCAL,
         story_id="s1",
         job_id="j1",
         stage="motion",
@@ -121,25 +195,25 @@ def test_deleting_a_story_keeps_what_it_cost(db):
         cost_micros=to_micros("0.42"),
         cost_source="computed",
     )
-    assert db.spend_micros(story_id="s1") == 420_000
-    assert db.delete_story("s1")
+    assert db.spend_micros(LOCAL, story_id="s1") == 420_000
+    assert db.delete_story(LOCAL, "s1")
     with db.session() as s:
         run = s.query(StepRun).one()
         assert run.story_id is None and run.job_id is None and run.cost_micros == 420_000
-    assert db.spend_micros() == 420_000
+    assert db.spend_micros(LOCAL) == 420_000
 
 
 def test_deleting_a_story_deletes_its_versions_and_jobs(db):
-    story = db.create_story("A", "en", {"title": "A"})
-    other = db.create_story("B", "en", {"title": "B"})
-    db.add_job(story.id, "render", 1, {}, None)
-    kept = db.add_job(other.id, "render", 1, {}, None)
-    assert db.delete_story(story.id)
-    assert not db.delete_story(story.id)
-    assert db.get_story(story.id) is None
-    assert db.story_versions(story.id) == [] and db.story_jobs(story.id, limit=10) == []
-    assert [j.id for j in db.jobs(active=False, limit=10)] == [kept.id]
-    assert [v.version for v in db.story_versions(other.id)] == [1]
+    story = db.create_story(LOCAL, "A", "en", {"title": "A"})
+    other = db.create_story(LOCAL, "B", "en", {"title": "B"})
+    db.add_job(LOCAL, story.id, "render", 1, {}, None)
+    kept = db.add_job(LOCAL, other.id, "render", 1, {}, None)
+    assert db.delete_story(LOCAL, story.id)
+    assert not db.delete_story(LOCAL, story.id)
+    assert db.get_story(LOCAL, story.id) is None
+    assert db.story_versions(LOCAL, story.id) == [] and db.story_jobs(LOCAL, story.id, limit=10) == []
+    assert [j.id for j in db.jobs(LOCAL, active=False, limit=10)] == [kept.id]
+    assert [v.version for v in db.story_versions(LOCAL, other.id)] == [1]
 
 
 # ------------------------------------------------------------------------------------ queries
@@ -156,6 +230,30 @@ def test_every_query_lives_in_db_py():
         or re.search(r"\b\w*(db|database)\w*\.(session\(|engine\b)", line)
     ]
     assert found == [], "move these into a Database method in db.py"
+
+
+def test_every_database_method_takes_the_owner_or_is_shared():
+    """A method that reads or changes a row a user owns takes the owner first, and filters on it. The
+    others are listed in db.SHARED, with the reason; a method can't be both."""
+    for name, method in inspect.getmembers(Database, inspect.isfunction):
+        if not name.startswith("_"):
+            first = list(inspect.signature(method).parameters)[1:2]
+            assert (first == ["owner"]) != (name in SHARED), name
+
+
+def test_a_restart_resumes_only_its_own_users_request(db):
+    bob = db.sign_in("fake:bob", None).id
+    db.start_run(
+        owner_id=LOCAL, stage="motion", model_id="m", provider="fal", status="submitted", step_key="k"
+    )
+    assert db.open_run(LOCAL, "k", "fal") is not None
+    assert db.open_run(bob, "k", "fal") is None  # the same step of bob's is his to pay for
+
+
+def test_signing_in_makes_a_user_once_and_keeps_their_email_current(db):
+    ann = db.sign_in("user_01ANN", "ann@example.com")
+    assert db.sign_in("user_01ANN", "ann@new.example.com").id == ann.id
+    assert db.user(ann.id).email == "ann@new.example.com" and ann.id != LOCAL
 
 
 @contextmanager
@@ -175,29 +273,29 @@ def statements(db: Database) -> Iterator[list[str]]:
 
 def test_library_queries_do_not_grow_with_stories(db):
     def add_story(n: int) -> None:
-        story = db.create_story(f"Story {n}", "en", {"title": f"Story {n}"})
-        board = db.add_job(story.id, "board", 1, {}, None)
+        story = db.create_story(LOCAL, f"Story {n}", "en", {"title": f"Story {n}"})
+        board = db.add_job(LOCAL, story.id, "board", 1, {}, None)
         db.update_job(board.id, status="done", finished_at=now(), result={"poster": f"{n}.png"})
-        db.add_job(story.id, "render", 1, {}, None)
+        db.add_job(LOCAL, story.id, "render", 1, {}, None)
 
     add_story(0)
-    db.library()  # opens the pool's first connection, which may ask the server a few things
+    db.library(LOCAL)  # opens the pool's first connection, which may ask the server a few things
     with statements(db) as one:
-        db.library()
+        db.library(LOCAL)
     for n in range(1, 20):
         add_story(n)
     with statements(db) as twenty:
-        rows = db.library()
+        rows = db.library(LOCAL)
     assert len(rows) == 20 and all(r.drawn and r.active == 1 for r in rows)
     assert len(one) == len(twenty) == 4
 
 
 def test_the_library_shows_the_latest_film_and_the_latest_picture(db):
-    story = db.create_story("A", "en", {"title": "A"})
-    empty = db.create_story("B", "en", {"title": "B"})
+    story = db.create_story(LOCAL, "A", "en", {"title": "A"})
+    empty = db.create_story(LOCAL, "B", "en", {"title": "B"})
 
     def ended(kind: str, minutes_ago: int, status: str = "done") -> str:
-        job = db.add_job(story.id, kind, 1, {}, None)
+        job = db.add_job(LOCAL, story.id, kind, 1, {}, None)
         db.update_job(job.id, status=status, finished_at=now() - timedelta(minutes=minutes_ago))
         return job.id
 
@@ -206,7 +304,7 @@ def test_the_library_shows_the_latest_film_and_the_latest_picture(db):
     board = ended("board", 20)
     ended("cast", 10)  # a cast sheet is no poster
     ended("render", 5, status="failed")
-    rows = {r.story.id: r for r in db.library()}
+    rows = {r.story.id: r for r in db.library(LOCAL)}
     assert (rows[story.id].film.id, rows[story.id].drawn.id) == (film, board)
     assert (rows[empty.id].film, rows[empty.id].drawn, rows[empty.id].storyboard) == (
         None,
@@ -216,7 +314,7 @@ def test_the_library_shows_the_latest_film_and_the_latest_picture(db):
 
 
 def test_a_change_made_as_another_save_lands_is_applied_to_that_save(db, make_story):
-    story = db.create_story("Test", "en", make_story().model_dump())
+    story = db.create_story(LOCAL, "Test", "en", make_story().model_dump())
     edited = make_story()
     edited.title = "Edited"
     seen = []
@@ -224,12 +322,12 @@ def test_a_change_made_as_another_save_lands_is_applied_to_that_save(db, make_st
     def reroll_the_cast(sb) -> None:
         seen.append(sb.title)
         if len(seen) == 1:  # the editor saves version 2 while this change is being made
-            db.add_version(story.id, edited.model_dump(), note="edited")
+            db.add_version(LOCAL, story.id, edited.model_dump(), note="edited")
         sb.seed = 8
 
-    assert db.change_story(story.id, reroll_the_cast, "re-rolled the cast sheet") == 3
+    assert db.change_story(LOCAL, story.id, reroll_the_cast, "re-rolled the cast sheet") == 3
     assert seen == ["Test", "Edited"]
-    _, row = db.storyboard(story.id)
+    _, row = db.storyboard(LOCAL, story.id)
     assert (row.storyboard["title"], row.storyboard["seed"], row.note) == (
         "Edited",
         8,
@@ -252,12 +350,12 @@ def test_the_doctor_reports_a_database_url_it_cant_use_and_checks_the_rest(tmp_p
 
 
 def test_a_job_saving_a_version_as_an_edit_lands_saves_the_one_after_it(db, make_story, lands_first):
-    story = db.create_story("Test", "en", make_story().model_dump())
+    story = db.create_story(LOCAL, "Test", "en", make_story().model_dump())
     edited, rewritten = make_story(), make_story()
     edited.title, rewritten.title = "Edited", "Rewritten"
-    lands_first(db, lambda: db.save_edit(story.id, edited.model_dump(), 1, "edited"))
-    assert db.add_version(story.id, rewritten.model_dump(), note="rewrote scene 1") == 3
-    assert [(v.version, v.storyboard["title"]) for v in db.story_versions(story.id)] == [
+    lands_first(db, lambda: db.save_edit(LOCAL, story.id, edited.model_dump(), 1, "edited"))
+    assert db.add_version(LOCAL, story.id, rewritten.model_dump(), note="rewrote scene 1") == 3
+    assert [(v.version, v.storyboard["title"]) for v in db.story_versions(LOCAL, story.id)] == [
         (3, "Rewritten"),
         (2, "Edited"),
         (1, "Test"),
@@ -328,14 +426,13 @@ def test_uploads_are_reused_until_close_to_expiry(db):
 
 
 def test_open_run_finds_only_unfinished_requests(db):
-    db.start_run(stage="motion", model_id="m", provider="fal", status="done", step_key="k")
-    assert db.open_run("k", "fal") is None
-    rid = db.start_run(
-        stage="motion", model_id="m", provider="fal", status="submitted", step_key="k", urls={"status": "s"}
-    )
-    assert db.open_run("k", "fal").id == rid
+    run = {"owner_id": LOCAL, "stage": "motion", "model_id": "m", "provider": "fal", "step_key": "k"}
+    db.start_run(**run, status="done")
+    assert db.open_run(LOCAL, "k", "fal") is None
+    rid = db.start_run(**run, status="submitted", urls={"status": "s"})
+    assert db.open_run(LOCAL, "k", "fal").id == rid
     db.update_run(rid, status="running")
-    assert db.open_run("k", "fal").id == rid and db.open_run("k", "local") is None
+    assert db.open_run(LOCAL, "k", "fal").id == rid and db.open_run(LOCAL, "k", "local") is None
 
 
 # ------------------------------------------------------------------------------------ settings
@@ -344,17 +441,17 @@ def test_settings_precedence(tmp_path, db, monkeypatch):
     toml.write_text("[defaults]\nbudget_usd = 8.0\n")
     monkeypatch.setenv("LANTERNIST_CONFIG", str(toml))
     cfg = Settings(paths=Paths(library=tmp_path / "lib"), defaults=Defaults(budget_usd=8.0))
-    rows = {r["key"]: r for r in prefs.describe(cfg, db)}
+    rows = {r["key"]: r for r in prefs.describe(cfg, db, LOCAL)}
     assert rows["defaults.budget_usd"]["source"] == "file" and rows["defaults.budget_usd"]["value"] == 8.0
     assert rows["defaults.video"]["source"] == "default"
 
-    prefs.update(cfg, db, {"defaults.budget_usd": 3.5, "defaults.video": "fal/kling-v3-standard"})
-    eff = prefs.effective(cfg, db)
+    prefs.update(cfg, db, LOCAL, {"defaults.budget_usd": 3.5, "defaults.video": "fal/kling-v3-standard"})
+    eff = prefs.effective(cfg, db, LOCAL)
     assert eff.defaults.budget_usd == 3.5 and eff.defaults.video == "fal/kling-v3-standard"
-    assert {r["key"]: r["source"] for r in prefs.describe(cfg, db)}["defaults.budget_usd"] == "app"
+    assert {r["key"]: r["source"] for r in prefs.describe(cfg, db, LOCAL)}["defaults.budget_usd"] == "app"
 
-    prefs.update(cfg, db, {"defaults.budget_usd": None})
-    assert prefs.effective(cfg, db).defaults.budget_usd == 8.0
+    prefs.update(cfg, db, LOCAL, {"defaults.budget_usd": None})
+    assert prefs.effective(cfg, db, LOCAL).defaults.budget_usd == 8.0
 
 
 @pytest.mark.parametrize(
@@ -371,8 +468,8 @@ def test_settings_precedence(tmp_path, db, monkeypatch):
 def test_settings_are_validated(tmp_path, db, change, message):
     cfg = Settings(paths=Paths(library=tmp_path / "lib"))
     with pytest.raises(ValueError, match=message):
-        prefs.update(cfg, db, change)
-    assert db.saved_settings() == {}
+        prefs.update(cfg, db, LOCAL, change)
+    assert db.saved_settings(LOCAL) == {}
 
 
 # ------------------------------------------------------------------------------------ keys

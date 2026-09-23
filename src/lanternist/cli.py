@@ -56,22 +56,24 @@ def _db():
 
 
 def _effective():
+    """The settings the local user saved in the app, over lanternist.toml."""
+    from .db import LOCAL
     from .prefs import effective
 
     db = _db()
-    return effective(settings(), db), db
+    return effective(settings(), db, LOCAL), db
 
 
 @app.command()
 def doctor():
     """Check that every engine, model and tool a film needs is ready."""
-    from .db import DatabaseError
+    from .db import LOCAL, DatabaseError
     from .doctor import run_checks
     from .prefs import effective
 
     cfg = settings()
     with contextlib.suppress(DatabaseError):  # its row says why; the rest use lanternist.toml's settings
-        cfg = effective(cfg, _db())
+        cfg = effective(cfg, _db(), LOCAL)
     checks = asyncio.run(run_checks(cfg))
     for c in checks:
         print(f" {MARK[c.status]} {c.name:<9} {c.detail}")

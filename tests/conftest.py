@@ -17,8 +17,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine, create_engine, event, make_url, text
 
 from lanternist import config, providers
+from lanternist.auth import FAKE_USER
 from lanternist.config import Paths, Settings
-from lanternist.db import Database, Story
+from lanternist.db import LOCAL, Database, Story
 from lanternist.providers.fake import FakeWorld
 from lanternist.storyboard import CastMember, Line, Scene, Storyboard
 
@@ -151,7 +152,7 @@ def make_story():
 def story_row(db) -> str:
     """A story in the database, for pipelines that record spend and check its budget."""
     with db.session() as s:
-        s.add(Story(id="s1", slug="test", title="Test", version=1))
+        s.add(Story(id="s1", owner_id=LOCAL, slug="test", title="Test", version=1))
         s.commit()
     return "s1"
 
@@ -202,9 +203,11 @@ video = "fal/h3-max-turbo"
 """
 
 
-def _serve(tmp_path, voices, database_url, monkeypatch, head: str = "") -> Iterator[TestClient]:
+def _serve(
+    tmp_path, voices, database_url, monkeypatch, head: str = "", headers: dict | None = None
+) -> Iterator[TestClient]:
     """The app in fake mode on its own library and database, as `lanternist serve` would run it, with
-    `head` at the top of its lanternist.toml."""
+    `head` at the top of its lanternist.toml, and `headers` on every request."""
     toml = tmp_path / "lanternist.toml"
     toml.write_text(
         f'{head}[paths]\nlibrary = "{tmp_path / "lib"}"\nvoices = ["{voices}"]\n\n'
@@ -217,7 +220,7 @@ def _serve(tmp_path, voices, database_url, monkeypatch, head: str = "") -> Itera
     import lanternist.api.app as appmod
 
     appmod = importlib.reload(appmod)
-    with TestClient(appmod.app) as c:
+    with TestClient(appmod.app, headers=headers) as c:
         yield c
     appmod.db.close()
     config.settings.cache_clear()
@@ -231,8 +234,8 @@ def client(tmp_path, voices, database_url, monkeypatch):
 
 @pytest.fixture
 def hosted_client(tmp_path, voices, database_url, monkeypatch):
-    """The hosted edition."""
-    yield from _serve(tmp_path, voices, database_url, monkeypatch, HOSTED_TOML)
+    """The hosted edition, signed in as ann. A request with `headers={FAKE_USER: "bob"}` is bob's."""
+    yield from _serve(tmp_path, voices, database_url, monkeypatch, HOSTED_TOML, {FAKE_USER: "ann"})
 
 
 @pytest.fixture
@@ -241,10 +244,11 @@ def wait(request):
     test's own app, hosted or local: asking for the other would start that one in its place."""
     client = request.getfixturevalue("hosted_client" if "hosted_client" in request.fixturenames else "client")
 
-    def wait_for(job_id: str, timeout: float = 60) -> dict:
+    def wait_for(job_id: str, timeout: float = 60, headers: dict | None = None) -> dict:
+        """`headers`: whose job it is, in the hosted edition, when not the test client's own user."""
         deadline = time.time() + timeout
         while time.time() < deadline:
-            job = client.get(f"/api/jobs/{job_id}").json()
+            job = client.get(f"/api/jobs/{job_id}", headers=headers).json()
             if job["status"] in ("done", "failed", "cancelled"):
                 assert job["status"] == "done", job["error"]
                 return job

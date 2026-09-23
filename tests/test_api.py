@@ -2,6 +2,8 @@
 
 import json
 
+from lanternist.db import LOCAL
+
 
 def storyboard(n=3):
     return {
@@ -115,7 +117,9 @@ def test_two_saves_of_one_version_conflict(client, lands_first):
 
     sid = client.post("/api/stories", json={"storyboard": storyboard()}).json()["story"]["id"]
     sb = client.get(f"/api/stories/{sid}").json()["storyboard"]
-    lands_first(appmod.db, lambda: appmod.db.save_edit(sid, sb | {"title": "Saved first"}, 1, "other tab"))
+    lands_first(
+        appmod.db, lambda: appmod.db.save_edit(LOCAL, sid, sb | {"title": "Saved first"}, 1, "other tab")
+    )
     second = {"storyboard": sb | {"title": "Saved second"}, "base_version": 1}
     refused = client.put(f"/api/stories/{sid}", json=second)
     assert refused.status_code == 409 and "changed since version 1" in refused.json()["detail"]

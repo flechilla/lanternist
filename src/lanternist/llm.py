@@ -20,7 +20,7 @@ import httpx
 
 from . import keys
 from .config import Settings
-from .db import Database, now, to_micros, to_usd
+from .db import LOCAL, Database, now, to_micros, to_usd
 from .gpu import lease
 from .providers import transport
 from .providers.openrouter import OpenRouter as OpenRouterClient
@@ -76,6 +76,7 @@ class Calls:
     logged as step_runs rows."""
 
     db: Database | None = None
+    owner: str = LOCAL
     story_id: str | None = None
     job_id: str | None = None
     stage: str = "write"  # a key of pipeline.LABELS
@@ -85,6 +86,7 @@ class Calls:
         if self.db is None:
             return None
         return self.db.start_run(
+            owner_id=self.owner,
             story_id=self.story_id,
             job_id=self.job_id,
             stage=self.stage,

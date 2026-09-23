@@ -46,6 +46,7 @@ user's models and takes the GPU for minutes). Neither runs by default.
 | `providers/` | OpenRouter and fal clients, and in-process fakes of both |
 | `registry/` | Every model the app offers, with limits and prices (TOML) |
 | `db.py`, `migrations/` | SQLite (a local library) or Postgres (hosted) through SQLAlchemy; Alembic migrations |
+| `auth.py` | Who is asking: the local user, or whoever signed in (hosted) |
 | `estimate.py` | What a board or render would cost, before it runs; the budget check uses the same prices |
 | `jobs.py` | The in-process job queue and progress snapshots |
 | `api/app.py` | FastAPI: REST, SSE progress, the built web app |
@@ -73,6 +74,10 @@ a rule file under `.claude/rules/` with the details.
    fakes exercise the real client.
 9. **Narration is in the story's language; visual, motion and sound prompts are English.** The
    character lock lives in `prompts.py`, never in an LLM instruction.
+10. **Every row a user owns is read through their id, in `db.py`.** A route takes `me: Me` and passes
+    `me.id` on; another user's row answers 404, like a missing one. Files live in
+    `cfg.library_for(owner)`. `test_another_users_ids_answer_404` and
+    `test_every_database_method_takes_the_owner_or_is_shared` enforce it.
 
 ## One source for each fact
 
