@@ -168,15 +168,15 @@ def db(database_url) -> Iterator[Database]:
 @pytest.fixture
 def lands_first():
     """Arranges another save to land at the same moment as the one under test: `save` runs once, on a
-    connection of its own, just as the database is about to update a story, after the save under test
-    has read the version it builds on."""
+    connection of its own, just as the database is about to run a statement starting `before` (by
+    default, updating a story), after the save under test has read what it builds on."""
     listening = []
 
-    def arrange(db: Database, save) -> None:
+    def arrange(db: Database, save, before: str = "UPDATE stories") -> None:
         landed: list[bool] = []
 
         def hook(_conn, _cursor, statement, *_) -> None:
-            if statement.startswith("UPDATE stories") and not landed:
+            if statement.startswith(before) and not landed:
                 landed.append(True)
                 save()
 

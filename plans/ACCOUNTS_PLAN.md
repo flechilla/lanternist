@@ -35,7 +35,7 @@ Definition of done:
   - `[hosted] url` is the address people use, such as `https://app.lanternist.com`. The sign-in callback is `<url>/api/auth/callback`, writes must come from that origin, and the cookie is `Secure` when it's https.
   - `[workos] api_url` and `client_id`. The client id isn't a secret. The API key and the webhook secret come from the environment only (§1.4).
   - `lanternist.example.toml` documents all of it.
-- **Hosted refuses local defaults at start-up.** A validator on `Settings` checks that `defaults.tts`, `image`, `video` and `ambience` aren't `local/…`, that `defaults.writer` is `openrouter/…`, and that `checker` is empty or `openrouter/…`. For a wrong value it says which and what to set: "defaults.tts is local/qwen3-tts-1.7b, a model on this machine, which the hosted edition doesn't run: set a fal model in [defaults]".
+- **Hosted refuses local defaults at start-up.** A validator on `Settings` checks that `defaults.tts`, `image`, `video` and `ambience` aren't `local/…`, that `defaults.writer` is `openrouter/…`, and that `checker` is empty or `openrouter/…`. For a wrong value it says which and what to set: "defaults.tts is local/qwen3-tts-1.7b, a model on this machine, which the hosted edition doesn't run: pick a remote one". At start-up, `config.settings()` also checks that each model default is one the hosted registry offers, with the right capability. It lists the ones that fit. The validator can't make this check: it runs over each user's saved values on every request, and those were checked when saved.
 - **`/api/options` says which edition is running** (`"edition": "hosted"`), so the web app reads it rather than guessing.
 - **What hosted leaves out:**
   - Routes it doesn't register: `/api/providers` (with the key routes), `/api/doctor` and `POST /api/voices`. The first two show the platform's keys and machine, and uploads wait for consent (HOSTED_PLAN §1.9). The admin view in Phase E brings a hosted health view.
@@ -217,7 +217,7 @@ One pull request, `feat/accounts`, in four commits.
 - [x] A manual run against WorkOS staging (23 Sep, §4): sign up and sign in with Google, sign out back to the app, sign in again. Five real webhooks (`user.updated` and `session.revoked`) were accepted through ngrok. Email codes wait for Magic Auth to be switched on in the dashboard, which no API or CLI command can do. AuthKit runs both methods, so the callback doesn't change.
 
 **Exit** (the definition of done above):
-- [x] Items 1–5, with the suite passing on SQLite and Postgres: 269 tests on SQLite, and 266 on Postgres with the 3 `sqlite_only` ones skipped. Item 4 in fake mode; against WorkOS itself with the manual run above.
+- [x] Items 1–5, with the suite passing on SQLite and Postgres: 273 tests on SQLite, and 270 on Postgres with the 3 `sqlite_only` ones skipped. Item 4 in fake mode; against WorkOS itself with the manual run above.
 - [x] A copy of `~/Lanternist` opens after 0004, owned by `local` (`test_migration_on_a_copy_of_the_real_library`). The library itself hasn't been migrated: the first start on this branch does it.
 
 ## 3. Where the build departed from the design
@@ -227,10 +227,10 @@ One pull request, `feat/accounts`, in four commits.
 - **A hosted render doesn't copy its film to `films/`**, and its result has no `path`: a path on the server means nothing to the person, who downloads the film from the page.
 - **`providers/fal.py` passes mypy now**, and has left the exempt list in `pyproject.toml`, since this work touched it (CLAUDE.md). A fal client made without a database refuses to log a request, with a sentence, rather than failing on `None`.
 - **Settings errors read as sentences.** A validator's own words come back as written, rather than as pydantic's `: Value error, …`.
-- **A sign-in that fails goes back to the sign-in page**, with the reason in its address (`/sign-in?error=…`), which the page shows. A JSON error in the browser would say nothing to the person.
+- **A sign-in that fails goes back to the sign-in page**, with a code in its address: `/sign-in?error=expired|cancelled|refused|unavailable`, `auth.Failure`. A JSON error in the browser would say nothing to the person. The page has its own sentence for each code, so a link can't put words of its own on the front door. The details, such as WorkOS's message, go to the server log.
 - **`/api/me` answers in both editions**, as the local user locally. The web app asks it only in hosted.
 - **The web app hides its nav until someone signs in**, and the Library no longer says films are made "on this machine", which isn't so in hosted.
-- **The webhook needs `WORKOS_WEBHOOK_SECRET`** in `keys.PLATFORM`, beside `WORKOS_API_KEY`. Without it, every webhook is refused.
+- **The webhook needs `WORKOS_WEBHOOK_SECRET`** in `keys.PLATFORM`, beside `WORKOS_API_KEY`. Without it, every webhook gets a 503 saying to set it, and the server logs the same sentence. WorkOS retries a 5xx, so nothing is lost once it's set. A signed event is read through a Pydantic model.
 - **Hosted clones no one's recording, found by the self-review.** Taking away the upload route wasn't enough. The recordings already in `paths.voices` (on this machine, your own) were still listed, played and cloned for every account. So in hosted:
   - the voice catalogue lists no recordings;
   - `/api/voices/{name}/audio` is on the `local` router;

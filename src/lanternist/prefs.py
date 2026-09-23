@@ -9,7 +9,7 @@ come from lanternist.toml alone.
 from pydantic import ValidationError
 
 from . import registry
-from .config import Settings, file_data
+from .config import MODEL_DEFAULTS, Settings, file_data
 from .db import Database
 
 EDITABLE = {
@@ -33,12 +33,7 @@ PLATFORM_SETTINGS = {
     "fal.max_concurrency",
     "fal.media_ttl_hours",
 }
-MODEL_KEYS = {
-    "defaults.tts": "tts.speak",
-    "defaults.image": "image.keyframe",
-    "defaults.video": "video.image_to_video",
-    "defaults.ambience": "audio.ambience",
-}
+MODEL_KEYS = {f"defaults.{field}": capability for field, capability in MODEL_DEFAULTS.items()}
 # Model settings that may be "none", and what that means.
 OFF = {"defaults.ambience": "Their scenes stay silent under the narration."}
 

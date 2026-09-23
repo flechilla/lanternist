@@ -4,7 +4,7 @@ import hashlib
 import hmac
 import json
 import time
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from fastapi.routing import APIRoute
 from test_api import storyboard
@@ -162,18 +162,30 @@ def test_a_callback_this_browser_didnt_start_is_refused(hosted_client):
         params={"state": "forged", "code": "fake:eve@example.com"},
         follow_redirects=False,
     )
-    assert r.headers["location"].startswith("/sign-in?error=That%20sign-in%20link%20has%20expired")
+    assert r.headers["location"] == "/sign-in?error=expired"
     assert SESSION not in c.cookies and c.get("/api/me").status_code == 401
 
 
-def test_a_code_workos_refuses_says_so(hosted_client):
+def test_a_code_workos_refuses_says_so_and_logs_why(hosted_client, caplog):
     c = signed_out(hosted_client)
     to_page = c.get("/api/auth/sign-in", follow_redirects=False)
     state = parse_qs(urlsplit(to_page.headers["location"]).query)["state"][0]
     r = c.get("/api/auth/callback", params={"state": state, "code": "stolen"}, follow_redirects=False)
-    assert unquote(r.headers["location"]) == (
-        "/sign-in?error=WorkOS refused the sign-in (HTTP 400: The code is invalid.)"
+    assert r.headers["location"] == "/sign-in?error=refused"
+    assert "WorkOS refused the sign-in (HTTP 400: The code is invalid.)" in caplog.text
+
+
+def test_the_sign_in_page_shows_no_text_a_link_brings(hosted_client):
+    """The page words each failure itself: a link can only pick one of its codes."""
+    c = signed_out(hosted_client)
+    to_page = c.get("/api/auth/sign-in", follow_redirects=False)
+    state = parse_qs(urlsplit(to_page.headers["location"]).query)["state"][0]
+    r = c.get(
+        "/api/auth/callback",
+        params={"state": state, "error_description": "Your account is suspended: call +1 555 0100"},
+        follow_redirects=False,
     )
+    assert r.headers["location"] == "/sign-in?error=cancelled"
 
 
 def test_a_write_from_another_site_is_refused(hosted_client):
@@ -224,6 +236,15 @@ def test_workos_webhooks_count_only_when_signed(hosted_client, monkeypatch):
     sign_in(c)
     assert webhook(c, {"event": "user.deleted", "data": {"id": user_id}}).status_code == 200
     assert c.get("/api/me").status_code == 401
+    assert webhook(c, {"event": "user.updated", "data": {}}).status_code == 400
+
+
+def test_webhooks_without_their_secret_say_how_to_set_it(hosted_client, caplog):
+    """Out of fake mode, a missing secret refuses every webhook with a 503, which WorkOS retries."""
+    hosted_client.app.state.cfg = hosted_client.app.state.cfg.model_copy(update={"fake_engines": False})
+    r = webhook(hosted_client, {"event": "session.revoked", "data": {"id": "session_1"}})
+    assert r.status_code == 503 and r.json()["detail"].startswith("WORKOS_WEBHOOK_SECRET isn't set")
+    assert "WORKOS_WEBHOOK_SECRET isn't set" in caplog.text
 
 
 def test_the_hosted_editions_secrets_are_scrubbed(monkeypatch):

@@ -13,14 +13,15 @@ a write whose Origin isn't the app's own.
 import hashlib
 import hmac
 import html
-import json
+import logging
 import secrets
 import time
-from typing import Annotated
-from urllib.parse import quote, urlsplit
+from typing import Annotated, Literal
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from pydantic import BaseModel, ValidationError
 
 from .config import Settings
 from .db import LOCAL, Database, User
@@ -33,7 +34,12 @@ STATE = "lanternist_state"  # the cookie that ties a callback to the sign-in tha
 SESSION_DAYS = 30
 STATE_SECONDS = 600  # long enough to find an email code
 WEBHOOK_TOLERANCE = 300  # seconds either way, against replayed webhooks
+WEBHOOKS_OFF = (
+    "WORKOS_WEBHOOK_SECRET isn't set where `lanternist serve` runs, so webhooks are refused: set it to "
+    "the endpoint's secret from the WorkOS dashboard"
+)
 
+log = logging.getLogger(__name__)
 router = APIRouter()  # sign-in and its webhook: the hosted edition only
 
 
@@ -88,9 +94,16 @@ def foreign_write(cfg: Settings, request: Request) -> bool:
     )
 
 
-def _failed(why: str) -> RedirectResponse:
-    """Back to the sign-in page, which says why."""
-    return RedirectResponse(f"/sign-in?error={quote(why)}", status_code=303)
+# Why a sign-in failed. The sign-in page words each one (web/src/pages/SignIn.tsx), so a link can't put
+# text of its own on it.
+Failure = Literal["expired", "cancelled", "refused", "unavailable"]
+
+
+def _failed(why: Failure, detail: str = "") -> RedirectResponse:
+    """Back to the sign-in page, which says why; the details go to the log."""
+    if detail:
+        log.warning("sign-in failed (%s): %s", why, detail)
+    return RedirectResponse(f"/sign-in?error={why}", status_code=303)
 
 
 @router.get("/api/auth/sign-in")
@@ -103,7 +116,7 @@ def sign_in(request: Request, screen: str = "sign-in"):
             f"{cfg.hosted.url.rstrip('/')}/api/auth/callback", state, sign_up=screen == "sign-up"
         )
     except WorkOSError as e:
-        return _failed(str(e))
+        return _failed("unavailable", str(e))
     response = RedirectResponse(target, status_code=303)
     _cookie(cfg, response, STATE, state, STATE_SECONDS, path="/api/auth")
     return response
@@ -130,13 +143,13 @@ async def callback(request: Request, state: str = "", code: str = "", error_desc
     db: Database = request.app.state.db
     expected = request.cookies.get(STATE)
     if not expected or not hmac.compare_digest(expected, state):
-        return _failed("That sign-in link has expired or was opened in another browser. Sign in again.")
+        return _failed("expired")
     if not code:
-        return _failed(error_description or "The sign-in didn't finish. Sign in again.")
+        return _failed("cancelled", error_description)
     try:
         who = await WorkOS(cfg).authenticate(code)
     except WorkOSError as e:
-        return _failed(str(e))
+        return _failed("refused" if e.status else "unavailable", str(e))
     user = db.sign_in(who.subject, who.email)
     token = secrets.token_urlsafe(32)
     db.start_session(user.id, _hash(token), who.session, SESSION_DAYS)
@@ -177,21 +190,38 @@ def _signed(secret: str, header: str, body: bytes) -> bool:
     return hmac.compare_digest(wanted, given)
 
 
+class _Subject(BaseModel):
+    """What the handlers read of an event's user or session; the rest is ignored."""
+
+    id: str
+    email: str | None = None
+
+
+class _Event(BaseModel):
+    event: str
+    data: _Subject
+
+
 @router.post("/api/webhooks/workos")
 async def workos_webhook(request: Request):
     """Changes WorkOS makes to an account or session between sign-ins. Each handler can run twice."""
     cfg: Settings = request.app.state.cfg
     db: Database = request.app.state.db
     secret = platform_secret("workos_webhook", fake=cfg.fake_engines)
+    if not secret:  # WorkOS retries a 5xx, so nothing is lost once the secret is set
+        log.warning(WEBHOOKS_OFF)
+        raise HTTPException(503, WEBHOOKS_OFF)
     body = await request.body()
-    if not secret or not _signed(secret, request.headers.get("workos-signature", ""), body):
+    if not _signed(secret, request.headers.get("workos-signature", ""), body):
         raise HTTPException(400, "not signed by WorkOS")
-    event = json.loads(body)
-    kind, data = event.get("event"), event.get("data") or {}
-    if kind == "user.updated":
-        db.user_updated(data["id"], data.get("email"))
-    elif kind == "user.deleted":
-        db.user_deleted(data["id"])
-    elif kind == "session.revoked":
-        db.revoke_session(data["id"])
+    try:
+        event = _Event.model_validate_json(body)
+    except ValidationError as e:
+        raise HTTPException(400, f"not a WorkOS event this app reads: {e.error_count()} problems") from None
+    if event.event == "user.updated":
+        db.user_updated(event.data.id, event.data.email)
+    elif event.event == "user.deleted":
+        db.user_deleted(event.data.id)
+    elif event.event == "session.revoked":
+        db.revoke_session(event.data.id)
     return {"ok": True}

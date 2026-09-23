@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 from test_api import storyboard
 
-from lanternist import registry
+from lanternist import config, registry
 from lanternist.config import Settings
 
 PRESET = "Vivian"  # a voice of the hosted tests' narrator (HOSTED_TOML): hosted clones no recording
@@ -16,7 +16,7 @@ def test_the_hosted_edition_refuses_models_it_cant_run():
     ):
         Settings.model_validate({"edition": "hosted"})
     remote = {
-        "tts": "fal/chatterbox-multilingual",
+        "tts": "fal/qwen-3-tts-1.7b",
         "image": "fal/flux-2-klein-9b",
         "video": "fal/h3-max-turbo",
     }
@@ -30,6 +30,26 @@ def test_the_hosted_edition_refuses_models_it_cant_run():
                 | {"writer": "openrouter/openai/gpt-5.6-luna", "checker": "ollama/qwen3.8"},
             }
         )
+
+
+def test_the_hosted_edition_starts_only_on_models_it_offers(tmp_path, monkeypatch):
+    """Chatterbox runs remotely but only clones, so hosted doesn't offer it; nor a picture model as the
+    narrator."""
+    toml = tmp_path / "lanternist.toml"
+    monkeypatch.setenv("LANTERNIST_CONFIG", str(toml))
+    for tts in ("fal/chatterbox-multilingual", "fal/flux-2-klein-9b"):
+        toml.write_text(
+            f'edition = "hosted"\n\n[defaults]\nwriter = "openrouter/openai/gpt-5.6-luna"\ntts = "{tts}"\n'
+            'image = "fal/flux-2-klein-9b"\nvideo = "fal/h3-max-turbo"\n\n'
+            f'[paths]\nlibrary = "{tmp_path / "lib"}"\n'
+        )
+        config.settings.cache_clear()
+        offered = (
+            rf"defaults\.tts is {tts}, which the hosted edition doesn't offer here: pick one of .*qwen-3-tts"
+        )
+        with pytest.raises(ValueError, match=offered):
+            config.settings()
+    config.settings.cache_clear()
 
 
 def test_the_hosted_registry_offers_only_remote_models_licensed_for_sale():

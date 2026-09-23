@@ -12,6 +12,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from . import registry
 from .storyboard import LlmId
 
 
@@ -124,6 +125,15 @@ class Defaults(BaseModel):
     budget_usd: float = 5.0  # per story, for remote models
 
 
+# The defaults that name a registry model, and what that model must do.
+MODEL_DEFAULTS = {
+    "tts": "tts.speak",
+    "image": "image.keyframe",
+    "video": "video.image_to_video",
+    "ambience": "audio.ambience",
+}
+
+
 class OpenRouter(BaseModel):
     url: str = "https://openrouter.ai/api/v1"
     # Pinned at the top of the writer picker: the best value from the Phase B trials (plans/M2_PLAN.md).
@@ -200,7 +210,7 @@ class Settings(BaseModel):
         if self.edition != "hosted":
             return self
         d = self.defaults
-        for field in ("tts", "image", "video", "ambience"):
+        for field in MODEL_DEFAULTS:
             model = getattr(d, field)
             if model.startswith("local/"):
                 raise ValueError(
@@ -258,6 +268,25 @@ def file_data() -> dict:
     return tomllib.loads(path.read_text()) if path else {}
 
 
+def _check_offered(cfg: Settings) -> None:
+    """The hosted edition's model defaults must be models it offers, or every story fails. This runs once
+    at start-up, not in the validator: a user's saved values go through that on every request, and
+    were checked when they were saved."""
+    offered = registry.load(cfg.library, hosted=True)
+    for field, capability in MODEL_DEFAULTS.items():
+        model = getattr(cfg.defaults, field)
+        entry = offered.get(model)
+        if model != "none" and (entry is None or entry.capability != capability):
+            choices = sorted(m for m, e in offered.items() if e.capability == capability)
+            raise ValueError(
+                f"defaults.{field} is {model}, which the hosted edition doesn't offer here: pick one of "
+                f"{', '.join(choices)} in {config_path()}"
+            )
+
+
 @lru_cache
 def settings() -> Settings:
-    return Settings.model_validate(file_data())
+    cfg = Settings.model_validate(file_data())
+    if cfg.hosted_edition:
+        _check_offered(cfg)
+    return cfg

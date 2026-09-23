@@ -256,6 +256,15 @@ def test_signing_in_makes_a_user_once_and_keeps_their_email_current(db):
     assert db.user(ann.id).email == "ann@new.example.com" and ann.id != LOCAL
 
 
+def test_a_first_sign_in_twice_at_once_makes_one_user(db, lands_first):
+    """Two tabs finishing someone's first sign-in together: the second finds the user the first made."""
+    first = []
+    lands_first(db, lambda: first.append(db.sign_in("user_01ANN", "ann@example.com")), "INSERT INTO users")
+    ann = db.sign_in("user_01ANN", "ann@new.example.com")
+    assert first and ann.id == first[0].id
+    assert db.user(ann.id).email == "ann@new.example.com"
+
+
 @contextmanager
 def statements(db: Database) -> Iterator[list[str]]:
     """The statements the database is sent while the block runs."""
