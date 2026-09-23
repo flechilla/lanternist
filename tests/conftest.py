@@ -53,7 +53,7 @@ def _postgres() -> Iterator[tuple[Engine, str]]:
         c.execute(text(f'CREATE DATABASE "{template}"'))
     migrated = Database(_on(template))
     migrated.migrate()
-    migrated.engine.dispose()  # a template is copied only while nothing is connected to it
+    migrated.close()  # a template is copied only while nothing is connected to it
     yield admin, template
     with admin.connect() as c:
         c.execute(text(f'DROP DATABASE "{template}"'))
@@ -161,7 +161,7 @@ def db(database_url) -> Iterator[Database]:
     d = Database(database_url)
     d.migrate()
     yield d
-    d.engine.dispose()
+    d.close()
 
 
 @pytest.fixture
@@ -203,7 +203,7 @@ def client(tmp_path, voices, database_url, monkeypatch):
     appmod = importlib.reload(appmod)
     with TestClient(appmod.app) as c:
         yield c
-    appmod.db.engine.dispose()
+    appmod.db.close()
     config.settings.cache_clear()
 
 

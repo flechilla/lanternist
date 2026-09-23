@@ -46,18 +46,19 @@ def _printer():
     return emit
 
 
-def _database():
+def _db():
     from .db import Database
 
     cfg = settings()
-    return Database(cfg.database_url, cfg.database.pool_size)
+    db = Database(cfg.database_url, cfg.database.pool_size)
+    db.migrate()
+    return db
 
 
 def _effective():
     from .prefs import effective
 
-    db = _database()
-    db.migrate()
+    db = _db()
     return effective(settings(), db), db
 
 
@@ -68,11 +69,10 @@ def doctor():
     from .doctor import run_checks
     from .prefs import effective
 
-    cfg, db = settings(), _database()
+    cfg = settings()
     with contextlib.suppress(DatabaseError):  # its row says why; the rest use lanternist.toml's settings
-        db.migrate()
-        cfg = effective(cfg, db)
-    checks = asyncio.run(run_checks(cfg, db))
+        cfg = effective(cfg, _db())
+    checks = asyncio.run(run_checks(cfg))
     for c in checks:
         print(f" {MARK[c.status]} {c.name:<9} {c.detail}")
     if any(c.status == "fail" for c in checks):

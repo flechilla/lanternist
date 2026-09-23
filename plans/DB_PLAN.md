@@ -156,7 +156,7 @@ Two pull requests. The first changes no behaviour; the second adds Postgres.
 - [x] Run the definition of done at the top by hand on Postgres in fake mode: write, board, render, cancel, and restart during a render. A render killed with SIGKILL was re-queued at the next start and finished from the cache. Deleting a story kept its 16 `step_runs` rows, with no story. The doctor printed the URL with `***` for the password.
 
 **Exit:**
-- [x] Items 1–5 of the definition of done. The suite passes on both databases: 243 tests on SQLite (78 s), and 240 on Postgres (73 s) with the 3 `sqlite_only` ones skipped.
+- [x] Items 1–5 of the definition of done. The suite passes on both databases: 244 tests on SQLite (85 s), and 241 on Postgres (82 s) with the 3 `sqlite_only` ones skipped.
 - [x] The local library opens exactly as before. `~/Lanternist` was opened read-only: 4 stories at revision 0003, `library()` in 7 ms, the old 12-character ids intact. `test_migration_on_a_copy_of_the_real_library` ran on a copy of it. No real story was rendered, which would take the GPU. Step keys read nothing from the database, and the step-key tests pass.
 
 ## 3. Where the build departed from the design
@@ -165,6 +165,7 @@ Two pull requests. The first changes no behaviour; the second adds Postgres.
 - **The claim is one statement** (§1.4): `UPDATE jobs … WHERE id = (SELECT … FOR UPDATE SKIP LOCKED) RETURNING`. With a select and then an update, SQLite wouldn't be safe: pysqlite runs the select outside a transaction, so two threads could read the same job before either one writes. `test_claim_gives_each_worker_its_own_job` fails on Postgres when the lock is removed. The runner's `run()` now takes the job it claimed.
 - **The constraint stays unnamed on the model** (§1.3), as migration 0001 made it. A name on the model would differ from the one Postgres gave it, and from SQLite's none. New constraints get names.
 - **`add_version` retries once too** (§1.3 named "an edit while a job saves a version"). A job's write or rewrite then lands as the version after the edit, instead of failing on the constraint. The review found that a retried change runs its callback twice, so `keep_redraws` now starts its list over on each run.
-- **`migrate()` checks first that the database answers**, so a server that's down gets one sentence rather than Alembic's traceback. `lanternist doctor` runs every other check even then. `Database` accepts only `sqlite:///…` and `postgresql+psycopg://…`, and says so for any other URL.
+- **`migrate()` checks first that the database answers**, so a server that's down gets one sentence rather than Alembic's traceback. `Database` accepts only `sqlite:///…` and `postgresql+psycopg://…`, and says so, and where the URL is set, for any other URL.
+- **The doctor opens a database of its own for its row**, so a URL it can't use, or a server that's down, is a ✗ row, and `lanternist doctor` still runs every other check, with the settings from `lanternist.toml`.
 - **`StaleVersion` carries only the version the save started from.** An exception handler in `api/app.py` turns it into the 409, so a re-roll or new take that conflicts twice also gets a 409 rather than a 500.
 - **Two tests depended on the SQLite fixture making the library folder.** Postgres showed it, and they now make the folder themselves.

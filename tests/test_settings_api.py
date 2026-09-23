@@ -1,5 +1,7 @@
 """Keys, providers and settings through the API, in fake mode."""
 
+import re
+
 from lanternist import keys
 
 
@@ -66,6 +68,9 @@ def test_doctor_lists_providers(client):
     names = {c["name"]: c for c in client.get("/api/doctor").json()}
     assert names["openrouter"]["status"] == "ok" and "key from fake" in names["openrouter"]["detail"]
     assert names["fal"]["status"] == "ok"
+    assert names["database"]["status"] == "ok" and re.search(
+        r", at revision \d{4}$", names["database"]["detail"]
+    )
 
 
 BRIEF = {"idea": "A cat and a gull.", "minutes": 0.4}

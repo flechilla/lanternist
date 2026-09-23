@@ -17,8 +17,8 @@ who owns the row, in one file.
    - It opens its own session (`with self.session() as s:`), and returns rows, plain values or a
      small dataclass (`LibraryRow`). Never a session or a statement.
    - A helper that takes a session is private (`_storyboard`), for use inside `db.py` only.
-   - Callers (routes, the runner, the pipeline) only call methods: they don't import SQLAlchemy.
-     `test_every_query_lives_in_db_py` checks it.
+   - Callers (routes, the runner, the pipeline) only call methods: they don't import SQLAlchemy or
+     touch `db.engine`. `test_every_query_lives_in_db_py` checks it.
    - Missing rows: `None` from a getter, `False` from a delete, `KeyError` where the caller turns
      it into a 404. Follow the neighbours.
 3. **Write it in SQLAlchemy 2 style** (`select`, `update`, `s.scalars`, `s.execute(…).tuples()`)

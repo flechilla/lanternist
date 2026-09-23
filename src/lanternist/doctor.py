@@ -134,14 +134,19 @@ def _ram() -> tuple[str, str]:
     return "ok", f"{avail:.0f} GB available"
 
 
-async def _database(db: Database) -> tuple[str, str]:
+def _database(cfg: Settings) -> tuple[str, str]:
+    """Whether the database answers, and the migration it's at. Its own connection, so that a URL the
+    app can't use is a row here, like any other fault."""
     try:
-        return "ok", f"{db.shown}, at revision {await asyncio.to_thread(db.revision)}"
+        db = Database(cfg.database_url)
+        shown, revision = db.shown, db.revision()
     except DatabaseError as e:
         return "fail", str(e)
+    db.close()
+    return "ok", f"{shown}, at revision {revision}"
 
 
-async def run_checks(cfg: Settings, db: Database) -> list[Check]:
+async def run_checks(cfg: Settings) -> list[Check]:
     checks: list[Check] = []
 
     def add(name: str, status: str, detail: str) -> None:
@@ -278,7 +283,7 @@ async def run_checks(cfg: Settings, db: Database) -> list[Check]:
     cfg.library.mkdir(parents=True, exist_ok=True)
     free = shutil.disk_usage(cfg.library).free / 1e9
     add("library", "ok" if free > 20 else "warn", f"{cfg.library}, {free:.0f} GB free")
-    add("database", *await _database(db))
+    add("database", *await asyncio.to_thread(_database, cfg))
 
     # Remote providers
     for row in await provider_rows(cfg):

@@ -12,9 +12,10 @@ from pathlib import Path
 import pytest
 from alembic import command
 from sqlalchemy import event, make_url
+from typer.testing import CliRunner
 
 import lanternist
-from lanternist import keys, prefs, registry
+from lanternist import cli, config, keys, prefs, registry
 from lanternist.config import Defaults, Paths, Settings
 from lanternist.db import Database, DatabaseError, Job, StepRun, Story, now, to_micros, to_usd
 from lanternist.engines import local as local_engines
@@ -151,7 +152,8 @@ def test_every_query_lives_in_db_py():
         for path in sorted(src.rglob("*.py"))
         if path.relative_to(src) != Path("db.py") and path.relative_to(src).parts[0] != "migrations"
         for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
-        if re.match(r"\s*(from|import) sqlalchemy\b", line) or re.search(r"\bdb\.session\(", line)
+        if re.match(r"\s*(from|import) sqlalchemy\b", line)
+        or re.search(r"\b\w*(db|database)\w*\.(session\(|engine\b)", line)
     ]
     assert found == [], "move these into a Database method in db.py"
 
@@ -235,6 +237,20 @@ def test_a_change_made_as_another_save_lands_is_applied_to_that_save(db, make_st
     )
 
 
+def test_the_doctor_reports_a_database_url_it_cant_use_and_checks_the_rest(tmp_path, monkeypatch):
+    toml = tmp_path / "lanternist.toml"
+    toml.write_text(f'[paths]\nlibrary = "{tmp_path / "lib"}"\n', encoding="utf-8")
+    monkeypatch.setenv("LANTERNIST_CONFIG", str(toml))
+    monkeypatch.setenv("LANTERNIST_DATABASE_URL", "mysql://lantern:s3cret@db/lanternist")
+    config.settings.cache_clear()
+    try:
+        out = CliRunner().invoke(cli.app, ["doctor"]).output
+    finally:
+        config.settings.cache_clear()
+    assert "✗ database  Lanternist can't use a mysql database URL: write it as sqlite:///" in out
+    assert "ffmpeg" in out and "library" in out and "s3cret" not in out
+
+
 def test_a_job_saving_a_version_as_an_edit_lands_saves_the_one_after_it(db, make_story, lands_first):
     story = db.create_story("Test", "en", make_story().model_dump())
     edited, rewritten = make_story(), make_story()
@@ -266,7 +282,7 @@ def test_the_database_password_is_never_printed():
         d.revision()  # what the doctor shows
     with pytest.raises(DatabaseError, match="start it, or fix") as unmigrated:
         as_parameter.migrate()  # what `lanternist serve` says, in place of Alembic's traceback
-    with pytest.raises(DatabaseError, match="isn't one") as malformed:
+    with pytest.raises(DatabaseError, match="can't read the database URL") as malformed:
         Database("postgresql+psycopg://lantern:s3cret%25pw@127.0.0.1:port/lanternist")
     for e in (unreachable, unmigrated, malformed):
         assert "s3cret" not in str(e.value) and e.value.__cause__ is None

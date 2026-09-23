@@ -137,7 +137,7 @@ def health():
 async def doctor():
     from ..doctor import run_checks
 
-    return [c.dict() for c in await run_checks(prefs.effective(cfg, db), db)]
+    return [c.dict() for c in await run_checks(prefs.effective(cfg, db))]
 
 
 # ---------------------------------------------------------------------------------- providers & settings

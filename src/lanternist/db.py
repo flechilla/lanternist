@@ -52,6 +52,7 @@ class DatabaseError(Exception):
 
 
 URLS = "sqlite:///<file>, or postgresql+psycopg://user:password@host:port/name"  # what Database takes
+WHERE = "[database] url in lanternist.toml, or LANTERNIST_DATABASE_URL"  # where the URL comes from
 
 
 class StaleVersion(DatabaseError):
@@ -241,9 +242,11 @@ class Database:
         try:
             self.url = make_url(url)
         except (ArgumentError, ValueError):  # ValueError: a port that isn't a number
-            raise DatabaseError(f"the database URL isn't one: write it as {URLS}") from None
+            raise DatabaseError(f"can't read the database URL: write it as {URLS}, in {WHERE}") from None
         if self.url.drivername not in ("sqlite", "postgresql+psycopg"):
-            raise DatabaseError(f"Lanternist can't use a {self.url.drivername} URL: write it as {URLS}")
+            raise DatabaseError(
+                f"Lanternist can't use a {self.url.drivername} database URL: write it as {URLS}, in {WHERE}"
+            )
         try:
             if self.url.drivername == "sqlite":
                 Path(self.url.database or "").parent.mkdir(parents=True, exist_ok=True)
@@ -259,6 +262,10 @@ class Database:
                 "(`uv sync --extra postgres`, or `pip install 'lanternist[postgres]'`)"
             ) from None
         self.session = sessionmaker(self.engine, expire_on_commit=False)
+
+    def close(self) -> None:
+        """Close the connections this database holds open, for one made for a single look."""
+        self.engine.dispose()
 
     @property
     def shown(self) -> str:
@@ -293,8 +300,8 @@ class Database:
                 return MigrationContext.configure(conn).get_current_revision()
         except DBAPIError as e:  # the driver's own words, without SQLAlchemy's wrapping
             raise DatabaseError(
-                f"the database at {self.shown} doesn't answer ({str(e.orig).splitlines()[0]}): start it, or "
-                "fix [database] url in lanternist.toml or LANTERNIST_DATABASE_URL"
+                f"the database at {self.shown} doesn't answer ({str(e.orig).splitlines()[0]}): start it, "
+                f"or fix {WHERE}"
             ) from None
 
     # stories ----------------------------------------------------------------------------------

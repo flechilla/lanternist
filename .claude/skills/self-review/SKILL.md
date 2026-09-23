@@ -50,8 +50,9 @@ function, read the whole function and its callers, not just the hunk.
 4. **The database**, when the diff touches `db.py`, a migration, a `Database` method's callers, or
    the test fixtures. Read `.claude/rules/database.md`, then check that the same code is right on
    SQLite and on Postgres:
-   - **Where.** Does a module other than `db.py` (or `migrations/`) import SQLAlchemy or call
-     `db.session()`? Does a public `Database` method take a session?
+   - **Where.** Does a module other than `db.py` (or `migrations/`) import SQLAlchemy, call
+     `db.session()` or touch `db.engine`, under any name for the database? Does a public `Database`
+     method take a session?
    - **Portable.** Is there SQLite-only SQL (`sqlite_*`, `INSERT OR`, `strftime`, `json_extract`)
      or raw `text()` where a construct exists? Is there a descending or ascending order on a column
      that can be NULL, without `nulls_last()`/`nulls_first()`? Does a read-then-write count on

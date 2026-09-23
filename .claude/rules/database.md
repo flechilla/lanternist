@@ -21,8 +21,9 @@ plans/M2_PLAN.md §1.13 for the tables.
 ## Queries
 
 - **Every query lives in `db.py`**, as a `Database` method. Other modules call those; they don't
-  import SQLAlchemy or open a session, and `test_every_query_lives_in_db_py` fails if they do. A
-  method opens its own session; one that takes a session is private (`_storyboard`, `_save_version`).
+  import SQLAlchemy, open a session or touch `db.engine`, and `test_every_query_lives_in_db_py` fails
+  if they do. A method opens its own session; one that takes a session is private (`_storyboard`,
+  `_save_version`).
 - **Portable SQL only.** No SQLite-only SQL, no `sqlite_*` options, no raw `text()` where a
   SQLAlchemy construct exists. Watch the places where the two differ:
   - NULLs sort first on SQLite and last on Postgres, ascending, and the other way round descending.
