@@ -3,7 +3,7 @@ import { api, errorMessage, type MediaCatalog } from "../api";
 import LanguageSelect from "../components/LanguageSelect";
 import ModelPicker from "../components/ModelPicker";
 import VoicePicker from "../components/VoicePicker";
-import { useAction, useVoiceCatalog } from "../hooks";
+import { useAction, useOptions, useVoiceCatalog } from "../hooks";
 
 export default function Voices() {
   const [model, setModel] = useState("");
@@ -15,6 +15,8 @@ export default function Voices() {
   const [added, setAdded] = useState<string | null>(null);
   const { busy, error, setError, run } = useAction();
   const voices = useVoiceCatalog(model, language);
+  // Cloning someone's voice waits for their recorded consent, so the hosted edition takes no recordings.
+  const local = useOptions()?.edition === "local";
 
   useEffect(() => {
     api.models("tts.speak").then(setNarrators, (e: unknown) => setError(errorMessage(e)));
@@ -43,11 +45,15 @@ export default function Voices() {
       <div className="page-head">
         <div>
           <h1>Voices</h1>
-          <p>
-            Hear every narrator before you choose one. Models on fal speak in voices of their own, and some
-            clone your recordings; the narrator on this machine clones a recording. A clean 20 to 30 seconds
-            in a quiet room works best.
-          </p>
+          {local ? (
+            <p>
+              Hear every narrator before you choose one. Models on fal speak in voices of their own, and some
+              clone your recordings; the narrator on this machine clones a recording. A clean 20 to 30 seconds
+              in a quiet room works best.
+            </p>
+          ) : (
+            <p>Hear every narrator before you choose one, in the language of your story.</p>
+          )}
         </div>
       </div>
       <div className="voices">
@@ -71,38 +77,40 @@ export default function Voices() {
             onReload={() => void voices.reload()}
           />
         </section>
-        <form className="panel stack" onSubmit={submit}>
-          <h2>Add a voice</h2>
-          <label className="field">
-            Name
-            <input
-              type="text"
-              required
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Grandma"
-            />
-          </label>
-          <label className="field">
-            Recording
-            <small>Any audio file. It's converted to 24 kHz mono.</small>
-            <input
-              type="file"
-              required
-              accept="audio/*"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            />
-          </label>
-          <label className="field">
-            What's said in it
-            <small>Optional. The exact words make the clone closer.</small>
-            <textarea rows={4} value={transcript} onChange={(e) => setTranscript(e.target.value)} />
-          </label>
-          {error && <p className="error">{error}</p>}
-          <button className="primary" type="submit" disabled={busy || !file || !name.trim()}>
-            {busy ? "Adding…" : "Add voice"}
-          </button>
-        </form>
+        {local && (
+          <form className="panel stack" onSubmit={submit}>
+            <h2>Add a voice</h2>
+            <label className="field">
+              Name
+              <input
+                type="text"
+                required
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Grandma"
+              />
+            </label>
+            <label className="field">
+              Recording
+              <small>Any audio file. It's converted to 24 kHz mono.</small>
+              <input
+                type="file"
+                required
+                accept="audio/*"
+                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              />
+            </label>
+            <label className="field">
+              What's said in it
+              <small>Optional. The exact words make the clone closer.</small>
+              <textarea rows={4} value={transcript} onChange={(e) => setTranscript(e.target.value)} />
+            </label>
+            {error && <p className="error">{error}</p>}
+            <button className="primary" type="submit" disabled={busy || !file || !name.trim()}>
+              {busy ? "Adding…" : "Add voice"}
+            </button>
+          </form>
+        )}
       </div>
     </>
   );

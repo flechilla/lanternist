@@ -194,10 +194,10 @@ One pull request, `feat/accounts`, in four commits.
 
 ### Commit 2: editions (≈ 0.5 day)
 
-- [ ] `edition`, `[hosted]`, `[workos]` in `config.py` and `lanternist.example.toml`. The hosted defaults validator.
-- [ ] `/api/options` edition. Hosted leaves out the provider, doctor and voice-upload routes.
-- [ ] The registry and writer catalogue filtered in hosted. `prefs.PLATFORM`.
-- [ ] Web: the System check, key cards and recording upload hidden in hosted.
+- [x] `edition`, `[hosted]`, `[workos]` in `config.py` and `lanternist.example.toml`. The hosted defaults validator.
+- [x] `/api/options` edition. Hosted leaves out the provider, doctor and voice-upload routes.
+- [x] The registry and writer catalogue filtered in hosted. `prefs.PLATFORM`.
+- [x] Web: the System check, key cards and recording upload hidden in hosted.
 
 ### Commit 3: owners (≈ 1.5 days)
 

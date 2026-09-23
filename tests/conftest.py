@@ -187,12 +187,28 @@ def lands_first():
         event.remove(db.engine, "before_cursor_execute", hook)
 
 
-@pytest.fixture
-def client(tmp_path, voices, database_url, monkeypatch):
-    """The app in fake mode on its own library and database, as `lanternist serve` would run it."""
+# The hosted edition in tests: remote models only, and the test client's own address as its origin.
+HOSTED_TOML = """edition = "hosted"
+
+[hosted]
+url = "http://testserver"
+
+[defaults]
+writer = "openrouter/openai/gpt-5.6-luna"
+tts = "fal/chatterbox-multilingual"
+image = "fal/flux-2-klein-9b"
+video = "fal/h3-max-turbo"
+
+"""
+
+
+def _serve(tmp_path, voices, database_url, monkeypatch, head: str = "") -> Iterator[TestClient]:
+    """The app in fake mode on its own library and database, as `lanternist serve` would run it, with
+    `head` at the top of its lanternist.toml."""
     toml = tmp_path / "lanternist.toml"
     toml.write_text(
-        f'[paths]\nlibrary = "{tmp_path / "lib"}"\nvoices = ["{voices}"]\n\n[database]\nurl = "{database_url}"\n',
+        f'{head}[paths]\nlibrary = "{tmp_path / "lib"}"\nvoices = ["{voices}"]\n\n'
+        f'[database]\nurl = "{database_url}"\n',
         encoding="utf-8",
     )
     monkeypatch.setenv("LANTERNIST_CONFIG", str(toml))
@@ -208,8 +224,22 @@ def client(tmp_path, voices, database_url, monkeypatch):
 
 
 @pytest.fixture
-def wait(client):
-    """Waits for a job to finish and returns it; the test fails unless it finished as done."""
+def client(tmp_path, voices, database_url, monkeypatch):
+    """The local edition."""
+    yield from _serve(tmp_path, voices, database_url, monkeypatch)
+
+
+@pytest.fixture
+def hosted_client(tmp_path, voices, database_url, monkeypatch):
+    """The hosted edition."""
+    yield from _serve(tmp_path, voices, database_url, monkeypatch, HOSTED_TOML)
+
+
+@pytest.fixture
+def wait(request):
+    """Waits for a job to finish and returns it; the test fails unless it finished as done. It asks the
+    test's own app, hosted or local: asking for the other would start that one in its place."""
+    client = request.getfixturevalue("hosted_client" if "hosted_client" in request.fixturenames else "client")
 
     def wait_for(job_id: str, timeout: float = 60) -> dict:
         deadline = time.time() + timeout

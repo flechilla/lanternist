@@ -1,6 +1,5 @@
-import { useEffect, useState } from "react";
 import { Link, NavLink, Route, Routes } from "react-router-dom";
-import { api } from "./api";
+import { useOptions } from "./hooks";
 import Doctor from "./pages/Doctor";
 import Library from "./pages/Library";
 import NewStory from "./pages/NewStory";
@@ -9,13 +8,10 @@ import Story from "./pages/Story";
 import Voices from "./pages/Voices";
 
 export default function App() {
-  const [fake, setFake] = useState(false);
-  useEffect(() => {
-    api.health().then(
-      (h) => setFake(h.fake_engines),
-      () => setFake(false),
-    );
-  }, []);
+  const opts = useOptions();
+  const fake = opts?.fake_engines ?? false;
+  // The hosted edition has no machine of the user's to check.
+  const local = opts?.edition === "local";
 
   return (
     <>
@@ -30,7 +26,7 @@ export default function App() {
           </NavLink>
           <NavLink to="/new">New story</NavLink>
           <NavLink to="/voices">Voices</NavLink>
-          <NavLink to="/check">System check</NavLink>
+          {local && <NavLink to="/check">System check</NavLink>}
           <NavLink to="/settings">Settings</NavLink>
         </nav>
       </header>
@@ -50,7 +46,7 @@ export default function App() {
           <Route path="/stories/:id" element={<Story />} />
           <Route path="/stories/:id/:step" element={<Story />} />
           <Route path="/voices" element={<Voices />} />
-          <Route path="/check" element={<Doctor />} />
+          {local && <Route path="/check" element={<Doctor />} />}
           <Route path="/settings" element={<Settings />} />
           <Route
             path="*"

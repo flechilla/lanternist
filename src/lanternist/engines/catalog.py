@@ -30,7 +30,7 @@ SAMPLE_SEED = 7  # a sample is one take: the same line in the same voice is made
 
 def entry(cfg: Settings, db: Database | None, model_id: str, capability: str) -> ModelEntry:
     try:
-        e = registry.get(model_id, cfg.library, db)
+        e = registry.get(model_id, cfg.library, db, cfg.hosted_edition)
     except KeyError as err:
         raise ValueError(str(err).strip("'\"")) from None
     if e.capability != capability:
@@ -212,7 +212,7 @@ def catalog(cfg: Settings, db: Database | None, capability: str) -> dict:
     """Every model a stage can use, with what it costs and whether it can run here now."""
     default = prefs.default_model(cfg, capability)
     rows = []
-    for e in registry.by_capability(capability, cfg.library, db):
+    for e in registry.by_capability(capability, cfg.library, db, cfg.hosted_edition):
         row = {
             "id": e.id,
             "label": e.label,

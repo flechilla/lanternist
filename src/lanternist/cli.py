@@ -331,7 +331,7 @@ def models(
         if capability and cap != capability:
             continue
         print(cap)
-        for e in registry.by_capability(cap, cfg.library, db):
+        for e in registry.by_capability(cap, cfg.library, db, cfg.hosted_edition):
             p = e.price
             price = f"${p.usd}/{p.unit}" if p.usd is not None else f"{p.gpu_seconds} GPU-s/{p.unit}"
             when = f" · list {p.synced}" if p.synced else ""

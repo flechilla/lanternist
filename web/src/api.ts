@@ -327,6 +327,8 @@ export interface Options {
   styles: { id: string; name: string; prompt: string }[];
   cameras: Camera[];
   fake_engines: boolean;
+  /** local: one person on this machine, with their own keys; hosted: accounts, remote models only. */
+  edition: "local" | "hosted";
 }
 
 export interface Brief {
@@ -480,7 +482,6 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 }
 
 export const api = {
-  health: () => call<{ ok: boolean; fake_engines: boolean }>("GET", "/api/health"),
   options: () => call<Options>("GET", "/api/options"),
   doctor: () => call<Check[]>("GET", "/api/doctor"),
   stories: () => call<StoryListItem[]>("GET", "/api/stories"),

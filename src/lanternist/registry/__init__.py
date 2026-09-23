@@ -149,6 +149,12 @@ class ModelEntry(BaseModel):
     def remote(self) -> bool:
         return self.provider in ("openrouter", "fal")
 
+    @property
+    def sellable(self) -> bool:
+        """Whether the hosted edition may offer it: a remote model, licensed for commercial use with no
+        condition to check."""
+        return self.remote and self.commercial_use is True
+
     def list_price(self, tier: str | None = None) -> Decimal:
         """USD per unit today, at a tier (a quality, a second endpoint) when it has its own price."""
         price = self.price.on().per_unit(tier)
@@ -208,12 +214,14 @@ def _raw(library: Path | None) -> list[dict]:
     return list(raw.values())
 
 
-def load(library: Path | None = None, db=None) -> dict[str, ModelEntry]:
-    """Every entry, with the user's overrides and, given the database, today's synced prices."""
+def load(library: Path | None = None, db=None, hosted: bool = False) -> dict[str, ModelEntry]:
+    """Every entry, with the user's overrides and, given the database, today's synced prices; with
+    `hosted`, only those the hosted edition may offer."""
     entries = {}
     for d in _raw(library):
-        d = {k: v for k, v in d.items() if k != "disabled"}
-        entries[d["id"]] = ModelEntry.model_validate(d)
+        entry = ModelEntry.model_validate({k: v for k, v in d.items() if k != "disabled"})
+        if entry.sellable or not hosted:
+            entries[entry.id] = entry
     if db is not None:
         for key, row in db.latest_prices().items():
             mid, _, role = key.partition("#")
@@ -228,8 +236,8 @@ def load(library: Path | None = None, db=None) -> dict[str, ModelEntry]:
     return entries
 
 
-def get(model_id: str, library: Path | None = None, db=None) -> ModelEntry:
-    entries = load(library, db)
+def get(model_id: str, library: Path | None = None, db=None, hosted: bool = False) -> ModelEntry:
+    entries = load(library, db, hosted)
     if model_id not in entries:
         raise KeyError(f"no model '{model_id}' in the registry (known: {', '.join(sorted(entries))})")
     return entries[model_id]
@@ -243,8 +251,10 @@ def billing(db, model_id: str, role: str | None = None) -> Billing | None:
     return Billing(unit_price=Decimal(row.unit_price), unit=row.unit, synced=row.synced_at.date())
 
 
-def by_capability(capability: str, library: Path | None = None, db=None) -> list[ModelEntry]:
-    return [e for e in load(library, db).values() if e.capability == capability]
+def by_capability(
+    capability: str, library: Path | None = None, db=None, hosted: bool = False
+) -> list[ModelEntry]:
+    return [e for e in load(library, db, hosted).values() if e.capability == capability]
 
 
 def normalise_unit(unit: str) -> str:

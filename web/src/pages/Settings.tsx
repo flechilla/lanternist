@@ -9,7 +9,7 @@ import {
   type SettingRow,
 } from "../api";
 import ModelPicker from "../components/ModelPicker";
-import { useAction } from "../hooks";
+import { useAction, useOptions } from "../hooks";
 
 const ABOUT: Record<ProviderName, { what: string; keys: string; tip: string }> = {
   openrouter: {
@@ -243,18 +243,39 @@ function Defaults() {
 }
 
 export default function Settings() {
+  const opts = useOptions();
   const [providers, setProviders] = useState<Provider[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(() => {
     api.providers().then(setProviders, (e: unknown) => setError(errorMessage(e)));
   }, []);
-  useEffect(load, [load]);
+  // The hosted edition runs on the platform's keys, so it has none to show.
+  useEffect(() => {
+    if (opts?.edition === "local") load();
+  }, [opts, load]);
 
   function changed(row?: Provider) {
     if (row) setProviders((ps) => ps?.map((p) => (p.name === row.name ? row : p)) ?? null);
     else load();
   }
+
+  if (opts?.edition === "hosted")
+    return (
+      <>
+        <div className="page-head">
+          <div>
+            <h1>Settings</h1>
+            <p>
+              The models every new story starts from, and what a story may spend. A story can change them.
+            </p>
+          </div>
+        </div>
+        <div className="providers">
+          <Defaults />
+        </div>
+      </>
+    );
 
   return (
     <>

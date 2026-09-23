@@ -1,4 +1,8 @@
-"""The HTTP API, SSE progress, and the static web app, all in one process bound to localhost."""
+"""The HTTP API, SSE progress, and the static web app, all in one process.
+
+The local edition binds to localhost for one person. The hosted edition leaves out what belongs to
+that person's machine (its keys, its doctor, its recordings), which live on the `local` router.
+"""
 
 import asyncio
 import json
@@ -8,7 +12,7 @@ import subprocess
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Body, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Body, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
@@ -44,6 +48,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Lanternist", lifespan=lifespan)
+local = APIRouter()  # the local edition's routes only: included below, unless hosted
 
 
 @app.exception_handler(StaleVersion)
@@ -133,7 +138,7 @@ def health():
     return {"ok": True, "fake_engines": cfg.fake_engines}
 
 
-@app.get("/api/doctor")
+@local.get("/api/doctor")
 async def doctor():
     from ..doctor import run_checks
 
@@ -141,7 +146,7 @@ async def doctor():
 
 
 # ---------------------------------------------------------------------------------- providers & settings
-@app.get("/api/providers")
+@local.get("/api/providers")
 async def providers():
     from ..doctor import provider_rows
 
@@ -158,7 +163,7 @@ def _provider(name: str) -> str:
     return name
 
 
-@app.put("/api/providers/{name}/key")
+@local.put("/api/providers/{name}/key")
 async def set_provider_key(name: str, body: KeyBody):
     from ..doctor import provider_rows
 
@@ -170,7 +175,7 @@ async def set_provider_key(name: str, body: KeyBody):
     return row | {"stored_in": stored}
 
 
-@app.delete("/api/providers/{name}/key", status_code=204)
+@local.delete("/api/providers/{name}/key", status_code=204)
 def clear_provider_key(name: str):
     keys.clear_key(_provider(name))
 
@@ -214,6 +219,7 @@ def options():
         "styles": [{"id": k, "name": k.replace("_", " "), "prompt": v} for k, v in STYLES.items()],
         "cameras": ["auto", "push_in", "pull_out", "pan_left", "pan_right", "static"],
         "fake_engines": cfg.fake_engines,
+        "edition": cfg.edition,
     }
 
 
@@ -531,7 +537,7 @@ def voice_audio(name: str):
     return FileResponse(v.wav, media_type="audio/wav")
 
 
-@app.post("/api/voices", status_code=201)
+@local.post("/api/voices", status_code=201)
 def add_voice(name: str = Form(...), transcript: str = Form(""), audio: UploadFile = File(...)):  # noqa: B008
     slug = slugify(name)
     folder = cfg.paths.voices[0]
@@ -555,6 +561,10 @@ def add_voice(name: str = Form(...), transcript: str = Form(""), audio: UploadFi
     else:
         txt.unlink(missing_ok=True)
     return {"name": slug, "path": str(dest), "has_transcript": bool(transcript.strip())}
+
+
+if not cfg.hosted_edition:
+    app.include_router(local)  # before the web app's catch-all route, which would answer first
 
 
 # ---------------------------------------------------------------------------------- web app

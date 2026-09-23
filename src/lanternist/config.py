@@ -10,7 +10,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .storyboard import LlmId
 
@@ -147,6 +147,21 @@ class Fal(BaseModel):
     voice_ttl_hours: float = 1  # reference voice clips we upload
 
 
+class Hosted(BaseModel):
+    """The hosted edition's own settings; the local edition ignores them."""
+
+    # The address people use. Sign-in comes back to <url>/api/auth/callback, writes must come from
+    # this origin, and the session cookie is Secure when it's https.
+    url: str = "http://localhost:8420"
+
+
+class WorkOS(BaseModel):
+    """Sign-in for the hosted edition. The client id isn't secret; the API key is WORKOS_API_KEY."""
+
+    api_url: str = "https://api.workos.com"
+    client_id: str = ""
+
+
 class DatabaseConfig(BaseModel):
     model_config = ConfigDict(validate_default=True)
     # Empty: the SQLite file in the library. The hosted edition's Postgres, as
@@ -161,6 +176,11 @@ class DatabaseConfig(BaseModel):
 
 
 class Settings(BaseModel):
+    # local: one person on this machine, with local models and their own keys. hosted: accounts,
+    # and only remote models on the platform's keys (plans/HOSTED_PLAN.md §1.1).
+    edition: Literal["local", "hosted"] = "local"
+    hosted: Hosted = Hosted()
+    workos: WorkOS = WorkOS()
     paths: Paths = Paths()
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)  # reads the environment when made
     ollama: Ollama = Ollama()
@@ -173,6 +193,35 @@ class Settings(BaseModel):
     fake_engines: bool = Field(default_factory=lambda: os.environ.get("LANTERNIST_FAKE_ENGINES") == "1")
     # Seconds each fake model item takes, so the progress can be watched without a GPU or keys.
     fake_pace: float = Field(default_factory=lambda: float(os.environ.get("LANTERNIST_FAKE_PACE") or 0))
+
+    @model_validator(mode="after")
+    def _hosted_defaults(self) -> "Settings":
+        # The hosted edition runs no model on its own machine, so a local default would fail every story.
+        if self.edition != "hosted":
+            return self
+        d = self.defaults
+        for field in ("tts", "image", "video", "ambience"):
+            model = getattr(d, field)
+            if model.startswith("local/"):
+                raise ValueError(
+                    f"defaults.{field} is {model}, a model on this machine, which the hosted edition "
+                    "doesn't run: pick a remote one"
+                )
+        if not d.writer.startswith("openrouter/"):
+            raise ValueError(
+                f"defaults.writer is {d.writer or 'empty (the local Ollama model)'}, which the hosted "
+                "edition doesn't run: pick an OpenRouter writer, openrouter/<model id>"
+            )
+        if d.checker and not d.checker.startswith("openrouter/"):
+            raise ValueError(
+                f"defaults.checker is {d.checker}, which the hosted edition doesn't run: pick an "
+                "OpenRouter model, openrouter/<model id>, or none"
+            )
+        return self
+
+    @property
+    def hosted_edition(self) -> bool:
+        return self.edition == "hosted"
 
     @property
     def library(self) -> Path:
