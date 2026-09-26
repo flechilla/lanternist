@@ -35,15 +35,18 @@ Background: plans/MVP_PLAN.md §2 ("Decisions"), plans/M2_PLAN.md §1.1.
 Each stage builds one `Item` per output and hands them to `Pipeline._stage`, which does the same
 things in the same order for every stage (don't write the loop again):
 
-1. Serve the items whose key `store.get_step` holds.
+1. Serve the items whose key the store holds, in one lookup (`cached_all`, `store.get_steps`).
 2. `emit(stage, "start", done=hits, total=all)`, then `cached` (with its asset) or `queued` for each
    item, so the page shows every scene from the start.
 3. Run all misses as **one batch** on the stage's engine (`engines/base.py`): one model load, under
    `lease()`, for a local engine; concurrent requests, no lease, for a remote one. The engine says
    when it starts on an item with `ctx.phase(item, "working", None)`, or that it's queued at a
    provider with `ctx.phase(item, "waiting", ahead)`. A new engine does too.
-4. For each output as it lands: `store.put` the file, `store.put_step` its record, then
-   `emit(stage, "done", scene=n, …, asset=…)`.
+4. For each output as it lands (`await on_item(out)`): `await store.put` the file (in hosted, an
+   upload to R2), make a picture's thumbnails, `store.put_step` its record, then
+   `emit(stage, "done", scene=n, …, asset=…)`. That order is what lets a record mean its files are
+   there. An engine reads an input with `await ctx.store.file(asset)`, which in hosted downloads it on
+   a miss; `store.path` is only for the local edition's CLI and film copy.
 5. `emit(stage, "finish")`, and remove the `store.tmp()` work dir.
 
 An item reports under its scene, or under the character it portrays (`Item.who`). `jobs.Progress`

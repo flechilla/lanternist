@@ -37,13 +37,13 @@ user's models and takes the GPU for minutes). Neither runs by default.
 | `writer.py` | Idea to storyboard in two passes (prose, then structured prompts) |
 | `prompts.py` | Every picture and video prompt, with the character lock |
 | `pipeline.py` | The stages (`narrate`, `draw`, `motion`, `clips`, `mix`), each cached and batched through `_stage` |
-| `store.py` | Content-addressed assets and the step cache (plain files) |
+| `store.py` | Content-addressed assets and the step cache: a folder locally; R2, a disk cache and `steps` in hosted |
 | `timing.py`, `text.py` | Timeline, shot split, subtitle cues; sentence splitting and TTS chunks |
 | `engines/` | The engine interface (`base.py`), local and fal engines, which engine runs a model (`catalog.py`), ffmpeg, ComfyUI/LTX, the worker runner, the fake engines |
 | `voices.py` | The narrator's reference recordings (a model's presets are in the registry) |
 | `workers/` | Scripts that run *inside other venvs* (Qwen3-TTS, klein) |
 | `gpu.py` | The GPU lease: evict other models, wait for free VRAM |
-| `providers/` | OpenRouter, fal and WorkOS (sign-in) clients, and in-process fakes of all three |
+| `providers/` | OpenRouter, fal, WorkOS (sign-in) and R2 (S3) clients, and in-process fakes of all four |
 | `registry/` | Every model the app offers, with limits and prices (TOML) |
 | `db.py`, `migrations/` | SQLite (a local library) or Postgres (hosted) through SQLAlchemy; Alembic migrations |
 | `auth.py` | Who is asking: the local user, or whoever signed in (hosted) |

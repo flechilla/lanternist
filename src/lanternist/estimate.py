@@ -36,7 +36,8 @@ class Line:
 
 
 def _line(p: Pipeline, stage: str, eng: Engine, items: list[Item]) -> Line:
-    todo = [it for it in items if not p.cached(it)]
+    found = p.cached_all(items)
+    todo = [it for it in items if it.key not in found]
     est = eng.estimate(todo) if todo else Estimate()
     return Line(
         stage,
@@ -57,7 +58,8 @@ def estimate(p: Pipeline, sb: Storyboard, kind: Kind) -> dict:
     """Every stage of a board, or of a whole render, with what's left to make and what it costs."""
     tts = p.tts(sb)
     narration = p.narration_items(sb, tts)
-    records = [p.cached(it) for it in narration]
+    spoken = p.cached_all(narration)
+    records = [spoken.get(it.key or "") for it in narration]
     durations = [
         rec["meta"]["duration"] if rec else it.params["seconds"]
         for it, rec in zip(narration, records, strict=True)
@@ -66,7 +68,10 @@ def estimate(p: Pipeline, sb: Storyboard, kind: Kind) -> dict:
 
     img = p.image(sb)
     sheet, portraits, keyframe_items = p.picture_items(img, sb)
-    keyframes = [rec["assets"]["image"] if (rec := p.cached(it)) else None for it in keyframe_items]
+    drawn = p.cached_all(keyframe_items)
+    keyframes = [
+        rec["assets"]["image"] if (rec := drawn.get(it.key or "")) else None for it in keyframe_items
+    ]
     lines.append((_line(p, "keyframes", img, sheet + portraits + keyframe_items), img))
 
     retakes = []
@@ -77,8 +82,9 @@ def estimate(p: Pipeline, sb: Storyboard, kind: Kind) -> dict:
         # A new take of one scene: what re-animating it alone would cost, made or not.
         retakes = [{"scene": it.scene, "cost_micros": vid.estimate([it]).micros} for it in motion]
         if amb := p.ambience_engine(sb, vid):
+            made = p.cached_all(motion)
             motions = {
-                it.scene: rec["assets"]["video"] if (rec := p.cached(it)) else None
+                it.scene: rec["assets"]["video"] if (rec := made.get(it.key or "")) else None
                 for it in motion
                 if it.scene is not None
             }

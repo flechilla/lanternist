@@ -61,7 +61,7 @@ Two backends behind the same methods. The folder is today's `Store`. `R2Store` e
 | `get_step(key)`, `get_steps(keys)` | JSON files; a record whose file is gone is a miss, as today | one query on `steps`; a scratch record past its `expires_at` is a miss |
 | `put_step(key, record, scratch=False)` | a JSON file | a `steps` row; scratch rows expire after 6 days, a day before their files |
 | `tmp()` | `tmp/` | `tmp/` in the cache |
-| `exists(asset)`, `url(asset, download)` | — | HEAD, and a presigned GET (§1.5) |
+| `asset_key`, `presigned` (functions, for the API) | — | where an asset is on R2, and a presigned GET for it (§1.5) |
 
 - **`store.of(cfg, db, owner)`** is the one place that picks the backend: the folder locally, and `R2Store` in hosted, with the owner's prefix, or `shared` for owner None. `Pipeline`, the asset route and the voice routes call it in place of `Store(cfg.library_for(…))`.
 - **Reading and storing files becomes async.** `path()` in an engine becomes `await ctx.store.file(asset)`. `on_item` becomes `await on_item(out)`, and returns once the output is stored: uploaded, recorded, and any thumbnails made. Upload and download are network calls, and in Phase C jobs share the event loop with every API request and progress stream. The change is mechanical, at about 20 call sites, and goes in a commit of its own, with no change in behaviour.
@@ -98,7 +98,7 @@ Two backends behind the same methods. The folder is today's `Store`. `R2Store` e
 
 `/api/assets/{asset}` in hosted:
 
-1. The asset must be the user's own (`u/<me>/assets/…`) or shared (`shared/assets/…`), found with a HEAD, own first. Otherwise 404, the same as for one that doesn't exist. A found key is remembered for an hour in the process, so a Board costs one HEAD per picture on its first view and none after.
+1. The asset must be the user's own (`u/<me>/assets/…`) or shared (`shared/assets/…`), found with a HEAD, own first. Otherwise 404, the same as for one that doesn't exist. The browser keeps the 302 until the hour ends (4 below), so a Board costs one HEAD per picture on its first view in an hour, and none after.
 2. `?w=` answers with the thumbnail the job made (§1.6), or with the picture itself when there's none. The API never runs ffmpeg in hosted.
 3. **A `.vtt` is answered by the API itself,** a few KB read from R2. A `<track>` loaded from another origin needs the `<video>` to fetch in CORS mode and the bucket to allow our origin. Relaying the one small file keeps the bucket without a CORS rule and the web app unchanged.
 4. **Everything else is a 302 to a presigned GET** on R2's S3 endpoint. Presigned URLs don't work on custom domains, support ranges (films seek), and cost no egress.
@@ -124,7 +124,7 @@ The browser follows the redirect with the fragment it asked for (`#t=2` on the r
   | The API | HEADs, presigns, relays `.vtt` | the same, with no cache at all |
 
   Nothing moves in Phase D: the cache belongs to the store, and the store goes wherever the job runs.
-- **The cache is bounded** at 20 GB (`[storage] cache_gb`, question 3). After each job and at start, `R2Store.trim(cache_gb)` deletes the least recently used files until the cache is under 80% of its size. A cache hit touches the file. Files used in the last hour are skipped, so a running job keeps its inputs. A file ffmpeg has open survives being unlinked on Linux anyway.
+- **The cache is bounded** at 20 GB (`[storage] cache_gb`, question 3). After each job, `store.trim(cfg)` deletes the least recently used files until the cache is under 80% of its size. A cache hit touches the file. Files used in the last hour are skipped, so a running job keeps its inputs. A file ffmpeg has open survives being unlinked on Linux anyway.
 
 ### 1.7 ffmpeg's intermediates
 
@@ -177,21 +177,52 @@ One pull request, `feat/storage` (question 5), with a commit per step below. The
 
 ### C2: the R2 store (≈ 2 days)
 
-- [ ] **A commit of its own, with no change in behaviour:** `await ctx.store.file(…)` and `await on_item(…)` in the engines, `await store.put(…)` in `_stage`.
-- [ ] Migration 0005 (`/add-migration`), and the `steps` queries (`/add-query`).
-- [ ] `R2Store`, `store.of`, `get_steps` in `peek` and `_stage`, scratch clips, `trim`, `forget`.
-- [ ] Thumbnails made as pictures are stored.
-- [ ] `/api/assets` in hosted: HEAD, 302 to an hour-stable presigned URL, downloads, `.vtt` relayed. The fake S3 route for fake mode.
-- [ ] `hosted_client` runs on the fake S3. The exit tests.
-- [ ] CLAUDE.md's map (`store.py`, `providers/`), `.claude/rules/pipeline.md` for the async store, README for `[storage]`.
-- [ ] A manual run in fake hosted mode in a browser, on a scratch config and a free port: the Board, the reel, the film with subtitles, a download.
+- [x] **A commit of its own, with no change in behaviour:** `await ctx.store.file(…)` and `await on_item(…)` in the engines, `await store.put(…)` in `_stage`.
+- [x] Migration 0005 (`/add-migration`), and the `steps` queries (`/add-query`).
+- [x] `R2Store`, `store.of`, `get_steps` in `peek` and `_stage`, scratch clips, `trim`, `forget`.
+- [x] Thumbnails made as pictures are stored.
+- [x] `/api/assets` in hosted: HEAD, 302 to an hour-stable presigned URL, downloads, `.vtt` relayed. The fake S3 route for fake mode.
+- [x] `hosted_client` runs on the fake S3. The exit tests.
+- [x] CLAUDE.md's map (`store.py`, `providers/`), `.claude/rules/pipeline.md` for the async store, README for `[storage]`.
+- [x] A manual run in fake hosted mode in a browser, on a scratch config and a free port (26 Sep, port 8431, Chrome):
+  - sign-in through the fake page, then a 3-scene story rendered;
+  - the reel's and the Board's pictures all came from presigned URLs: 768 px thumbnails, 200s in the log;
+  - the subtitles track loaded through the API, with its 3 cues;
+  - the film's address answered 302, then 206 `video/mp4` from its presigned URL;
+  - Download MP4 saved as `the-lantern-keeper-v1.mp4`.
+
+  The `<video>` itself didn't start: Chrome keeps the automation tab hidden, and it defers media there. The server log shows the MP4 was never asked for. Press play once yourself on a real tab.
 - [ ] With your keys: one hosted film on `lanternist-dev` in a browser, fake models and real R2, to see the presigned URLs work from the real endpoint.
 
 **Exit** (the definition of done above): items 1–5, with `scripts/check` and `scripts/check postgres` green. Then this plan's and HOSTED_PLAN's boxes and status lines, and a comment on #16.
 
 ## 3. Where the build departed from the design
 
-Nothing yet: this section is written as the build goes.
+- **No memory of HEAD answers in the process.** The browser already keeps each 302 until the hour
+  ends, so a second in-process cache saved little, and it could have gone stale after a delete.
+- **The API asks R2 through the S3 client, not an `R2Store`.** Key names and presigning are
+  functions in `store.py` (`asset_key`, `derived_key`, `presigned`), so the API makes no cache
+  folders, now or after Phase D.
+- **`trim` runs after each job only,** not at start as well: nothing grows the cache while the
+  server is down.
+- **The local edition makes thumbnails as pictures are stored too,** one code path for both
+  editions. The route still makes one on request for a picture drawn before this change.
+  `test_a_picture_is_served_small_from_thumbnails_made_with_it` replaces the test that expected the
+  first request to make it.
+- **`Pipeline.find` is gone.** Locally there's one folder to look in; hosted asks R2.
+- **The estimate batches its lookups too,** as do the picture check's "all cached?" and the portraits
+  in `picture_items`: the estimate runs on every story page and at every enqueue. Opening a story and
+  its estimate costs the same step lookups for 12 scenes as for 3 (fewer than 20), where one lookup
+  per item made it 37 for 12
+  (`test_opening_a_story_looks_up_its_steps_in_as_many_queries_for_12_scenes_as_for_3`).
+- **`put_step` inserts first and updates on a conflict.** Updating first took SQLite's write lock
+  before the insert, so another writer couldn't land; `test_two_workers_recording_one_step_at_once_keep_one_record`
+  makes the race happen on both databases.
+- **The folder store takes `scratch` and ignores it,** since only R2 lets files expire. Ruff's
+  unused-argument check (ARG002) is silenced on those two lines, each with its reason.
+- **A step record that names a file R2 no longer has** raises `StoreError` rather than being a
+  miss: only a hand deletion on the bucket could cause it, and a HEAD for every record to rule it
+  out would cost every cached re-render a request per file.
 
 Departures from HOSTED_PLAN and the issue, decided in this plan:
 - Scratch lives at `scratch/u/<user>/`, not under `u/<user>/` (§1.1).

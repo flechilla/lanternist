@@ -17,7 +17,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import check, prompts, registry, text, timing
+from . import check, prompts, registry, store, text, timing
 from . import llm as llms
 from .config import Settings
 from .db import Database, now
@@ -36,7 +36,7 @@ from .engines.base import (
     keyframe_size,
 )
 from .engines.local import Clips, Mix
-from .store import Store, step_key
+from .store import step_key
 from .storyboard import Scene, Storyboard, next_seed
 from .writer import narration_seconds
 
@@ -74,6 +74,18 @@ ACTIONS = {
     "mix": "Mixing the film",
     "sample": "Recording a voice sample",
 }
+
+
+def thumbnail_width(width: int) -> int:
+    """The smallest of THUMBNAIL_WIDTHS that's at least `width`, else the largest."""
+    return next((t for t in THUMBNAIL_WIDTHS if t >= width), THUMBNAIL_WIDTHS[-1])
+
+
+def thumbnail_name(asset: str, width: int) -> str:
+    """What a picture's JPEG about `width` wide is called, beside the picture."""
+    if not asset.endswith(PICTURE_TYPES):
+        raise ValueError(f"only a picture can be served smaller, and {asset} isn't one")
+    return f"{THUMBNAIL}-w{thumbnail_width(width)}.jpg"
 
 
 class BudgetExceeded(RuntimeError):
@@ -219,7 +231,7 @@ class Pipeline:
         everyone shares, for what sounds the same to everyone: a voice's sample."""
         self.cfg = cfg
         self.owner = owner
-        self.store = Store(cfg.library_for(None if shared else owner))
+        self.store = store.of(cfg, db, None if shared else owner)
         self._emit = emit or (lambda e: None)
         self.db, self.story_id, self.job_id = db, story_id, job_id
         self.user_cancelled = user_cancelled
@@ -258,14 +270,14 @@ class Pipeline:
         asset: str,
         bind: Callable[[Item, dict[str, dict]], None] | None = None,
         failing: Callable[[dict], str | None] | None = None,
+        scratch: bool = False,
     ) -> dict[str, dict]:
         """Serve what the cache holds, make the rest as one batch, and store each output as it lands.
         Returns every item's step record, by item id. `failing` reads a verdict from a record: why
-        it fails, or None, so the progress shows a failed picture as soon as its verdict is in."""
-        records: dict[str, dict] = {}
-        for it in items:
-            if rec := self.cached(it):
-                records[it.id] = rec
+        it fails, or None, so the progress shows a failed picture as soon as its verdict is in.
+        `scratch`: ffmpeg can make the outputs again for nothing, so the hosted store lets them expire."""
+        found = self.cached_all(items)
+        records = {it.id: found[it.key] for it in items if it.key in found}
         pending = [it for it in items if it.id not in records]
         # Each progress row counts its own items: the cast sheet reports apart from the pictures.
         rows = list(dict.fromkeys(it.stage or stage for it in items))
@@ -296,10 +308,16 @@ class Pipeline:
                 if it.key is None:
                     raise RuntimeError(f"{it.id} came back before its key was bound")
                 # Copied, not moved, when a later item in this batch still reads it from the work dir.
-                main = await self.store.put(out.path, move=it.id not in waited_on)
-                assets = {asset: main} | {k: await self.store.put(p) for k, p in out.extra.items()}
+                main = await self.store.put(out.path, move=it.id not in waited_on, scratch=scratch)
+                assets = {asset: main} | {
+                    k: await self.store.put(p, scratch=scratch) for k, p in out.extra.items()
+                }
+                if main.endswith(PICTURE_TYPES):  # made now, so no page waits on ffmpeg for one
+                    for w in THUMBNAIL_WIDTHS:
+                        await self.thumbnail(main, w)
+                # Recorded only once its files are stored: a record means they're there.
                 records[it.id] = self.store.put_step(
-                    it.key, {"assets": assets, "meta": out.meta, "secs": out.secs}
+                    it.key, {"assets": assets, "meta": out.meta, "secs": out.secs}, scratch=scratch
                 )
                 row = it.stage or stage
                 self._log_local(maker, row, it, out)
@@ -476,7 +494,8 @@ class Pipeline:
         cast = rec["assets"]["image"] if rec else None
         portraits = self.portrait_items(eng, sb, cast)
         if _portraits(sb):
-            drawn = {it.id: r for it in portraits if (r := self.cached(it))}
+            found = self.cached_all(portraits)
+            drawn = {it.id: found[it.key] for it in portraits if it.key in found}
             faces = self.faces(sb, cast, drawn)
             pending = {"cast", *(it.id for it in portraits if it.id not in drawn)}
             keyframes = []
@@ -499,6 +518,10 @@ class Pipeline:
     def cached(self, it: Item) -> dict | None:
         """The item's step record if the cache holds it; an item without a key yet is never cached."""
         return self.store.get_step(it.key) if it.key else None
+
+    def cached_all(self, items: list[Item]) -> dict[str, dict]:
+        """The records the cache holds for these items, by key, in one lookup."""
+        return self.store.get_steps([it.key for it in items if it.key])
 
     async def draw(self, sb: Storyboard, cast_only: bool = False) -> tuple[str | None, list[str]]:
         """The cast sheet, the portraits and one keyframe per scene, as one batch. An item drawn from a
@@ -582,7 +605,8 @@ class Pipeline:
             llms.Calls(self.db, self.story_id, self.job_id, stage="check", owner=self.owner),
         )
         items = self.check_items(sb, keyframes, model)
-        if any(not self.cached(it) for it in items):
+        found = self.cached_all(items)
+        if any(it.key not in found for it in items):
             await checker.price()  # a board all cached asks nothing, so it needs no prices, nor the network
         try:
             records = await self._stage("check", checker, items, "verdict", failing=check.failing)
@@ -697,7 +721,7 @@ class Pipeline:
 
     async def clips(self, sb: Storyboard, board: Board, motions: dict[int, str]) -> list[str]:
         items = self._clip_items(sb, board, motions)
-        records = await self._stage("clips", Clips(), items, "video")
+        records = await self._stage("clips", Clips(), items, "video", scratch=True)
         return [records[it.id]["assets"]["video"] for it in items]
 
     # ---------------------------------------------------------------- mix
@@ -752,8 +776,10 @@ class Pipeline:
         except (FileNotFoundError, ValueError):  # a recording that isn't there, or no such preset
             tts, out["voice_ok"] = None, False
         narration = []
-        for it, row in zip(self.narration_items(sb, tts) if tts else [], scenes, strict=False):
-            if rec := self.cached(it):
+        spoken = self.narration_items(sb, tts) if tts else []
+        found = self.cached_all(spoken)
+        for it, row in zip(spoken, scenes, strict=False):
+            if rec := found.get(it.key or ""):
                 row["audio"], row["duration"] = rec["assets"]["audio"], rec["meta"]["duration"]
                 narration.append(_narration(rec))
         try:
@@ -763,8 +789,9 @@ class Pipeline:
         sheet, _, keyframes = self.picture_items(img, sb)
         if sheet and (rec := self.cached(sheet[0])):
             out["cast"] = rec["assets"]["image"]
+        found = self.cached_all(keyframes)
         for it, row in zip(keyframes, scenes, strict=True):
-            rec = self.cached(it)
+            rec = found.get(it.key or "")
             row["keyframe"] = rec["assets"]["image"] if rec else None
         if len(narration) == len(sb.scenes):
             tl = self.timeline(sb, [n.duration for n in narration])
@@ -775,33 +802,25 @@ class Pipeline:
                 except ValueError:  # the story's video model left the registry: none of it is cached
                     return out
                 by_scene = {row["n"]: row for row in scenes}
-                for it in self.motion_items(sb, tl, [r["keyframe"] for r in scenes], video):
-                    rec = self.cached(it)
+                motion = self.motion_items(sb, tl, [r["keyframe"] for r in scenes], video)
+                found = self.cached_all(motion)
+                for it in motion:
+                    rec = found.get(it.key or "")
                     by_scene[it.scene]["motion"] = rec["assets"]["video"] if rec else None
         return out
 
     # ---------------------------------------------------------------- for the pages
-    def find(self, asset: str) -> Path | None:
-        """One of the owner's files, or one everyone shares (a voice's sample); None when it's neither,
-        which is also what another user's file is."""
-        if (own := self.store.path(asset)).is_file():
-            return own
-        shared = Store(self.cfg.library_for(None)).path(asset)
-        return shared if shared.is_file() else None
-
     async def thumbnail(self, asset: str, width: int) -> Path:
-        """A picture as a JPEG as wide as the smallest of THUMBNAIL_WIDTHS that's at least `width`, else
-        the largest; made the first time it's asked for and kept, so a page never loads a 3 MB PNG."""
-        if not asset.endswith(PICTURE_TYPES):
-            raise ValueError(f"only a picture can be served smaller, and {asset} isn't one")
-        w = next((t for t in THUMBNAIL_WIDTHS if t >= width), THUMBNAIL_WIDTHS[-1])
-        path = self.store.derived(asset, f"{THUMBNAIL}-w{w}.jpg")
+        """A picture as a JPEG `thumbnail_name` wide; made when the picture is stored, or the first time
+        it's asked for (a picture drawn before thumbnails were), and kept, so a page never loads a 3 MB PNG."""
+        w = thumbnail_width(width)
+        name = thumbnail_name(asset, w)
+        path = self.store.derived(asset, name)
         if not path.is_file():
             work = self.store.tmp()
             try:
-                await ffmpeg.thumbnail(self.store.path(asset), work / "thumb.jpg", w)
-                path.parent.mkdir(parents=True, exist_ok=True)
-                (work / "thumb.jpg").replace(path)  # whole or not at all, if two pages ask at once
+                await ffmpeg.thumbnail(await self.store.file(asset), work / "thumb.jpg", w)
+                await self.store.put_derived(asset, name, work / "thumb.jpg")
             finally:
                 shutil.rmtree(work, ignore_errors=True)
         return path

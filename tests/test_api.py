@@ -81,18 +81,23 @@ def test_story_lifecycle(client, wait):
     assert client.get(f"/api/stories/{sid}").status_code == 404
 
 
-def test_a_picture_is_served_small_and_made_once(client, wait, tmp_path):
+def test_a_picture_is_served_small_from_thumbnails_made_with_it(client, wait, tmp_path):
     sid = client.post("/api/stories", json={"storyboard": storyboard(1)}).json()["story"]["id"]
     wait(client.post(f"/api/stories/{sid}/board").json()["id"])
     picture = client.get(f"/api/stories/{sid}").json()["board"]["scenes"][0]["keyframe"]
+    sha = picture.split(".")[0]
+    # Both widths were made as the picture was stored, before any page asked for one.
+    made = {p.name.removeprefix(f"{sha}-"): p for p in (tmp_path / "lib" / "derived").rglob(f"{sha}-*")}
+    assert sorted(made) == ["thumb@1-w384.jpg", "thumb@1-w768.jpg"]
+    kept = made["thumb@1-w768.jpg"]
+    made_at = kept.stat().st_mtime_ns
     full = client.get(f"/api/assets/{picture}")
 
     small = client.get(f"/api/assets/{picture}?w=500")
     assert small.status_code == 200 and small.headers["content-type"] == "image/jpeg"
     assert len(small.content) * 5 < len(full.content)
-    [kept] = (tmp_path / "lib" / "derived").rglob("*.jpg")
-    assert kept.name.endswith("-thumb@1-w768.jpg")
-    made = kept.stat().st_mtime_ns
+    assert small.content == kept.read_bytes()
+    made = made_at
     assert client.get(f"/api/assets/{picture}?w=2000").content == small.content  # the largest there is
     assert kept.stat().st_mtime_ns == made  # served as kept, not made again
     assert len(client.get(f"/api/assets/{picture}?w=300").content) < len(small.content)  # a reel's slide

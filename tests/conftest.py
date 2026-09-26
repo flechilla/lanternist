@@ -11,6 +11,7 @@ import os
 import time
 import uuid
 from collections.abc import Iterator
+from contextlib import contextmanager
 
 import pytest
 from fastapi.testclient import TestClient
@@ -163,6 +164,27 @@ def db(database_url) -> Iterator[Database]:
     d.migrate()
     yield d
     d.close()
+
+
+@contextmanager
+def _statements(db: Database) -> Iterator[list[str]]:
+    sent: list[str] = []
+
+    def count(_conn, _cursor, statement, *_) -> None:
+        sent.append(statement)
+
+    event.listen(db.engine, "before_cursor_execute", count)
+    try:
+        yield sent
+    finally:
+        event.remove(db.engine, "before_cursor_execute", count)
+
+
+@pytest.fixture
+def statements():
+    """`with statements(db) as sent:` collects the statements the database is sent while the block runs,
+    to show that a page costs the same number of queries however much it lists."""
+    return _statements
 
 
 @pytest.fixture

@@ -14,7 +14,7 @@ import traceback
 from collections.abc import Sequence
 from typing import Any, cast
 
-from . import pace, prefs
+from . import pace, prefs, store
 from .config import Settings
 from .db import TERMINAL, Database, Job, now
 from .keys import redact
@@ -309,6 +309,8 @@ class Runner:
                     await asyncio.wait_for(wake.wait(), timeout=5)
                 continue
             await self.run(job, fast)
+            if self.cfg.hosted_edition:  # the disk cache of R2's files, kept under [storage] cache_gb
+                await asyncio.to_thread(store.trim, self.cfg)
 
     async def run(self, job: Job, fast: bool = False) -> None:
         """Run a job the queue has claimed (marked running) to its end."""

@@ -6,18 +6,25 @@ that person's machine (its keys, its doctor, its recordings), which live on the 
 
 import asyncio
 import json
-import mimetypes
 import re
 import subprocess
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import httpx
 from fastapi import APIRouter, Body, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 
-from .. import auth, keys, llm, prefs
+from .. import auth, keys, llm, prefs, store
 from ..auth import Me
 from ..config import settings
 from ..db import Database, Job, StaleVersion, Story, StoryVersion, to_micros, to_usd
@@ -25,8 +32,9 @@ from ..engines import catalog as engines
 from ..engines.ffmpeg import FfmpegError
 from ..estimate import Kind, estimate
 from ..jobs import Runner, is_terminal
-from ..pipeline import Pipeline
-from ..store import Store
+from ..pipeline import Pipeline, thumbnail_name
+from ..providers import fake_world, transport
+from ..providers.s3 import FAKE_S3, S3
 from ..storyboard import Storyboard, next_seed, slugify
 from ..text import LANGUAGES
 from ..voices import find_voice
@@ -42,6 +50,8 @@ runner = Runner(cfg, db)
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    if cfg.hosted_edition:
+        S3(cfg)  # the hosted edition's files are on R2: without its bucket and keys, say which to set
     db.migrate()
     runner.start()
     yield
@@ -493,14 +503,14 @@ async def get_asset(asset: str, me: Me, download: str | None = None, w: int | No
     smaller JPEG (`Pipeline.thumbnail`). Another user's file is not found, as a missing one is."""
     if not ASSET.match(asset):
         raise HTTPException(400, "bad asset id")
+    if cfg.hosted_edition:
+        return await _from_r2(asset, me.id, download, w)
     pipeline = Pipeline(cfg, owner=me.id)
-    path = pipeline.find(asset)
-    if path is None:
+    path = pipeline.store.path(asset)
+    if not path.is_file():
         raise HTTPException(404, "asset not found")
     # An asset never changes under its name; a thumbnail can, when THUMBNAIL does, so it's checked daily.
-    # A hosted user's file is theirs alone, so no cache in between may keep it for someone else.
-    who = "private" if cfg.hosted_edition else "public"
-    headers = {"Cache-Control": f"{who}, max-age=31536000, immutable"}
+    headers = {"Cache-Control": "public, max-age=31536000, immutable"}
     if w is not None:
         try:
             path = await pipeline.thumbnail(asset, w)
@@ -510,17 +520,49 @@ async def get_asset(asset: str, me: Me, download: str | None = None, w: int | No
             raise HTTPException(
                 500, f"The picture {asset} can't be read. Draw its scene again on the Board."
             ) from None
-        headers = {"Cache-Control": f"{who}, max-age=86400"}
-    media = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-    if asset.endswith(".vtt"):
-        media = "text/vtt"
+        headers = {"Cache-Control": "public, max-age=86400"}
     return FileResponse(
         path,
-        media_type=media,
+        media_type=store.content_type(path.name),
         headers=headers,
         filename=download or None,
         content_disposition_type="attachment" if download else "inline",
     )
+
+
+async def _from_r2(asset: str, owner: str, download: str | None, w: int | None) -> Response:
+    """The hosted edition's files are on R2, and the browser fetches them from there: a 302 to a URL
+    signed for the hour. Only subtitles come through us, since a <track> loads from our own origin."""
+    s3 = S3(cfg)
+    for whose in (owner, None):  # the user's own, then what everyone shares
+        key = store.asset_key(whose, asset)
+        if await s3.head(key) is not None:
+            break
+    else:
+        raise HTTPException(404, "asset not found")
+    if w is not None:
+        try:
+            thumb = store.derived_key(whose, asset, thumbnail_name(asset, w))
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from None
+        if await s3.head(thumb) is not None:  # else a picture drawn before thumbnails were: the picture
+            key = thumb
+    if asset.endswith(".vtt"):
+        return Response(await s3.read(key), media_type="text/vtt", headers={"Cache-Control": store.IMMUTABLE})
+    url, seconds = store.presigned(s3, key, download)
+    return RedirectResponse(url, status_code=302, headers={"Cache-Control": f"private, max-age={seconds}"})
+
+
+if cfg.hosted_edition and cfg.fake_engines:
+
+    @app.api_route(f"{FAKE_S3}/{{path:path}}", methods=["GET", "HEAD"], include_in_schema=False)
+    async def fake_s3(request: Request) -> Response:
+        """Fake mode's R2, where presigned URLs lead: the fake the S3 client stores into, which checks
+        each signature and expiry as R2 does."""
+        transport(cfg)  # makes the fake services, if nothing has yet
+        sent = httpx.Request(request.method, str(request.url), headers=request.headers.raw)
+        got = await fake_world().s3.handle(sent)
+        return Response(got.content, status_code=got.status_code, headers=dict(got.headers))
 
 
 @app.get("/api/voices/catalog")
@@ -528,7 +570,7 @@ def voice_catalog(me: Me, language: str = "en", tts: str = ""):
     """The voices a narration model offers, each with its sample if one was made."""
     eff = prefs.effective(cfg, db, me.id)
     try:
-        return engines.voices(eff, db, Store(eff.library_for(None)), tts or eff.defaults.tts, language)
+        return engines.voices(eff, db, store.of(eff, db, None), tts or eff.defaults.tts, language)
     except ValueError as e:
         raise HTTPException(422, str(e)) from None
 
@@ -551,7 +593,7 @@ def voice_sample(body: SampleBody, me: Me):
         eng = engines.sampler(eff, db, model, body.voice, body.language)
     except (FileNotFoundError, ValueError) as e:
         raise HTTPException(422, str(e)) from None
-    if audio := engines.cached_sample(Store(eff.library_for(None)), eng, body.language):
+    if audio := engines.cached_sample(store.of(eff, db, None), eng, body.language):
         return {"audio": audio, "job": None}
     params = {"tts": model, "voice": body.voice, "language": body.language}
     return {"audio": None, "job": job_dict(runner.enqueue(me.id, None, "sample", None, params))}
