@@ -30,7 +30,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from .config import Settings
+from .config import SHARED_FOLDER, USERS_FOLDER, Settings, owner_folder
 from .db import EVERYONE, Database, now
 from .providers.s3 import S3, attachment
 
@@ -98,7 +98,7 @@ class Store:
         return self.path(asset)
 
     async def files(self, assets: list[str]) -> list[Path]:
-        return list(await asyncio.gather(*(self.file(a) for a in assets)))
+        return [await self.file(a) for a in assets]
 
     def sha(self, asset: str) -> str:
         return asset.split(".", 1)[0]
@@ -145,21 +145,17 @@ class Store:
         return Path(tempfile.mkdtemp(dir=self.tmp_root))
 
 
-def _prefix(owner: str | None) -> str:
-    return "shared" if owner is None else f"u/{owner}"
-
-
 def asset_key(owner: str | None, asset: str) -> str:
     """Where an owner's asset is on R2; owner None for what everyone shares."""
-    return f"{_prefix(owner)}/assets/{asset[:2]}/{asset}"
+    return f"{owner_folder(owner)}/assets/{asset[:2]}/{asset}"
 
 
 def scratch_key(owner: str | None, asset: str) -> str:
-    return f"scratch/{_prefix(owner)}/{asset[:2]}/{asset}"
+    return f"scratch/{owner_folder(owner)}/{asset[:2]}/{asset}"
 
 
 def derived_key(owner: str | None, asset: str, name: str) -> str:
-    return f"{_prefix(owner)}/derived/{asset[:2]}/{asset.split('.', 1)[0]}-{name}"
+    return f"{owner_folder(owner)}/derived/{asset[:2]}/{asset.split('.', 1)[0]}-{name}"
 
 
 def presigned(s3: S3, key: str, download: str | None = None) -> tuple[str, int]:
@@ -199,8 +195,18 @@ class R2Store(Store):
         ):
             return path
         raise StoreError(
-            f"{asset} is on neither this machine nor R2 (under {_prefix(self.owner)}/), though a step record names it"
+            f"{asset} is on neither this machine nor R2 (under {owner_folder(self.owner)}/), though a step record names it"
         )
+
+    async def files(self, assets: list[str]) -> list[Path]:
+        """Fetched together, a few at a time: a mix on a new machine reads every scene's clip."""
+        at_once = asyncio.Semaphore(self.s3.cfg.storage.downloads)
+
+        async def one(asset: str) -> Path:
+            async with at_once:
+                return await self.file(asset)
+
+        return list(await asyncio.gather(*(one(a) for a in assets)))
 
     async def put_derived(self, asset: str, name: str, src: Path) -> Path:
         path = await super().put_derived(asset, name, src)
@@ -235,7 +241,7 @@ def trim(cfg: Settings) -> int:
     """Keep the hosted disk cache under [storage] cache_gb: once it's over, delete the least recently used
     files until it's down to TRIM_TO of it, and never one used in the last hour. Returns the bytes freed."""
     files = []
-    for base in (cfg.library / "u", cfg.library / "shared"):
+    for base in (cfg.library / USERS_FOLDER, cfg.library / SHARED_FOLDER):
         for p in base.rglob("*") if base.is_dir() else ():
             if p.is_file() and "tmp" not in p.relative_to(base).parts:
                 st = p.stat()
@@ -256,8 +262,10 @@ async def forget(cfg: Settings, db: Database, owner: str) -> None:
     """Delete everything an account stored: its files on R2, under both of its prefixes, its step records
     and its disk cache. Running it again finds nothing more to delete. Phase I's account deletion calls
     it, with the account's stories."""
+    if not cfg.hosted_edition:  # where the owner's folder is the whole library, the user's own
+        raise StoreError("only a hosted account can be forgotten: a local library is deleted by hand")
     s3 = S3(cfg)
-    for prefix in (f"{_prefix(owner)}/", f"scratch/{_prefix(owner)}/"):
+    for prefix in (f"{owner_folder(owner)}/", f"scratch/{owner_folder(owner)}/"):
         await s3.delete_prefix(prefix)
     db.forget_steps(owner)
     shutil.rmtree(cfg.library_for(owner), ignore_errors=True)

@@ -527,6 +527,10 @@ class FakeS3:
     page: int = 1000  # keys per list page; a test makes it small to see the paging
     now: Callable[[], datetime] = lambda: datetime.now(UTC)
     fail: list[int] = field(default_factory=list)  # the next requests answer these statuses
+    undeletable: set[str] = field(default_factory=set)  # keys a DeleteObjects keeps, with an <Error> each
+    pace: float = 0.0  # seconds a GET of an object takes, so a test sees how many run at once
+    most_at_once: int = 0  # the most GETs of objects that were running together
+    _running: int = 0
     meta: dict[str, dict[str, str]] = field(
         default_factory=dict
     )  # bucket/key -> the headers it was stored with
@@ -552,9 +556,13 @@ class FakeS3:
             return _s3_error(self.fail.pop(0), "InternalError", "a fake failure")
         if not key:
             if request.method == "POST" and "delete" in query:
-                for gone in re.findall(r"<Key>(.*?)</Key>", body.decode()):
-                    self.file(bucket, html.unescape(gone)).unlink(missing_ok=True)
-                return httpx.Response(200, content=b"<DeleteResult/>")
+                errors = ""
+                for gone in (html.unescape(k) for k in re.findall(r"<Key>(.*?)</Key>", body.decode())):
+                    if gone in self.undeletable:
+                        errors += f"<Error><Key>{html.escape(gone)}</Key><Code>AccessDenied</Code></Error>"
+                    else:
+                        self.file(bucket, gone).unlink(missing_ok=True)
+                return httpx.Response(200, content=f"<DeleteResult>{errors}</DeleteResult>".encode())
             return self._list(bucket, query)
         target = self.file(bucket, key)
         if request.method == "PUT":
@@ -568,6 +576,10 @@ class FakeS3:
             return httpx.Response(204)
         if not target.is_file():
             return _s3_error(404, "NoSuchKey", "The specified key does not exist.")
+        self._running += 1
+        self.most_at_once = max(self.most_at_once, self._running)
+        await asyncio.sleep(self.pace)
+        self._running -= 1
         data = target.read_bytes()
         headers = {"accept-ranges": "bytes", **self.meta.get(f"{bucket}/{key}", {})}
         for name in ("content-disposition", "content-type", "cache-control"):

@@ -18,16 +18,18 @@ branch_labels = None
 depends_on = None
 
 
+USERS = sa.table(
+    "users",
+    sa.column("id", sa.String),
+    sa.column("auth_subject", sa.String),
+    sa.column("role", sa.String),
+    sa.column("created_at", sa.DateTime),
+)
+
+
 def upgrade():
-    users = sa.table(
-        "users",
-        sa.column("id", sa.String),
-        sa.column("auth_subject", sa.String),
-        sa.column("role", sa.String),
-        sa.column("created_at", sa.DateTime),
-    )
     created = datetime.now(UTC).replace(tzinfo=None)
-    op.bulk_insert(users, [{"id": "shared", "auth_subject": "shared", "role": "user", "created_at": created}])
+    op.bulk_insert(USERS, [{"id": "shared", "auth_subject": "shared", "role": "user", "created_at": created}])
     op.create_table(
         "steps",
         sa.Column(
@@ -46,4 +48,4 @@ def upgrade():
 
 def downgrade():
     op.drop_table("steps")
-    op.execute("DELETE FROM users WHERE id = 'shared'")
+    op.execute(USERS.delete().where(USERS.c.id == "shared"))

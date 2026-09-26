@@ -10,9 +10,10 @@ is all cache hits and an edit re-runs only the steps it reaches. A stage asks it
 the GPU lease, a remote one runs the items concurrently and never touches the GPU.
 """
 
+import asyncio
 import logging
 import shutil
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -74,6 +75,18 @@ ACTIONS = {
     "mix": "Mixing the film",
     "sample": "Recording a voice sample",
 }
+
+
+async def whole(work: Awaitable[None]) -> None:
+    """Run `work` to its end, even when the task awaiting it is cancelled meanwhile, and then let the
+    cancel go on. Storing an output fal was paid for mustn't stop halfway: a file without its record
+    is paid for again on the next run. The stage's work dir outlives it, since the stage waits here."""
+    task = asyncio.ensure_future(work)
+    try:
+        await asyncio.shield(task)
+    except asyncio.CancelledError:
+        await task
+        raise
 
 
 def thumbnail_width(width: int) -> int:
@@ -303,7 +316,7 @@ class Pipeline:
             work = self.store.tmp()
             waited_on = {a for it in pending for a in it.after}
 
-            async def on_item(out: Output) -> None:
+            async def keep(out: Output) -> None:
                 it = out.item
                 if it.key is None:
                     raise RuntimeError(f"{it.id} came back before its key was bound")
@@ -312,9 +325,7 @@ class Pipeline:
                 assets = {asset: main} | {
                     k: await self.store.put(p, scratch=scratch) for k, p in out.extra.items()
                 }
-                if main.endswith(PICTURE_TYPES):  # made now, so no page waits on ffmpeg for one
-                    for w in THUMBNAIL_WIDTHS:
-                        await self.thumbnail(main, w)
+                await self._thumbnails(main)
                 # Recorded only once its files are stored: a record means they're there.
                 records[it.id] = self.store.put_step(
                     it.key, {"assets": assets, "meta": out.meta, "secs": out.secs}, scratch=scratch
@@ -352,12 +363,18 @@ class Pipeline:
                     self._check_budget(stage, maker.estimate(pending).micros)
                     if isinstance(maker, Engine) and self.db is not None:
                         await registry.ensure_synced(self.cfg, self.db)
-                await maker.run(pending, ctx, on_item)
+                await maker.run(pending, ctx, lambda out: whole(keep(out)))
             finally:
                 shutil.rmtree(work, ignore_errors=True)
         for row in rows:
             self.emit(row, "finish", done=total[row], total=total[row])
         return records
+
+    async def _thumbnails(self, asset: str) -> None:
+        """A picture's smaller copies, made as it's stored, so no page waits on ffmpeg for one."""
+        if asset.endswith(PICTURE_TYPES):
+            for w in THUMBNAIL_WIDTHS:
+                await self.thumbnail(asset, w)
 
     def _check_budget(self, stage: str, need: int) -> None:
         """Stop before a remote stage that would take the story past its budget."""

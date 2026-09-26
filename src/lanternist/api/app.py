@@ -533,20 +533,20 @@ async def get_asset(asset: str, me: Me, download: str | None = None, w: int | No
 async def _from_r2(asset: str, owner: str, download: str | None, w: int | None) -> Response:
     """The hosted edition's files are on R2, and the browser fetches them from there: a 302 to a URL
     signed for the hour. Only subtitles come through us, since a <track> loads from our own origin."""
+    try:
+        thumb = [thumbnail_name(asset, w)] if w is not None else []
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from None
     s3 = S3(cfg)
-    for whose in (owner, None):  # the user's own, then what everyone shares
-        key = store.asset_key(whose, asset)
+    # The user's own, then what everyone shares. A thumbnail is looked for first: it's there for every
+    # picture drawn since they were made with it, and being under the owner's prefix is what shows whose.
+    tries = [store.derived_key(whose, asset, name) for whose in (owner, None) for name in thumb]
+    tries += [store.asset_key(whose, asset) for whose in (owner, None)]
+    for key in tries:
         if await s3.head(key) is not None:
             break
     else:
         raise HTTPException(404, "asset not found")
-    if w is not None:
-        try:
-            thumb = store.derived_key(whose, asset, thumbnail_name(asset, w))
-        except ValueError as e:
-            raise HTTPException(422, str(e)) from None
-        if await s3.head(thumb) is not None:  # else a picture drawn before thumbnails were: the picture
-            key = thumb
     if asset.endswith(".vtt"):
         return Response(await s3.read(key), media_type="text/vtt", headers={"Cache-Control": store.IMMUTABLE})
     url, seconds = store.presigned(s3, key, download)

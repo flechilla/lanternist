@@ -92,7 +92,7 @@ Two backends behind the same methods. The folder is today's `Store`. `R2Store` e
 - **One PUT per file.** R2 takes up to 5 GB in a single PUT; a 4-minute film is 350–400 MB. The body streams from the file.
 - **Errors:** `S3Error(ProviderError)`, with a sentence: "R2 refused the upload of u/…/film.mp4: check R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY". 429, 5xx and transport errors are retried with `providers.backoff()`. A 403 or 404 isn't.
 - **Keys.** `keys.PLATFORM` gains `r2_key_id: R2_ACCESS_KEY_ID` and `r2: R2_SECRET_ACCESS_KEY`: from the environment only, and scrubbed by `redact()` (invariant 4). The access key id isn't a secret: S3's design puts it in every presigned URL, in `X-Amz-Credential`.
-- **Config.** `[storage] endpoint` (`https://<account id>.r2.cloudflarestorage.com`), `bucket`, and `cache_gb` (question 3), documented in `lanternist.example.toml`. Hosted refuses to start without the endpoint, the bucket or the keys, and says which to set. Fake mode fills them in.
+- **Config.** `[storage] endpoint` (`https://<account id>.r2.cloudflarestorage.com`), `bucket`, `cache_gb` (question 3) and `downloads` (files a stage fetches at once, 8), documented in `lanternist.example.toml`. Hosted refuses to start without the endpoint, the bucket or the keys, and says which to set. Fake mode fills them in.
 
 ### 1.5 Serving files
 
@@ -135,7 +135,7 @@ The browser follows the redirect with the fragment it asked for (`#t=2` on the r
 ### 1.8 Deleting
 
 - **A story:** its rows, as today. Its files and cache records stay under the owner's prefix, since the owner's other stories may share them, and no one else can reach them. They go with the account. A sweep for files no record names can come later, if the bill says so.
-- **An account:** `storage.forget(cfg, db, owner)` deletes `u/<user>/` and `scratch/u/<user>/` on R2, the owner's `steps` rows and their disk cache. It's idempotent: a second run finds nothing to delete. Phase I's account deletion calls it, along with the stories and the Stripe customer (question 4). The `user.deleted` webhook stays as Phase B left it.
+- **An account:** `store.forget(cfg, db, owner)` deletes `u/<user>/` and `scratch/u/<user>/` on R2, the owner's `steps` rows and their disk cache. It's idempotent: a second run finds nothing to delete. Phase I's account deletion calls it, along with the stories and the Stripe customer (question 4). The `user.deleted` webhook stays as Phase B left it.
 
 ### 1.9 Tests
 
@@ -220,6 +220,23 @@ One pull request, `feat/storage` (question 5), with a commit per step below. The
   makes the race happen on both databases.
 - **The folder store takes `scratch` and ignores it,** since only R2 lets files expire. Ruff's
   unused-argument check (ARG002) is silenced on those two lines, each with its reason.
+- **Found by the self-review, and fixed:**
+  - **A user's cancel could lose a paid output,** in both editions. Storing an output now awaits an
+    upload and two thumbnails before its record, and a cancel in between kept the file but not the
+    record, so the next run paid again. `pipeline.whole()` now finishes storing an output before the
+    cancel goes on (`test_a_cancel_while_an_output_is_stored_still_records_it`).
+  - **`store.forget` would have deleted a local library:** there, the owner's folder is the library
+    itself. It now refuses outside hosted.
+  - **Deleting a prefix read no errors.** R2 answers DeleteObjects with a 200 that can still name
+    keys it kept, and a missing bucket listed as empty. Both now raise with the key or the bucket.
+  - **The voice catalogue asked once per voice;** now once in all.
+  - **`files()` fetched every clip at once;** now `[storage] downloads` at a time.
+  - **The per-owner layout lived in three places;** now `config.owner_folder` and its two folder
+    names.
+  - **A thumbnail cost two or three HEADs;** now one: the thumbnail under the user's prefix, which
+    shows it's theirs.
+  - Smaller: the migration's downgrade uses a table construct rather than SQL, and a test lost a
+    reused name.
 - **A step record that names a file R2 no longer has** raises `StoreError` rather than being a
   miss: only a hand deletion on the bucket could cause it, and a HEAD for every record to rule it
   out would cost every cached re-render a request per file.
@@ -243,7 +260,7 @@ Each answer was the recommendation.
    - **Still yours:** create an R2 API token in the dashboard (R2 object storage → Manage API tokens), **Object Read & Write**, limited to `lanternist-dev`, and put its two values on those lines. Never in a chat or an issue.
 2. **Signing: our own SigV4,** about 50 lines of `hmac`, `hashlib` and `urllib.parse`, pinned by AWS's published examples and the live test. No new dependency, as `.claude/rules/remote.md` prefers ("Don't add an SDK"). botocore, as HOSTED_PLAN planned, would have added 20 MB and 3 more packages, and a subclass copying its `add_auth` to sign at a fixed hour.
 3. **The disk cache: 20 GB** (`[storage] cache_gb`), least recently used first, trimmed after each job to 16 GB. That's about 13 renders' worth of working files (a 4-minute film's clips and inputs are about 1.5 GB), on a CX43's 160 GB disk.
-4. **Deleting an account: `storage.forget`, built and tested now,** for Phase I's account deletion to call along with the stories and the Stripe customer. Deleting files from the `user.deleted` webhook now would leave stories whose pictures are gone, and there are no users to delete before the beta.
+4. **Deleting an account: `store.forget`, built and tested now,** for Phase I's account deletion to call along with the stories and the Stripe customer. Deleting files from the `user.deleted` webhook now would leave stories whose pictures are gone, and there are no users to delete before the beta.
 5. **One pull request** for the phase, `feat/storage`, as for Phase B.
 
 ## 5. Sources (read 26 Sep 2026)

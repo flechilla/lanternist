@@ -99,13 +99,16 @@ def voices(cfg: Settings, db: Database | None, store: Store, model_id: str, lang
     (none in the hosted edition, which clones no one's voice). Each comes with its sample when one was
     made; `sample_usd` is what making one costs."""
     e = entry(cfg, db, model_id, "tts.speak")
+    recordings = list_voices(cfg) if e.clone and not cfg.hosted_edition else []
+    # Every sample in one lookup. A local narrator has none: the recording itself is the sample.
+    names = [] if e.provider == "local" else [*e.voices, *(r["name"] for r in recordings)]
+    keys = {v: sample_item(tts(cfg, db, e.id, v, language), language).key or "" for v in names}
+    made = store.get_steps(list(keys.values()))
 
     def sample(voice: str) -> str | None:
-        if e.provider == "local":
-            return None  # the recording itself is the sample
-        return cached_sample(store, tts(cfg, db, e.id, voice, language), language)
+        rec = made.get(keys.get(voice, ""))
+        return rec["assets"]["audio"] if rec else None
 
-    recordings = list_voices(cfg) if e.clone and not cfg.hosted_edition else []
     price = None
     if e.remote and (e.voices or recordings):
         first = e.voices[0] if e.voices else recordings[0]["name"]

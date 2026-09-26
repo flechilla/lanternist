@@ -19,6 +19,7 @@ endpoint = ""                                     # https://<account id>.r2.clou
 bucket = ""                                       # lanternist-dev, lanternist-staging, lanternist-prod; the
                                                   # keys go in R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY
 cache_gb = 20                                     # files kept on disk where jobs run, trimmed after each job
+downloads = 8                                     # files a stage fetches from R2 at once, when its cache lacks them
 
 [paths]
 library = "~/Lanternist"                                      # database, assets, step cache, films

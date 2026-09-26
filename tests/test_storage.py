@@ -3,12 +3,14 @@ film stored whole, served from presigned URLs, never another's, and deleted with
 (plans/STORAGE_PLAN.md)."""
 
 import asyncio
+import contextlib
 import os
 import shutil
 import time
 from datetime import UTC, datetime, timedelta
 from urllib.parse import unquote, urlsplit
 
+import pytest
 from sqlalchemy import select, update
 from test_accounts import BOB
 from test_api import storyboard
@@ -16,7 +18,10 @@ from test_editions import PRESET
 
 from lanternist import providers, store
 from lanternist.config import Paths, Settings, Storage
-from lanternist.db import Step, now
+from lanternist.db import LOCAL, Step, now
+from lanternist.engines import fake as media
+from lanternist.engines.base import Item, Maker, Output
+from lanternist.pipeline import Pipeline
 from lanternist.providers.s3 import S3, attachment
 
 
@@ -138,7 +143,10 @@ def test_the_hosted_api_serves_a_thumbnail_without_ffmpeg(hosted_client, wait, m
     fakes, bucket = providers.fake_world(), S3(c.app.state.cfg).bucket
     picture = c.get(f"/api/stories/{sid}").json()["board"]["scenes"][0]["keyframe"]
     monkeypatch.setenv("PATH", "")  # no ffmpeg: the job made the thumbnails, the API only points at them
+    sent = len(fakes.s3.requests)
     r = c.get(f"/api/assets/{picture}?w=768", follow_redirects=False)
+    thumb = store.derived_key(ann, picture, "thumb@1-w768.jpg")
+    assert fakes.s3.requests[sent:] == [f"HEAD {thumb}"]  # one question to R2 per picture on a Board
     assert r.status_code == 302 and _object(r.headers["location"]).endswith("-thumb@1-w768.jpg")
     # A picture drawn before thumbnails were made with it: the picture itself.
     for width in (384, 768):
@@ -229,3 +237,65 @@ def test_opening_a_story_looks_up_its_steps_in_as_many_queries_for_12_scenes_as_
             c.get(f"/api/stories/{sid}/estimate", params={"kind": "render"})
         lookups.append(len([q for q in sent if "FROM steps" in q]))
     assert lookups[0] == lookups[1] < 20
+
+
+async def test_a_cancel_while_an_output_is_stored_still_records_it(tmp_path):
+    """A user's cancel arriving after a paid picture is stored, but before its record is written: the
+    record is written all the same, or the next run would pay for the picture again."""
+    arrived, go = asyncio.Event(), asyncio.Event()
+
+    class Slow(store.Store):
+        async def put_derived(self, asset, name, src):  # the thumbnails, between the file and its record
+            arrived.set()
+            await go.wait()
+            return await super().put_derived(asset, name, src)
+
+    class Paid(Maker):  # a picture fal has made, and been paid for
+        async def run(self, items, ctx, on_item):
+            out = ctx.work / "s001.png"
+            await media.image({"id": "s001", "seed": 1, "width": 320, "height": 180, "out": str(out)})
+            await on_item(Output(items[0], out))
+
+    p = Pipeline(Settings(paths=Paths(library=tmp_path / "lib")), owner=LOCAL)
+    p.store = Slow(p.store.root)
+    stage = asyncio.create_task(p._stage("keyframes", Paid(), [Item("s001", "k" * 64, 1)], "image"))
+    await arrived.wait()
+    stage.cancel()
+    await asyncio.sleep(0.01)
+    go.set()
+    with contextlib.suppress(asyncio.CancelledError):
+        await stage
+    assert stage.cancelled()
+    assert p.store.get_step("k" * 64)["assets"]["image"].endswith(".png")
+
+
+def test_forgetting_refuses_the_local_edition_whose_folder_is_the_whole_library(fake_cfg, db):
+    kept = fake_cfg.library / "lanternist.db"
+    kept.parent.mkdir(parents=True, exist_ok=True)
+    kept.write_bytes(b"the user's library")
+    with pytest.raises(store.StoreError, match="only a hosted account"):
+        asyncio.run(store.forget(fake_cfg, db, LOCAL))
+    assert kept.read_bytes() == b"the user's library"
+
+
+def test_the_voice_catalogue_looks_up_every_sample_in_one_query(hosted_client, statements):
+    c = hosted_client
+    c.get("/api/voices/catalog")  # opens the pool's connection
+    with statements(c.app.state.db) as sent:
+        presets = c.get("/api/voices/catalog").json()["presets"]
+    assert len(presets) > 1 and len([q for q in sent if "FROM steps" in q]) == 1
+
+
+async def test_a_stage_fetches_files_from_r2_a_few_at_a_time(fake_cfg, fakes, db, tmp_path, monkeypatch):
+    monkeypatch.setattr(fake_cfg.storage, "downloads", 2)
+    r2 = store.R2Store(tmp_path / "cache", S3(fake_cfg), db, LOCAL)
+    assets = []
+    for n in range(6):
+        clip = tmp_path / f"{n}.mp4"
+        clip.write_bytes(f"clip {n}".encode())
+        assets.append(await r2.put(clip, scratch=True))
+    shutil.rmtree(r2.assets)  # a new machine: every clip comes from R2
+    fakes.s3.pace = 0.02
+    paths = await r2.files(assets)
+    assert [p.read_bytes() for p in paths] == [f"clip {n}".encode() for n in range(6)]
+    assert fakes.s3.most_at_once == 2

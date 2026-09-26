@@ -19,6 +19,7 @@ import hmac
 import html
 import logging
 import re
+import uuid
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -227,38 +228,45 @@ class S3:
                 client, "PUT", key, f"store {key}", headers=headers, stream=body, payload=sha256
             )
         if r.status_code == 404:
-            raise S3Error(f"R2 has no bucket {self.bucket}: create it, or fix [storage] bucket", status=404)
+            raise self._no_bucket()
+
+    def _no_bucket(self) -> S3Error:
+        return S3Error(f"R2 has no bucket {self.bucket}: create it, or fix [storage] bucket", status=404)
 
     async def get(self, key: str, dest: Path) -> bool:
         """Download an object to `dest`, whole or not at all; False when there's no such object."""
         path = self.path(key)
-        part = dest.with_name(f".{dest.name}.part")
         dest.parent.mkdir(parents=True, exist_ok=True)
-        async with self.client(timeout=600) as client:
-            for attempt in range(5):
-                sent = self._signed("GET", path, {}, {}, EMPTY)
-                try:
-                    async with client.stream("GET", self._url(path, {}), headers=sent) as r:
-                        if r.status_code == 404:
-                            return False
-                        if r.status_code >= 400:
-                            await r.aread()
-                            err = _error(r, f"fetch {key}")
-                            if not err.retryable or attempt == 4:
-                                raise err
-                            await asyncio.sleep(backoff(attempt, err.retry_after))
-                            continue
-                        with open(part, "wb") as f:  # noqa: ASYNC230 - written chunk by chunk as it arrives
-                            async for chunk in r.aiter_bytes(CHUNK):
-                                f.write(chunk)
-                    part.replace(dest)
-                    return True
-                except httpx.TransportError as e:
-                    if attempt == 4:
-                        raise S3Error(
-                            f"R2 didn't answer ({e.__class__.__name__}) to fetching {key}", retryable=True
-                        ) from e
-                    await asyncio.sleep(backoff(attempt))
+        # A name of its own: two jobs may fetch the same file at once, and each replaces it whole.
+        part = dest.with_name(f".{dest.name}.{uuid.uuid4().hex}.part")
+        try:
+            async with self.client(timeout=600) as client:
+                for attempt in range(5):
+                    sent = self._signed("GET", path, {}, {}, EMPTY)
+                    try:
+                        async with client.stream("GET", self._url(path, {}), headers=sent) as r:
+                            if r.status_code == 404:
+                                return False
+                            if r.status_code >= 400:
+                                await r.aread()
+                                err = _error(r, f"fetch {key}")
+                                if not err.retryable or attempt == 4:
+                                    raise err
+                                await asyncio.sleep(backoff(attempt, err.retry_after))
+                                continue
+                            with open(part, "wb") as f:  # noqa: ASYNC230 - written chunk by chunk as it arrives
+                                async for chunk in r.aiter_bytes(CHUNK):
+                                    f.write(chunk)
+                        part.replace(dest)
+                        return True
+                    except httpx.TransportError as e:
+                        if attempt == 4:
+                            raise S3Error(
+                                f"R2 didn't answer ({e.__class__.__name__}) to fetching {key}", retryable=True
+                            ) from e
+                        await asyncio.sleep(backoff(attempt))
+        finally:
+            part.unlink(missing_ok=True)  # after a failure; a finished download has taken its place
         raise AssertionError("unreachable")
 
     async def read(self, key: str) -> bytes | None:
@@ -285,6 +293,8 @@ class S3:
         async with self.client() as client:
             while True:
                 r = await self._call(client, "GET", "", f"list {prefix}", query=query)
+                if r.status_code == 404:
+                    raise self._no_bucket()
                 found += _tags(r.text, "Key")
                 token = next(iter(_tags(r.text, "NextContinuationToken")), None)
                 if "<IsTruncated>true</IsTruncated>" not in r.text or not token:
@@ -301,7 +311,7 @@ class S3:
                 )
                 body = f"<Delete><Quiet>true</Quiet>{objects}</Delete>".encode()
                 md5 = base64.b64encode(hashlib.md5(body).digest()).decode()  # noqa: S324 - S3 asks for it; not for security
-                await self._call(
+                r = await self._call(
                     client,
                     "POST",
                     "",
@@ -310,6 +320,13 @@ class S3:
                     headers={"content-md5": md5},
                     body=body,
                 )
+                # A 200 can still name keys it kept, one <Error> each.
+                if kept := _tags(r.text, "Error"):
+                    key, code = _tags(kept[0], "Key")[0], _tags(kept[0], "Code")[0]
+                    raise S3Error(
+                        f"R2 kept {len(kept)} of the files under {prefix} ({key}: {code}): delete them again",
+                        type=code,
+                    )
         return len(keys)
 
     # for the browser --------------------------------------------------------------------------

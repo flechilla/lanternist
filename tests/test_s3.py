@@ -176,3 +176,34 @@ def test_no_keys_or_bucket_says_what_to_set(cfg, monkeypatch):
 def test_redact_hides_the_r2_secret(monkeypatch):
     monkeypatch.setenv("R2_SECRET_ACCESS_KEY", "r2secretvalue0123456789abcdef")
     assert keys.redact("refused with r2secretvalue0123456789abcdef") == "refused with <r2 secret …cdef>"
+
+
+async def test_a_download_is_retried_and_leaves_no_partial_file(s3, fakes, monkeypatch, tmp_path):
+    monkeypatch.setattr(s3mod, "backoff", lambda *a, **k: 0)
+    src, sha = _file(tmp_path, b"clip bytes")
+    await s3.put("scratch/u/ann/cc/cc.mp4", src, sha, "video/mp4", "")
+    fakes.s3.fail = [502]
+    dest = tmp_path / "cache" / "cc.mp4"
+    assert await s3.get("scratch/u/ann/cc/cc.mp4", dest) and dest.read_bytes() == b"clip bytes"
+    fakes.s3.fail = [403]  # a "no" isn't retried, and nothing is left half written
+    with pytest.raises(S3Error):
+        await s3.get("scratch/u/ann/cc/cc.mp4", tmp_path / "cache" / "again.mp4")
+    assert sorted(p.name for p in dest.parent.iterdir()) == ["cc.mp4"]
+
+
+async def test_deleting_a_prefix_says_which_files_r2_kept(s3, fakes, tmp_path):
+    src, sha = _file(tmp_path, b"x")
+    for key in ("u/ann/assets/00/00.png", "u/ann/assets/01/01.png"):
+        await s3.put(key, src, sha, "image/png", "")
+    fakes.s3.undeletable = {"u/ann/assets/01/01.png"}  # R2 answers 200, with an <Error> for this one
+    with pytest.raises(
+        S3Error, match=r"kept 1 of the files under u/ann/ \(u/ann/assets/01/01.png: AccessDenied\)"
+    ):
+        await s3.delete_prefix("u/ann/")
+    assert await s3.keys("u/ann/") == ["u/ann/assets/01/01.png"]
+
+
+async def test_listing_a_bucket_that_isnt_there_says_so(s3, fakes):
+    fakes.s3.fail = [404]
+    with pytest.raises(S3Error, match="no bucket lanternist-fake"):
+        await s3.keys("u/ann/")

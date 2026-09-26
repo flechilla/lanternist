@@ -87,9 +87,9 @@ def test_a_picture_is_served_small_from_thumbnails_made_with_it(client, wait, tm
     picture = client.get(f"/api/stories/{sid}").json()["board"]["scenes"][0]["keyframe"]
     sha = picture.split(".")[0]
     # Both widths were made as the picture was stored, before any page asked for one.
-    made = {p.name.removeprefix(f"{sha}-"): p for p in (tmp_path / "lib" / "derived").rglob(f"{sha}-*")}
-    assert sorted(made) == ["thumb@1-w384.jpg", "thumb@1-w768.jpg"]
-    kept = made["thumb@1-w768.jpg"]
+    thumbs = {p.name.removeprefix(f"{sha}-"): p for p in (tmp_path / "lib" / "derived").rglob(f"{sha}-*")}
+    assert sorted(thumbs) == ["thumb@1-w384.jpg", "thumb@1-w768.jpg"]
+    kept = thumbs["thumb@1-w768.jpg"]
     made_at = kept.stat().st_mtime_ns
     full = client.get(f"/api/assets/{picture}")
 
@@ -97,9 +97,8 @@ def test_a_picture_is_served_small_from_thumbnails_made_with_it(client, wait, tm
     assert small.status_code == 200 and small.headers["content-type"] == "image/jpeg"
     assert len(small.content) * 5 < len(full.content)
     assert small.content == kept.read_bytes()
-    made = made_at
     assert client.get(f"/api/assets/{picture}?w=2000").content == small.content  # the largest there is
-    assert kept.stat().st_mtime_ns == made  # served as kept, not made again
+    assert kept.stat().st_mtime_ns == made_at  # served as kept, not made again
     assert len(client.get(f"/api/assets/{picture}?w=300").content) < len(small.content)  # a reel's slide
     assert "immutable" not in small.headers["cache-control"]
 
