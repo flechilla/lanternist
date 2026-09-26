@@ -9,7 +9,7 @@ from decimal import Decimal
 
 from ..store import step_key
 from . import ffmpeg
-from .base import Estimate, FalEngine, Item, OnItem, Output, StepContext, gather_all
+from .base import Estimate, FalEngine, Item, OnItem, Output, StepContext, gather_all, whole
 
 NEGATIVE = "speech, talking, voices, singing, music"  # the narration goes on top
 MAX_SECONDS = 30.0
@@ -46,7 +46,11 @@ class FalMmaudio(FalEngine):
         arguments = self.arguments(item, await self.upload(ctx, p["video"]))
         seconds = arguments["duration"]
         res = await self.request(ctx, item, arguments, estimate=self.estimate([item]).micros)
-        scored = await self.fetch(res.data["video"]["url"], ctx.work / f"{item.id}-scored.mp4")
-        out = ctx.work / f"{item.id}.mp4"
-        await ffmpeg.mux_audio(await ctx.store.file(p["video"]), scored, out)
-        await on_item(Output(item, out, {"seconds": seconds}))
+
+        async def deliver() -> None:
+            scored = await self.fetch(res.data["video"]["url"], ctx.work / f"{item.id}-scored.mp4")
+            out = ctx.work / f"{item.id}.mp4"
+            await ffmpeg.mux_audio(await ctx.store.file(p["video"]), scored, out)
+            await on_item(Output(item, out, {"seconds": seconds}))
+
+        await whole(deliver())

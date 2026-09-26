@@ -130,8 +130,8 @@ class FalTts(FalEngine, TtsEngine):
                 {"reference_text": self.clip.text} if self.clip.text else {}
             )
             res = await self.request(ctx, Item("voice", key), arguments, role="clone")
-            path = await self.fetch(res.data["speaker_embedding"]["url"], ctx.work / "voice.safetensors")
-            rec = ctx.store.put_step(key, {"assets": {"embedding": await ctx.store.put(path)}})
+            url = res.data["speaker_embedding"]["url"]
+            rec = await self.keep_step(ctx, key, url, ctx.work / "voice.safetensors", "embedding")
         return {"embedding_url": await self.upload(ctx, rec["assets"]["embedding"])}
 
     async def run(self, items: list[Item], ctx: StepContext, on_item: OnItem) -> None:
@@ -149,8 +149,9 @@ class FalTts(FalEngine, TtsEngine):
                 chunk = Item(f"{item.id}-{k}", key, item.scene)
                 cost = chars_estimate(self.entry, [len(words)]).micros
                 res = await self.request(ctx, chunk, self.arguments(words, voice, seed), estimate=cost)
-                got = await self.fetch(res.data["audio"]["url"], ctx.work / f"{chunk.id}.mp3")
-                rec = ctx.store.put_step(key, {"assets": {"audio": await ctx.store.put(got)}})
+                rec = await self.keep_step(
+                    ctx, key, res.data["audio"]["url"], ctx.work / f"{chunk.id}.mp3", "audio"
+                )
             await ffmpeg.to_wav(await ctx.store.file(rec["assets"]["audio"]), parts[k], SAMPLE_RATE)
 
         await gather_all([one(k, words) for k, words in enumerate(chunks)])

@@ -59,7 +59,10 @@ def _image(cfg: Settings, db: Database | None, e: ModelEntry, quality: str | Non
 def tts(cfg: Settings, db: Database | None, model_id: str, voice: str, language: str) -> TtsEngine:
     """The narration engine speaking `voice`: FileNotFoundError when it's a recording that isn't
     there, VoiceError when the model has no such voice."""
-    e = entry(cfg, db, model_id, "tts.speak")
+    return _tts(cfg, db, entry(cfg, db, model_id, "tts.speak"), voice, language)
+
+
+def _tts(cfg: Settings, db: Database | None, e: ModelEntry, voice: str, language: str) -> TtsEngine:
     if e.provider == "local":
         return LocalQwenTts(cfg, e, find_voice(cfg, voice), language)
     if e.family in FAL_TTS:
@@ -88,10 +91,15 @@ def sampler(cfg: Settings, db: Database | None, model_id: str, voice: str, langu
     return eng
 
 
+def cached_samples(store: Store, engines: list[TtsEngine], language: str) -> list[str | None]:
+    """Each voice's sample audio, if it was made before, in one lookup."""
+    keys = [sample_item(eng, language).key or "" for eng in engines]
+    found = store.get_steps(keys)
+    return [found[k]["assets"]["audio"] if k in found else None for k in keys]
+
+
 def cached_sample(store: Store, eng: TtsEngine, language: str) -> str | None:
-    """The sample's audio if it was made before."""
-    rec = store.get_step(sample_item(eng, language).key or "")
-    return rec["assets"]["audio"] if rec else None
+    return cached_samples(store, [eng], language)[0]
 
 
 def voices(cfg: Settings, db: Database | None, store: Store, model_id: str, language: str) -> dict:
@@ -102,17 +110,16 @@ def voices(cfg: Settings, db: Database | None, store: Store, model_id: str, lang
     recordings = list_voices(cfg) if e.clone and not cfg.hosted_edition else []
     # Every sample in one lookup. A local narrator has none: the recording itself is the sample.
     names = [] if e.provider == "local" else [*e.voices, *(r["name"] for r in recordings)]
-    keys = {v: sample_item(tts(cfg, db, e.id, v, language), language).key or "" for v in names}
-    made = store.get_steps(list(keys.values()))
+    engines = [_tts(cfg, db, e, v, language) for v in names]
+    samples = dict(zip(names, cached_samples(store, engines, language), strict=True))
 
     def sample(voice: str) -> str | None:
-        rec = made.get(keys.get(voice, ""))
-        return rec["assets"]["audio"] if rec else None
+        return samples.get(voice)
 
     price = None
     if e.remote and (e.voices or recordings):
         first = e.voices[0] if e.voices else recordings[0]["name"]
-        eng = tts(cfg, db, e.id, first, language)
+        eng = _tts(cfg, db, e, first, language)
         price = to_usd(eng.estimate([sample_item(eng, language)]).micros)
     return {
         "model": e.id,

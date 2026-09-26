@@ -197,7 +197,7 @@ async def test_deleting_a_prefix_says_which_files_r2_kept(s3, fakes, tmp_path):
         await s3.put(key, src, sha, "image/png", "")
     fakes.s3.undeletable = {"u/ann/assets/01/01.png"}  # R2 answers 200, with an <Error> for this one
     with pytest.raises(
-        S3Error, match=r"kept 1 of the files under u/ann/ \(u/ann/assets/01/01.png: AccessDenied\)"
+        S3Error, match=r"kept 1 of the files under u/ann/ \(u/ann/assets/01/01.png: AccessDenied\): check"
     ):
         await s3.delete_prefix("u/ann/")
     assert await s3.keys("u/ann/") == ["u/ann/assets/01/01.png"]
@@ -207,3 +207,11 @@ async def test_listing_a_bucket_that_isnt_there_says_so(s3, fakes):
     fakes.s3.fail = [404]
     with pytest.raises(S3Error, match="no bucket lanternist-fake"):
         await s3.keys("u/ann/")
+
+
+async def test_deleting_under_a_bucket_that_isnt_there_says_so(s3, fakes, tmp_path):
+    src, sha = _file(tmp_path, b"x")
+    await s3.put("u/ann/assets/00/00.png", src, sha, "image/png", "")
+    fakes.s3.fail = [0, 404]  # the listing finds the file; the bucket is gone when the delete arrives
+    with pytest.raises(S3Error, match="no bucket lanternist-fake"):
+        await s3.delete_prefix("u/ann/")

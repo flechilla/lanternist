@@ -320,11 +320,14 @@ class S3:
                     headers={"content-md5": md5},
                     body=body,
                 )
+                if r.status_code == 404:
+                    raise self._no_bucket()
                 # A 200 can still name keys it kept, one <Error> each.
                 if kept := _tags(r.text, "Error"):
                     key, code = _tags(kept[0], "Key")[0], _tags(kept[0], "Code")[0]
                     raise S3Error(
-                        f"R2 kept {len(kept)} of the files under {prefix} ({key}: {code}): delete them again",
+                        f"R2 kept {len(kept)} of the files under {prefix} ({key}: {code}): check that the "
+                        "R2 token may read and write this bucket (Object Read & Write), then delete again",
                         type=code,
                     )
         return len(keys)

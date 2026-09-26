@@ -68,7 +68,7 @@ Two backends behind the same methods. The folder is today's `Store`. `R2Store` e
 - **An output is stored before anyone hears of it.** `_stage` uploads the file, then writes its record, then sends the item's `done` event. A step record therefore always means its files are on R2. The browser, told that a picture is done, finds it.
 - **A record is trusted without a HEAD.** Files under `u/` go only when the account goes, and its rows go with them. Scratch clips expire, and their rows expire a day earlier. So `get_step` needs no network call, and a cached re-render of a 38-scene film costs 129 row reads and nothing else.
 - **Lookups are batched.** `get_steps(keys)` reads many records in one query. `Pipeline.cached_many(items)` uses it, and `peek` and `_stage`'s cache pass go through it: a Board view costs about 6 queries (narration, cast sheet, portraits, pictures, motion), not 90. The database rule asks this of any page that lists rows.
-- **A cancel doesn't lose a paid output.** The upload and the record are shielded from a user's cancel, so an item fal already made is kept, as it is today. At a shutdown, an upload in flight is lost, and the next run pays for that one item again. Phase D's grace period lets it finish.
+- **A cancel doesn't lose a paid output.** Everything after fal bills (fetching the result, storing it, recording it) runs to its end however often the job is cancelled meanwhile (`engines.base.whole`), in the engines' own sub-steps (a video's shots, narration chunks, a cloned voice) as in `_stage`. A stopping server gives its jobs up to 30 s (`jobs.STOP_GRACE`) to finish that. Only a process killed outright can lose the item in flight, which the next run pays for again.
 
 ### 1.3 The step cache in Postgres (migration 0005, `steps`)
 
@@ -223,7 +223,7 @@ One pull request, `feat/storage` (question 5), with a commit per step below. The
 - **Found by the self-review, and fixed:**
   - **A user's cancel could lose a paid output,** in both editions. Storing an output now awaits an
     upload and two thumbnails before its record, and a cancel in between kept the file but not the
-    record, so the next run paid again. `pipeline.whole()` now finishes storing an output before the
+    record, so the next run paid again. `whole()` now finishes storing an output before the
     cancel goes on (`test_a_cancel_while_an_output_is_stored_still_records_it`).
   - **`store.forget` would have deleted a local library:** there, the owner's folder is the library
     itself. It now refuses outside hosted.
@@ -237,6 +237,23 @@ One pull request, `feat/storage` (question 5), with a commit per step below. The
     shows it's theirs.
   - Smaller: the migration's downgrade uses a table construct rather than SQL, and a test lost a
     reused name.
+- **Found by the second self-review, and fixed:**
+  - **The engines' own paid sub-steps were outside that protection:** each shot of a video, each
+    narration chunk, a cloned voice. `whole()` moved to `engines/base.py`, and `FalEngine.keep_step`
+    fetches, stores and records such a step whole.
+    `test_a_cancel_while_a_paid_shot_is_stored_doesnt_pay_for_it_again`.
+  - **A second cancel got through `whole()`,** and the Cancel buttons can be clicked twice. It now
+    waits out any number of cancels, and `Runner.cancel` ignores a job already being cancelled.
+  - **A server stopping mid-store dropped the store:** `Runner.stop` now waits for its jobs, up to
+    `STOP_GRACE`.
+  - **Fetching a result fal had billed was unprotected,** in both editions, from before this
+    branch: fal counts a request done once it answers, so a cancel during the download paid again.
+    The fetch is inside `whole()` now too.
+  - **The voice catalogue still read prices once per voice;** it builds each voice's engine from the
+    one entry, and costs 4 queries for 9 voices. `cached_samples` is the one lookup of samples.
+  - **Deleting under a missing bucket failed with an IndexError;** it says the bucket is missing, and
+    a kept key's message says what to check.
+  - **The asset route asked for thumbnails under `shared/`,** where none can be.
 - **A step record that names a file R2 no longer has** raises `StoreError` rather than being a
   miss: only a hand deletion on the bucket could cause it, and a HEAD for every record to rule it
   out would cost every cached re-render a request per file.

@@ -20,7 +20,8 @@ from lanternist import providers, store
 from lanternist.config import Paths, Settings, Storage
 from lanternist.db import LOCAL, Step, now
 from lanternist.engines import fake as media
-from lanternist.engines.base import Item, Maker, Output
+from lanternist.engines.base import Item, Maker, Output, whole
+from lanternist.jobs import Runner
 from lanternist.pipeline import Pipeline
 from lanternist.providers.s3 import S3, attachment
 
@@ -262,6 +263,8 @@ async def test_a_cancel_while_an_output_is_stored_still_records_it(tmp_path):
     await arrived.wait()
     stage.cancel()
     await asyncio.sleep(0.01)
+    stage.cancel()  # a second click on Cancel, while the first is still storing
+    await asyncio.sleep(0.01)
     go.set()
     with contextlib.suppress(asyncio.CancelledError):
         await stage
@@ -278,12 +281,13 @@ def test_forgetting_refuses_the_local_edition_whose_folder_is_the_whole_library(
     assert kept.read_bytes() == b"the user's library"
 
 
-def test_the_voice_catalogue_looks_up_every_sample_in_one_query(hosted_client, statements):
+def test_the_voice_catalogue_costs_the_same_queries_for_every_voice(hosted_client, statements):
     c = hosted_client
     c.get("/api/voices/catalog")  # opens the pool's connection
     with statements(c.app.state.db) as sent:
         presets = c.get("/api/voices/catalog").json()["presets"]
-    assert len(presets) > 1 and len([q for q in sent if "FROM steps" in q]) == 1
+    # Who's asking, their settings, the prices and the samples: the same for 9 voices as for 1.
+    assert len(presets) == 9 and len(sent) == 4
 
 
 async def test_a_stage_fetches_files_from_r2_a_few_at_a_time(fake_cfg, fakes, db, tmp_path, monkeypatch):
@@ -299,3 +303,66 @@ async def test_a_stage_fetches_files_from_r2_a_few_at_a_time(fake_cfg, fakes, db
     paths = await r2.files(assets)
     assert [p.read_bytes() for p in paths] == [f"clip {n}".encode() for n in range(6)]
     assert fakes.s3.most_at_once == 2
+
+
+async def test_a_cancel_while_a_paid_shot_is_stored_doesnt_pay_for_it_again(fake_cfg, db, fakes, make_story):
+    """fal's shots are steps of their own, stored by the video engine: a cancel then (hosted, an upload
+    to R2) still records the shot, and the next run finds it rather than paying fal again."""
+    sb = make_story(("video",))
+    sb.models.video, sb.models.ambience = "fal/h3-max-turbo", "none"
+    arrived, go = asyncio.Event(), asyncio.Event()
+
+    class Uploading(store.Store):  # R2Store.put awaits its upload about here
+        async def put(self, src, move=True, scratch=False):
+            if str(src).endswith("-0.mp4"):  # the shot fal made
+                arrived.set()
+                await go.wait()
+            return await super().put(src, move, scratch)
+
+    p = Pipeline(fake_cfg, db=db, user_cancelled=lambda: True, owner=LOCAL)
+    board = await p.board(sb)
+    p.store = Uploading(p.store.root)
+    motion = asyncio.create_task(p.motion(sb, board))
+    await arrived.wait()
+    motion.cancel()
+    await asyncio.sleep(0.01)
+    motion.cancel()
+    go.set()
+    with contextlib.suppress(asyncio.CancelledError):
+        await motion
+    submits = len(fakes.fal.submits)
+    await Pipeline(fake_cfg, db=db, owner=LOCAL).motion(sb, board)
+    assert len(fakes.fal.submits) == submits  # the shot was kept: nothing is paid for again
+
+
+async def test_whole_finishes_its_work_however_often_it_is_cancelled():
+    done = []
+
+    async def work() -> str:
+        await asyncio.sleep(0.03)
+        done.append(True)
+        return "stored"
+
+    task = asyncio.create_task(whole(work()))
+    for _ in range(3):
+        await asyncio.sleep(0.005)
+        task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    assert done and task.cancelled()
+    assert await whole(work()) == "stored"
+
+
+async def test_a_stopping_server_lets_its_job_store_what_it_was_paid_for(cfg, db):
+    stored = []
+
+    async def storing() -> None:
+        await asyncio.sleep(0.05)
+        stored.append(True)
+
+    runner = Runner(cfg, db)
+    job = asyncio.create_task(whole(storing()))
+    runner.current = ("j1", job)
+    await asyncio.sleep(0)
+    await runner.stop()
+    assert stored and job.cancelled()

@@ -10,10 +10,9 @@ is all cache hits and an edit re-runs only the steps it reaches. A stage asks it
 the GPU lease, a remote one runs the items concurrently and never touches the GPU.
 """
 
-import asyncio
 import logging
 import shutil
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -35,6 +34,7 @@ from .engines.base import (
     TtsEngine,
     VideoEngine,
     keyframe_size,
+    whole,
 )
 from .engines.local import Clips, Mix
 from .store import step_key
@@ -75,18 +75,6 @@ ACTIONS = {
     "mix": "Mixing the film",
     "sample": "Recording a voice sample",
 }
-
-
-async def whole(work: Awaitable[None]) -> None:
-    """Run `work` to its end, even when the task awaiting it is cancelled meanwhile, and then let the
-    cancel go on. Storing an output fal was paid for mustn't stop halfway: a file without its record
-    is paid for again on the next run. The stage's work dir outlives it, since the stage waits here."""
-    task = asyncio.ensure_future(work)
-    try:
-        await asyncio.shield(task)
-    except asyncio.CancelledError:
-        await task
-        raise
 
 
 def thumbnail_width(width: int) -> int:

@@ -538,9 +538,10 @@ async def _from_r2(asset: str, owner: str, download: str | None, w: int | None) 
     except ValueError as e:
         raise HTTPException(422, str(e)) from None
     s3 = S3(cfg)
-    # The user's own, then what everyone shares. A thumbnail is looked for first: it's there for every
-    # picture drawn since they were made with it, and being under the owner's prefix is what shows whose.
-    tries = [store.derived_key(whose, asset, name) for whose in (owner, None) for name in thumb]
+    # A thumbnail is looked for first: every picture drawn since they were made with it has one, and
+    # being under the user's prefix is what shows it's theirs. Then the file: theirs, or everyone's (a
+    # voice's sample, which has no thumbnail).
+    tries = [store.derived_key(owner, asset, name) for name in thumb]
     tries += [store.asset_key(whose, asset) for whose in (owner, None)]
     for key in tries:
         if await s3.head(key) is not None:

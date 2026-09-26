@@ -239,6 +239,19 @@ class FalEngine(Engine):
         log.info("%s %s done in %.1fs", self.entry.id, item.id, time.monotonic() - t0)
         return res
 
+    async def keep_step(
+        self, ctx: StepContext, key: str, url: str, dest: Path, name: str, meta: dict | None = None
+    ) -> dict:
+        """A part of an item that fal made and billed on its own (a video's shot, a narration chunk, a
+        cloned voice): fetched, stored and recorded as its own step, whole (see `whole`)."""
+
+        async def keep() -> dict:
+            path = await self.fetch(url, dest)
+            record = {"assets": {name: await ctx.store.put(path)}} | ({"meta": meta} if meta else {})
+            return ctx.store.put_step(key, record)
+
+        return await whole(keep())
+
     async def fetch(self, url: str, dest: Path) -> Path:
         """Download a result into the work dir, keeping the extension fal gave it."""
         suffix = Path(urlparse(url).path).suffix.lower()
@@ -262,6 +275,23 @@ class FalEngine(Engine):
         except Exception:
             self._uploads.pop(asset, None)  # a failed upload is tried afresh next time
             raise
+
+
+async def whole[T](work: Awaitable[T]) -> T:
+    """Run `work` to its end, however often the task awaiting it is cancelled meanwhile, then let the
+    cancel go on. What runs after fal has billed (fetching a result, storing it, recording it) mustn't
+    stop halfway: fal's request is counted done, so a file without its record is paid for again."""
+    task = asyncio.ensure_future(work)
+    cancelled = False
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cancelled = True
+    done = task.result()
+    if cancelled:
+        raise asyncio.CancelledError
+    return done
 
 
 async def gather_all(jobs: list) -> None:
