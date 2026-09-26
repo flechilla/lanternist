@@ -1,6 +1,6 @@
 # Lanternist: editions and accounts
 
-> **Status, 23 Sep 2026: built on `feat/accounts`, as one pull request, and checked against WorkOS staging.** This is Phase B of `HOSTED_PLAN.md` (issue #15). The sign-in provider is WorkOS AuthKit (#23), on its free plan: the custom domain ($99/month) waits until paying users justify it. The questions in §4 are answered.
+> **Status, 23 Sep 2026: done, merged as #33 (`feat/accounts`), in one pull request, and checked against WorkOS staging.** This is Phase B of `HOSTED_PLAN.md` (issue #15). The sign-in provider is WorkOS AuthKit (#23), on its free plan: the custom domain ($99/month) waits until paying users justify it. The questions in §4 are answered.
 >
 > **Measured before writing:**
 > - `Database` has 42 public methods. 24 read or change a row a user will own; the rest run the queue, keep prices and uploads, or open the database.

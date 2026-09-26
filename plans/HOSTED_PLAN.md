@@ -1,6 +1,6 @@
 # Lanternist Hosted: the SaaS edition
 
-> **Status, 23 Sep 2026: Phase A done (`DB_PLAN.md`, merged as #13); Phase B built (`ACCOUNTS_PLAN.md`, on `feat/accounts`) and checked against WorkOS staging; the rest planned.** The product direction changed on 22 Sep: Lanternist is to be a hosted service. People buy credits and spend them on films, and a plan (tier) decides which models they may use. Running on your own GPU stays, as the way we develop the app. Each phase gets its own plan in `plans/` when it starts, and the work is tracked in the epic, issue #14. §5 lists the decisions only you can make: sign-in (6) and where the business is registered (2) were settled on 23 Sep.
+> **Status, 26 Sep 2026: Phase A done (`DB_PLAN.md`, merged as #13); Phase B done (`ACCOUNTS_PLAN.md`, merged as #33); Phase C in progress (`STORAGE_PLAN.md`, on `feat/storage`); the rest planned.** The product direction changed on 22 Sep: Lanternist is to be a hosted service. People buy credits and spend them on films, and a plan (tier) decides which models they may use. Running on your own GPU stays, as the way we develop the app. Each phase gets its own plan in `plans/` when it starts, and the work is tracked in the epic, issue #14. §5 lists the decisions only you can make: sign-in (6) and where the business is registered (2) were settled on 23 Sep.
 >
 > Facts about Stripe, Paddle, Polar, Clerk, WorkOS, R2, Neon, Hetzner, fal, OpenRouter, moderation models and the law were read from their own pages on 22 Sep 2026 (sources in §6). Anything marked **verify** wasn't confirmed. The legal points are research, not legal advice: §1.10 needs a lawyer before the public launch.
 
@@ -228,6 +228,7 @@ Credit packs (say $10, $25, $50) are sold to every plan, Free included. Packs un
 - **Layout.** Assets stay content-addressed, under the owner:
   - `u/<user>/assets/ab/<sha>.<ext>`
   - `u/<user>/derived/…`
+  - `scratch/u/<user>/…` for ffmpeg's clips. A lifecycle rule matches a key prefix, with no wildcards, so scratch sits at the top, where one rule covers everyone (`STORAGE_PLAN.md` §1.1).
   - `shared/…` for what belongs to no one: voice samples.
 - **Why a prefix per user:**
   - Asking for another user's asset finds nothing.
@@ -242,12 +243,12 @@ Credit packs (say $10, $25, $50) are sold to every plan, Free included. Packs un
   - Egress is free.
   - Each URL's expiry is rounded to the hour, so it stays the same for an hour and the browser's cache still works. Existing `<img>` and `<video>` tags don't change.
   - A download adds `response-content-disposition` for the file name.
-- **The client** is httpx with botocore used only to sign, not boto3's transport. That keeps storage behind `providers.transport()`, so fake mode serves a fake S3 (invariant 8). It's the same choice M2 made for fal uploads. The calls are few: PUT, GET, HEAD, DELETE, list and delete a prefix, presign.
+- **The client** is httpx, signing with our own SigV4 (`STORAGE_PLAN.md` §4: botocore's signer can't sign at a fixed hour, and it's 20 MB). That keeps storage behind `providers.transport()`, so fake mode serves a fake S3 (invariant 8). It's the same choice M2 made for fal uploads. The calls are few: PUT, GET, HEAD, DELETE, list and delete a prefix, presign.
 - **What a story weighs, measured in the lab library:**
   - The finished film: 350–400 MB for 4 minutes at 1080p.
   - Its pictures: about 120 MB.
   - ffmpeg's intermediate clips: about 1 GB, most of it the 24 Mbit/s fitted shots.
-- **Intermediate clips expire.** They cost nothing to make again, so ffmpeg's outputs go under a prefix with a 7-day lifecycle rule. A step whose file has gone is already a cache miss (`Store.get_step`), so it's remade at no charge.
+- **Intermediate clips expire.** They cost nothing to make again, so ffmpeg's outputs go under `scratch/` with a 7-day lifecycle rule. Their `steps` rows expire a day earlier, so a step whose file has gone is a cache miss, remade at no charge.
 - **Price.** $0.015/GB-month, free egress, and 10 GB free.
   - What stays is about 0.5 GB a story, so 1,000 users with 10 stories each is about 5 TB, roughly $75/month.
   - Moving old pictures and clips to Infrequent Access comes when the bill says so.
@@ -422,7 +423,7 @@ New and changed tables. Money is `_micros` `BigInteger`; spend history outlives 
 | `sessions` | **new** | `id` (the hash of the cookie's token), `user_id`, `provider_session`, `created_at`, `expires_at` |
 | `ledger` | **new** | `id`, `user_id` (`SET NULL`), `kind`, `amount_micros` (signed), `job_id`, `step_run_id` (unique when set), `external_id` (unique when set), `note`, `created_at` |
 | `holds` | **new** | `job_id` (unique), `user_id`, `amount_micros`, `captured_micros`, `status` (`open`/`closed`), `created_at`, `closed_at` |
-| `steps` | **new** (hosted) | `owner_id`, `key`, `record` (JSON), `created_at`; primary key (`owner_id`, `key`) |
+| `steps` | **new** (hosted) | `owner_id`, `key`, `record` (JSON), `created_at`, `expires_at` (scratch clips); primary key (`owner_id`, `key`). A `shared` row in `users`, like `local`, owns the voice samples' records |
 | `webhook_events` | **new** | `provider`, `event_id` (unique together), `type`, `received_at`, `processed_at`, `error` |
 | `moderation_events` | **new** | `id`, `owner_id`, `story_id`, `job_id`, `checkpoint`, `verdict`, `categories` (JSON), `model_id`, `created_at` |
 
@@ -439,7 +440,7 @@ src/lanternist/
   moderation.py         # the idea and storyboard checks, the audience question for pictures and clips
   provenance.py         # the C2PA manifest and the watermark on exported films
   store.py              # Store interface; the local folder and R2 (+ the steps table) behind it
-  providers/s3.py       # httpx + botocore signing: put, get, head, delete, list, presign
+  providers/s3.py       # httpx + our own SigV4: put, get, head, delete, list, presign
   providers/workos.py   # the sign-in callback's calls to WorkOS
   providers/fake.py     # + fake WorkOS, fake Stripe, fake S3
   registry/writers.toml # the hosted writer list, with plans
@@ -487,7 +488,7 @@ Each phase ends with something that runs end to end. Sizes assume one developer 
 ### Phase C: storage on R2 (≈3 days)
 
 - [ ] The `Store` interface: the local folder, and R2 with its per-user prefixes, local disk cache and `steps` table.
-- [ ] `providers/s3.py` (httpx + botocore signing) and the fake S3.
+- [ ] `providers/s3.py` (httpx + our own SigV4 signing) and the fake S3.
 - [ ] Thumbnails made by the worker; presigned redirects with hour-stable URLs; downloads with a file name.
 - [ ] Deleting a story deletes its database rows. Deleting an account deletes its prefix.
 
