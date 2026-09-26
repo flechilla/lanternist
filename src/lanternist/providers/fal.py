@@ -235,11 +235,13 @@ class Fal:
                 client, endpoint, arguments, spec, ttl_hours
             )
             t0 = time.monotonic()
+            billed = False
             try:
                 final = await self.poll(client, urls, run_id, on_status, timeout)
+                billed = True  # complete, so paid for: nothing left to cancel, and a next run resumes it
                 r = await self.result(client, urls)
             except asyncio.CancelledError:
-                if spec.user_cancelled():
+                if spec.user_cancelled() and not billed:
                     await asyncio.shield(self._cancel_run(client, run_id, urls))
                 raise  # a shutdown leaves the request running at fal, to be resumed
             except FalError as e:

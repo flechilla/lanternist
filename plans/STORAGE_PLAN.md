@@ -254,6 +254,17 @@ One pull request, `feat/storage` (question 5), with a commit per step below. The
   - **Deleting under a missing bucket failed with an IndexError;** it says the bucket is missing, and
     a kept key's message says what to check.
   - **The asset route asked for thumbnails under `shared/`,** where none can be.
+- **Found by a third, narrow self-review of that commit, and fixed:**
+  - **A failure while finishing took the cancel's place.** The runner then marked a stopped job
+    failed rather than queued, and its lane never saw the cancel and ran the next job after `stop()`.
+    `whole()` now waits with `asyncio.wait`, which never raises the work's error, and always passes
+    the cancel on, with the failure as its cause.
+  - **fal's result was still cancelled after fal had billed.** Once `poll()` sees a request complete,
+    a user's cancel leaves its run open, and the next run resumes it rather than paying again. The
+    fake fal can hold a result back (`result_gate`) for the test.
+  - The message for files R2 kept suggests checking the token only for `AccessDenied`; the voice
+    catalogue lost a wrapper and a second engine build; the cancel guard and the no-thumbnail lookup
+    have tests.
 - **A step record that names a file R2 no longer has** raises `StoreError` rather than being a
   miss: only a hand deletion on the bucket could cause it, and a HEAD for every record to rule it
   out would cost every cached re-render a request per file.

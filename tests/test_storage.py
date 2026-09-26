@@ -149,11 +149,13 @@ def test_the_hosted_api_serves_a_thumbnail_without_ffmpeg(hosted_client, wait, m
     thumb = store.derived_key(ann, picture, "thumb@1-w768.jpg")
     assert fakes.s3.requests[sent:] == [f"HEAD {thumb}"]  # one question to R2 per picture on a Board
     assert r.status_code == 302 and _object(r.headers["location"]).endswith("-thumb@1-w768.jpg")
-    # A picture drawn before thumbnails were made with it: the picture itself.
+    # A picture drawn before thumbnails were made with it: the picture itself, asked for under the user.
     for width in (384, 768):
         fakes.s3.file(bucket, store.derived_key(ann, picture, f"thumb@1-w{width}.jpg")).unlink()
+    sent = len(fakes.s3.requests)
     r = c.get(f"/api/assets/{picture}?w=768", follow_redirects=False)
     assert _object(r.headers["location"]).endswith(picture)
+    assert fakes.s3.requests[sent:] == [f"HEAD {thumb}", f"HEAD {store.asset_key(ann, picture)}"]
     assert c.get(f"/api/assets/{picture}.txt?w=10").status_code == 400
 
 
@@ -366,3 +368,74 @@ async def test_a_stopping_server_lets_its_job_store_what_it_was_paid_for(cfg, db
     await asyncio.sleep(0)
     await runner.stop()
     assert stored and job.cancelled()
+
+
+async def test_whole_passes_the_cancel_on_even_when_the_work_then_fails():
+    async def failing() -> None:
+        await asyncio.sleep(0.02)
+        raise RuntimeError("R2 didn't answer")
+
+    task = asyncio.create_task(whole(failing()))
+    await asyncio.sleep(0.005)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError) as e:
+        await task
+    assert isinstance(e.value.__cause__, RuntimeError)  # the failure, kept as the cause
+
+
+async def test_a_stopped_server_ends_its_lanes_even_when_a_job_fails_to_store(cfg, db, monkeypatch):
+    runner = Runner(cfg, db)
+    started, begun = [], asyncio.Event()
+
+    async def execute(job, progress):  # a job storing what fal was paid for, when R2 fails
+        started.append(job.id)
+        begun.set()
+
+        async def storing() -> None:
+            await asyncio.sleep(0.05)
+            raise RuntimeError("R2 didn't answer")
+
+        await whole(storing())
+
+    monkeypatch.setattr(runner, "execute", execute)
+    for _ in range(2):
+        runner.enqueue(LOCAL, None, "cast", None)
+    runner.start()
+    await begun.wait()
+    await runner.stop()
+    assert all(lane.done() for lane in runner._loops) and len(started) == 1
+    assert db.get_job(LOCAL, started[0]).status == "queued"  # a shutdown: it runs again at the next start
+
+
+async def test_a_second_cancel_of_a_running_job_cancels_nothing_more(cfg, db):
+    runner = Runner(cfg, db)
+    job = db.add_job(LOCAL, None, "cast", None, {}, None)
+    running = asyncio.create_task(asyncio.sleep(10))
+    runner.current = (job.id, running)
+    assert runner.cancel(LOCAL, job.id) and runner.cancel(LOCAL, job.id)
+    assert running.cancelling() == 1
+    with contextlib.suppress(asyncio.CancelledError):
+        await running
+
+
+async def test_a_cancel_once_fal_has_finished_resumes_rather_than_paying_again(
+    fake_cfg, db, fakes, make_story
+):
+    """fal has billed once it says a request is complete: a cancel while its result is fetched leaves
+    the request to be resumed, rather than cancelling what can't be undone and paying for it again."""
+    sb = make_story(("video",))
+    sb.models.video, sb.models.ambience = "fal/h3-max-turbo", "none"
+    p = Pipeline(fake_cfg, db=db, user_cancelled=lambda: True, owner=LOCAL)
+    board = await p.board(sb)
+    fakes.fal.result_gate = asyncio.Event()
+    fakes.fal.result_asked.clear()
+    motion = asyncio.create_task(p.motion(sb, board))
+    await fakes.fal.result_asked.wait()
+    motion.cancel()
+    fakes.fal.result_gate.set()
+    with contextlib.suppress(asyncio.CancelledError):
+        await motion
+    fakes.fal.result_gate = None
+    submits = len(fakes.fal.submits)
+    await Pipeline(fake_cfg, db=db, owner=LOCAL).motion(sb, board)
+    assert len(fakes.fal.submits) == submits and not fakes.fal.cancels

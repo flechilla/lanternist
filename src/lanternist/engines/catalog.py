@@ -113,22 +113,17 @@ def voices(cfg: Settings, db: Database | None, store: Store, model_id: str, lang
     engines = [_tts(cfg, db, e, v, language) for v in names]
     samples = dict(zip(names, cached_samples(store, engines, language), strict=True))
 
-    def sample(voice: str) -> str | None:
-        return samples.get(voice)
-
     price = None
-    if e.remote and (e.voices or recordings):
-        first = e.voices[0] if e.voices else recordings[0]["name"]
-        eng = _tts(cfg, db, e, first, language)
-        price = to_usd(eng.estimate([sample_item(eng, language)]).micros)
+    if e.remote and engines:  # what a sample costs: the same for every voice
+        price = to_usd(engines[0].estimate([sample_item(engines[0], language)]).micros)
     return {
         "model": e.id,
         "label": e.label,
         "local": e.provider == "local",
         "clone": e.clone,
         "speaks": not e.languages or language in e.languages,
-        "presets": [{"id": v, "label": v.replace("_", " "), "sample": sample(v)} for v in e.voices],
-        "recordings": [r | {"sample": sample(r["name"])} for r in recordings],
+        "presets": [{"id": v, "label": v.replace("_", " "), "sample": samples.get(v)} for v in e.voices],
+        "recordings": [r | {"sample": samples.get(r["name"])} for r in recordings],
         "sample_usd": price,
     }
 

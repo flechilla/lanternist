@@ -285,13 +285,12 @@ async def whole[T](work: Awaitable[T]) -> T:
     cancelled = False
     while not task.done():
         try:
-            await asyncio.shield(task)
+            await asyncio.wait([task])  # which never cancels the work, nor raises its error
         except asyncio.CancelledError:
             cancelled = True
-    done = task.result()
-    if cancelled:
-        raise asyncio.CancelledError
-    return done
+    if cancelled:  # a failure while finishing doesn't take the cancel's place: the runner reads it
+        raise asyncio.CancelledError from (None if task.cancelled() else task.exception())
+    return task.result()
 
 
 async def gather_all(jobs: list) -> None:

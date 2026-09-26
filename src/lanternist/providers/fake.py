@@ -113,6 +113,9 @@ class FakeFal:
     )  # asking for any of these 404s the whole batch, as fal does
     fail_submit: list[tuple[int, dict]] = field(default_factory=list)  # next submits answer these
     fail_result: dict[str, str] = field(default_factory=dict)  # endpoint -> error on completion
+    # When set, a request for a finished result waits for it: a test cancels once fal has billed.
+    result_gate: asyncio.Event | None = None
+    result_asked: asyncio.Event = field(default_factory=asyncio.Event)
     requests: dict[str, FakeRequest] = field(default_factory=dict)
     submits: list[str] = field(default_factory=list)
     cancels: list[str] = field(default_factory=list)
@@ -251,6 +254,9 @@ class FakeFal:
         if action == "":
             if req.polls <= self.polls_before_done:
                 return _json({"detail": "still in progress"}, 400)
+            self.result_asked.set()
+            if self.result_gate:
+                await self.result_gate.wait()
             await self._make(req)
             headers = {"x-fal-billable-units": str(req.units)} if self.billable_units_on == "result" else None
             return _json(req.output, headers=headers)
