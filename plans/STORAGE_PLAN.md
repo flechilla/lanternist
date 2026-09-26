@@ -169,10 +169,11 @@ One pull request, `feat/storage` (question 5), with a commit per step below. The
 ### C1: the S3 client (≈ 1 day)
 
 - [x] Plans and status: `ACCOUNTS_PLAN.md` done (#33); `HOSTED_PLAN.md` Phase B done and Phase C in progress; CLAUDE.md's plans list and README's plans line.
-- [ ] `providers/s3.py`, our own SigV4 signing, `S3Error`.
-- [ ] `FakeS3` in `providers/fake.py`, routed by `FakeWorld`.
-- [ ] `keys.PLATFORM` gains the R2 keys; `[storage]` in `config.py` and `lanternist.example.toml`.
-- [ ] The client's tests, and the live round trip.
+- [x] `providers/s3.py`, our own SigV4 signing, `S3Error`.
+- [x] `FakeS3` in `providers/fake.py`, routed by `FakeWorld`.
+- [x] `keys.PLATFORM` gains the R2 keys; `[storage]` in `config.py` and `lanternist.example.toml`.
+- [x] The client's tests (AWS's five published signatures match exactly).
+- [ ] The live round trip, once the R2 token is in `.env`.
 
 ### C2: the R2 store (≈ 2 days)
 

@@ -7,18 +7,28 @@ whether OpenRouter accepts `data_collection`.
 
 With LANTERNIST_LIVE_VIDEO=1 they also make video: a 5 s Wan clip (about $0.13), and a one-scene
 film made entirely on fal, the cheapest way through every remote stage (about $0.11).
+
+The R2 round trip needs R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY and CLOUDFLARE_ACCOUNT_ID in the
+environment (`set -a; . ./.env; set +a`), and the bucket lanternist-dev (LANTERNIST_TEST_R2_BUCKET for
+another). It works under a test/<random>/ prefix, deletes it, and stays inside R2's free tier.
 """
 
+import hashlib
 import os
+import uuid
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+import httpx
 import pytest
 
 from lanternist import keys, registry
+from lanternist.config import Settings, Storage
 from lanternist.db import LOCAL, StepRun
 from lanternist.engines.ffmpeg import probe
 from lanternist.providers.fal import Fal, RunSpec
 from lanternist.providers.openrouter import OpenRouter
+from lanternist.providers.s3 import S3, S3Error, attachment
 
 pytestmark = pytest.mark.live
 
@@ -197,3 +207,47 @@ async def test_a_one_scene_film_all_on_fal(cfg, db, tmp_path):
         f"  all of it: estimated ${quote['total_micros'] / 1e6:.4f}, billed ${total / 1e6:.4f} -> {p.store.path(film.film)}"
     )
     assert probe(p.store.path(film.film))["has_audio"] and all(r.status == "done" for r in runs)
+
+
+async def test_r2_round_trip(tmp_path):
+    account = os.environ.get("CLOUDFLARE_ACCOUNT_ID")
+    if not (account and keys.platform_secret("r2_key_id") and keys.platform_secret("r2")):
+        pytest.skip("no R2 keys: set R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY and CLOUDFLARE_ACCOUNT_ID")
+    bucket = os.environ.get("LANTERNIST_TEST_R2_BUCKET", "lanternist-dev")
+    s3 = S3(Settings(storage=Storage(endpoint=f"https://{account}.r2.cloudflarestorage.com", bucket=bucket)))
+    prefix = f"test/{uuid.uuid4().hex}/"
+    data = os.urandom(4096)
+    src = tmp_path / "clip.mp4"
+    src.write_bytes(data)
+    key = f"{prefix}derived/ab/ab12-thumb@1-w384.mp4"  # an "@", as thumbnails have
+    try:
+        await s3.put(
+            key, src, hashlib.sha256(data).hexdigest(), "video/mp4", "private, max-age=31536000, immutable"
+        )
+        assert await s3.head(key) == len(data)
+        with pytest.raises(S3Error) as bad:
+            await s3.put(f"{prefix}bad.mp4", src, hashlib.sha256(b"not it").hexdigest(), "video/mp4", "")
+        print(f"\na body that isn't its hash: HTTP {bad.value.status} {bad.value.type}")
+
+        hour = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)  # up to 59 minutes ago
+        url = s3.presign(key, hour, 7200, attachment("Película ñ-v3.mp4"))
+        async with httpx.AsyncClient(timeout=30) as browser:  # no key, as a browser has none
+            r = await browser.get(url, headers={"range": "bytes=100-199"})
+            expired = await browser.get(s3.presign(key, hour - timedelta(hours=3), 7200))
+        print(f"presigned at {hour:%H:%M}: HTTP {r.status_code}, {r.headers.get('content-range')}")
+        print(
+            f"  content-type {r.headers.get('content-type')}, cache-control {r.headers.get('cache-control')}"
+        )
+        print(f"  content-disposition {r.headers.get('content-disposition')}")
+        print(f"expired: HTTP {expired.status_code}")
+        assert r.status_code == 206 and r.content == data[100:200]
+        assert r.headers["content-disposition"] == attachment("Película ñ-v3.mp4")
+        assert expired.status_code == 403
+
+        dest = tmp_path / "back.mp4"
+        assert await s3.get(key, dest) and dest.read_bytes() == data
+        assert await s3.keys(prefix) == [key]
+    finally:
+        deleted = await s3.delete_prefix(prefix)
+    print(f"deleted {deleted} object(s) under {prefix}")
+    assert await s3.keys(prefix) == []

@@ -14,6 +14,12 @@ api_url = "https://api.workos.com"
 client_id = ""                                    # client_…, from the WorkOS dashboard; the API key goes in
                                                   # WORKOS_API_KEY, never in this file
 
+[storage]                                         # the hosted edition's files: an R2 bucket per environment
+endpoint = ""                                     # https://<account id>.r2.cloudflarestorage.com
+bucket = ""                                       # lanternist-dev, lanternist-staging, lanternist-prod; the
+                                                  # keys go in R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY
+cache_gb = 20                                     # files kept on disk where jobs run, trimmed after each job
+
 [paths]
 library = "~/Lanternist"                                      # database, assets, step cache, films
 voices = ["~/Lanternist/voices", "~/ai/bedtime-stories/voices"] # <name>.wav + optional <name>.txt

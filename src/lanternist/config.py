@@ -172,6 +172,16 @@ class WorkOS(BaseModel):
     client_id: str = ""
 
 
+class Storage(BaseModel):
+    """Where the hosted edition keeps files: an R2 bucket, one per environment. The endpoint and the
+    bucket aren't secret; the keys are R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY. The local edition
+    keeps its library folder and ignores this."""
+
+    endpoint: str = ""  # https://<account id>.r2.cloudflarestorage.com
+    bucket: str = ""  # lanternist-dev, lanternist-staging, lanternist-prod
+    cache_gb: float = 20  # kept on disk where jobs run, since ffmpeg reads files; trimmed after each job
+
+
 class DatabaseConfig(BaseModel):
     model_config = ConfigDict(validate_default=True)
     # Empty: the SQLite file in the library. The hosted edition's Postgres, as
@@ -191,6 +201,7 @@ class Settings(BaseModel):
     edition: Literal["local", "hosted"] = "local"
     hosted: Hosted = Hosted()
     workos: WorkOS = WorkOS()
+    storage: Storage = Storage()
     paths: Paths = Paths()
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)  # reads the environment when made
     ollama: Ollama = Ollama()
