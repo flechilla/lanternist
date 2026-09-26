@@ -48,5 +48,5 @@ class FalMmaudio(FalEngine):
         res = await self.request(ctx, item, arguments, estimate=self.estimate([item]).micros)
         scored = await self.fetch(res.data["video"]["url"], ctx.work / f"{item.id}-scored.mp4")
         out = ctx.work / f"{item.id}.mp4"
-        await ffmpeg.mux_audio(ctx.store.path(p["video"]), scored, out)
-        on_item(Output(item, out, {"seconds": seconds}))
+        await ffmpeg.mux_audio(await ctx.store.file(p["video"]), scored, out)
+        await on_item(Output(item, out, {"seconds": seconds}))

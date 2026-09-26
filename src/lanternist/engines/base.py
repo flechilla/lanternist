@@ -5,7 +5,7 @@ hands the rest to its engine as one batch:
 
     key(kind, **inputs)       the step key; the engine adds what's model-specific
     estimate(items)           what the batch would cost, from list prices; pure
-    run(items, ctx, on_item)  make them; `on_item` fires as each output lands
+    run(items, ctx, on_item)  make them; `await on_item(out)` stores each output as it lands
 
 A local engine loads its model once for the whole batch, under the GPU lease. A remote one runs the
 items concurrently under its provider's semaphore and never takes the lease.
@@ -19,7 +19,7 @@ one when its output arrives (the worker reads the references straight from the w
 import asyncio
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
@@ -119,7 +119,7 @@ class StepContext:
     bind: Callable[[Item], None] = _unbound
 
 
-OnItem = Callable[[Output], None]
+OnItem = Callable[[Output], Awaitable[None]]
 
 
 class Maker:
@@ -250,9 +250,13 @@ class FalEngine(Engine):
         """Put a stored file (or `path`, named `asset`) on fal. Items running together share one upload
         of the same file: every keyframe waits on the one cast sheet upload rather than starting its own."""
         if asset not in self._uploads:
-            self._uploads[asset] = asyncio.ensure_future(
-                self.fal.upload(path or ctx.store.path(asset), asset=asset, ttl_hours=ttl_hours)
-            )
+
+            async def up() -> str:
+                return await self.fal.upload(
+                    path or await ctx.store.file(asset), asset=asset, ttl_hours=ttl_hours
+                )
+
+            self._uploads[asset] = asyncio.ensure_future(up())
         try:
             return await asyncio.shield(self._uploads[asset])
         except Exception:

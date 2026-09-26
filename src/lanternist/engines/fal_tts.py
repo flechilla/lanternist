@@ -131,7 +131,7 @@ class FalTts(FalEngine, TtsEngine):
             )
             res = await self.request(ctx, Item("voice", key), arguments, role="clone")
             path = await self.fetch(res.data["speaker_embedding"]["url"], ctx.work / "voice.safetensors")
-            rec = ctx.store.put_step(key, {"assets": {"embedding": ctx.store.put(path)}})
+            rec = ctx.store.put_step(key, {"assets": {"embedding": await ctx.store.put(path)}})
         return {"embedding_url": await self.upload(ctx, rec["assets"]["embedding"])}
 
     async def run(self, items: list[Item], ctx: StepContext, on_item: OnItem) -> None:
@@ -150,8 +150,8 @@ class FalTts(FalEngine, TtsEngine):
                 cost = chars_estimate(self.entry, [len(words)]).micros
                 res = await self.request(ctx, chunk, self.arguments(words, voice, seed), estimate=cost)
                 got = await self.fetch(res.data["audio"]["url"], ctx.work / f"{chunk.id}.mp3")
-                rec = ctx.store.put_step(key, {"assets": {"audio": ctx.store.put(got)}})
-            await ffmpeg.to_wav(ctx.store.path(rec["assets"]["audio"]), parts[k], SAMPLE_RATE)
+                rec = ctx.store.put_step(key, {"assets": {"audio": await ctx.store.put(got)}})
+            await ffmpeg.to_wav(await ctx.store.file(rec["assets"]["audio"]), parts[k], SAMPLE_RATE)
 
         await gather_all([one(k, words) for k, words in enumerate(chunks)])
         out = ctx.work / f"{item.id}.wav"
@@ -163,4 +163,4 @@ class FalTts(FalEngine, TtsEngine):
             "chunk_durations": durations,
             "sample_rate": SAMPLE_RATE,
         }
-        on_item(Output(item, out, meta))
+        await on_item(Output(item, out, meta))

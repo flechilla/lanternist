@@ -110,4 +110,4 @@ class FalImage(FalEngine):
                 type="content_policy_violation",
             )
         path = await self.fetch(images[0]["url"], ctx.work / f"{item.id}.png")
-        on_item(Output(item, path))
+        await on_item(Output(item, path))

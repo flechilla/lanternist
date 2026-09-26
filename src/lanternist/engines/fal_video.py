@@ -102,12 +102,12 @@ class FalVideo(FalEngine, VideoEngine):
                     if res.data.get("expanded_prompt")
                     else {}
                 )
-                rec = ctx.store.put_step(key, {"assets": {"video": ctx.store.put(clip)}, "meta": meta})
-            parts.append(ctx.store.path(rec["assets"]["video"]))
+                rec = ctx.store.put_step(key, {"assets": {"video": await ctx.store.put(clip)}, "meta": meta})
+            parts.append(await ctx.store.file(rec["assets"]["video"]))
             if j + 1 < len(shots):
                 # The next shot starts where this one ends; its frame is named for the shot it came from.
                 image, image_path = f"{key}-last.png", ctx.work / f"{item.id}-{j}-last.png"
                 await ffmpeg.last_frame(parts[-1], image_path)
         joined = ctx.work / f"{item.id}.mp4"
         await ffmpeg.concat(parts, joined, faststart=True)
-        on_item(Output(item, joined, {"shots": shots}))
+        await on_item(Output(item, joined, {"shots": shots}))

@@ -131,7 +131,7 @@ class Checker(Maker):
             async with sem:
                 ctx.phase(it, "working", None)
                 picture = ctx.work / f"{it.id}.jpg"
-                await ffmpeg.thumbnail(ctx.store.path(it.params["image"]), picture, PICTURE_WIDTH)
+                await ffmpeg.thumbnail(await ctx.store.file(it.params["image"]), picture, PICTURE_WIDTH)
                 why = f"The picture check with {self.model} couldn't judge scene {it.scene}'s picture"
                 try:
                     reply = await self.llm.chat(
@@ -156,7 +156,7 @@ class Checker(Maker):
                 out.write_text(verdict.model_dump_json(), encoding="utf-8")
                 if it.scene is not None:
                     self.asked.add(it.scene)
-                on_item(Output(it, out, verdict.model_dump()))
+                await on_item(Output(it, out, verdict.model_dump()))
 
         async with self.llm.session():
             await gather_all([one(it) for it in items])

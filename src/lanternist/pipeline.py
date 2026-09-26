@@ -291,13 +291,13 @@ class Pipeline:
             work = self.store.tmp()
             waited_on = {a for it in pending for a in it.after}
 
-            def on_item(out: Output) -> None:
+            async def on_item(out: Output) -> None:
                 it = out.item
                 if it.key is None:
                     raise RuntimeError(f"{it.id} came back before its key was bound")
                 # Copied, not moved, when a later item in this batch still reads it from the work dir.
-                main = self.store.put(out.path, move=it.id not in waited_on)
-                assets = {asset: main} | {k: self.store.put(p) for k, p in out.extra.items()}
+                main = await self.store.put(out.path, move=it.id not in waited_on)
+                assets = {asset: main} | {k: await self.store.put(p) for k, p in out.extra.items()}
                 records[it.id] = self.store.put_step(
                     it.key, {"assets": assets, "meta": out.meta, "secs": out.secs}
                 )

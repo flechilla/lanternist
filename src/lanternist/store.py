@@ -9,6 +9,7 @@ the final prompt, the seed, upstream asset hashes), so an edit re-runs exactly t
 reaches and nothing else.
 """
 
+import asyncio
 import hashlib
 import json
 import os
@@ -40,7 +41,7 @@ class Store:
             d.mkdir(parents=True, exist_ok=True)
 
     # assets ---------------------------------------------------------------------------------
-    def put(self, src: Path, move: bool = True) -> str:
+    async def put(self, src: Path, move: bool = True) -> str:
         """Add a file; returns its asset id '<sha>.<ext>'."""
         src = Path(src)
         sha = file_sha(src)
@@ -57,6 +58,13 @@ class Store:
 
     def path(self, asset: str) -> Path:
         return self.assets / asset[:2] / asset
+
+    async def file(self, asset: str) -> Path:
+        """The asset as a file on this machine, for a stage to read."""
+        return self.path(asset)
+
+    async def files(self, assets: list[str]) -> list[Path]:
+        return list(await asyncio.gather(*(self.file(a) for a in assets)))
 
     def sha(self, asset: str) -> str:
         return asset.split(".", 1)[0]
