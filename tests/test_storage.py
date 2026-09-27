@@ -21,7 +21,7 @@ from lanternist.config import Paths, Settings, Storage
 from lanternist.db import LOCAL, Step, now
 from lanternist.engines import fake as media
 from lanternist.engines.base import Item, Maker, Output, whole
-from lanternist.jobs import Runner
+from lanternist.jobs import FAST, Runner
 from lanternist.pipeline import Pipeline
 from lanternist.providers.s3 import S3, attachment
 
@@ -364,7 +364,7 @@ async def test_a_stopping_server_lets_its_job_store_what_it_was_paid_for(cfg, db
 
     runner = Runner(cfg, db)
     job = asyncio.create_task(whole(storing()))
-    runner.current = ("j1", job)
+    runner.running["j1"] = job
     await asyncio.sleep(0)
     await runner.stop()
     assert stored and job.cancelled()
@@ -410,9 +410,10 @@ async def test_a_stopped_server_ends_its_lanes_even_when_a_job_fails_to_store(cf
 
 async def test_a_second_cancel_of_a_running_job_cancels_nothing_more(cfg, db):
     runner = Runner(cfg, db)
-    job = db.add_job(LOCAL, None, "cast", None, {}, None)
+    db.add_job(LOCAL, None, "cast", None, {}, None)
+    job = db.claim_job(runner.name, FAST, False)
     running = asyncio.create_task(asyncio.sleep(10))
-    runner.current = (job.id, running)
+    runner.running[job.id] = running
     assert runner.cancel(LOCAL, job.id) and runner.cancel(LOCAL, job.id)
     assert running.cancelling() == 1
     with contextlib.suppress(asyncio.CancelledError):

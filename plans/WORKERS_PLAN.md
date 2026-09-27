@@ -1,6 +1,6 @@
 # Lanternist: workers
 
-> **Status, 27 Sep 2026: planned, and the questions in §4 are answered; the build hasn't started.** This is Phase D of `HOSTED_PLAN.md` (issue #17). Its blockers, Phases B (#33) and C (#34), are on `main`. Migration 0006 is this phase's; Phase E takes 0007 and later. The sketch is at https://claude.ai/artifact/BmAX8JnpDTXUzrNneCtTNq. It has a job's life across processes, a simulator of fair turns, the encode timings and OVHcloud compared with Hetzner.
+> **Status, 27 Sep 2026: D1 is built (jobs leave the API); D2 (turns and deploys) is next.** This is Phase D of `HOSTED_PLAN.md` (issue #17). Its blockers, Phases B (#33) and C (#34), are on `main`. Migration 0006 is this phase's; Phase E takes 0007 and later. The sketch is at https://claude.ai/artifact/BmAX8JnpDTXUzrNneCtTNq. It has a job's life across processes, a simulator of fair turns, the encode timings and OVHcloud compared with Hetzner.
 >
 > **Measured before writing (26 Sep):**
 > - **ffmpeg's share of a film, without a GPU.** The lab's `kite-baseline` (19 video scenes, 3 min 26 s) was rendered again from its cache with `render.encoder = "libx264"`, in a scratch copy of the lab library. The copy was guarded so that only the clips and mix stages could run. Pinned to 8 threads (`taskset -c 0-3,16-19`, 4 Zen 5 cores with SMT):
@@ -203,12 +203,12 @@ One pull request, `feat/workers` (question 3), cut from `chore/phase-c-done`, wi
 ### D1: jobs leave the API (≈ 1.5 days)
 
 - [x] This plan, and the status lines: HOSTED_PLAN (Phase D in progress, the hosting decision), CLAUDE.md's list of plans, and README's.
-- [ ] Fakes that outlive a process (§1.8), with no change in behaviour within one process.
-- [ ] Migration 0006 (`/add-migration`), and the queries: `claim_job` with the worker, `heartbeat`, `requeue_stale`, `request_cancel`, and a fenced `update_job` (`/add-query`).
-- [ ] The `Runner`: a name, several render tasks, polling, the heartbeat task with its four answers, the lease, and fenced progress and ends.
-- [ ] The commands: `lanternist worker`, `lanternist db upgrade`, `serve` without the queue in hosted, and the revision check.
-- [ ] "Cancelling…" in the web app.
-- [ ] `hosted_client` with its worker; the tests above for D1.
+- [x] Fakes that outlive a process (§1.8), with no change in behaviour within one process.
+- [x] Migration 0006 (`/add-migration`), and the queries: `claim_job` with the worker, `heartbeat`, `requeue_stale`, `request_cancel`, and a fenced `update_job` (`/add-query`).
+- [x] The `Runner`: a name, several render tasks, polling, the heartbeat task with its four answers, the lease, and fenced progress and ends.
+- [x] The commands: `lanternist worker`, `lanternist db upgrade`, `serve` without the queue in hosted, and the revision check.
+- [x] "Cancelling…" in the web app.
+- [x] `hosted_client` with its worker; the tests above for D1.
 
 ### D2: turns and deploys (≈ 1.5 days)
 

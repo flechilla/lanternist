@@ -191,6 +191,16 @@ class Storage(BaseModel):
     downloads: int = 8  # files a stage fetches from R2 at once, on a machine whose cache lacks them
 
 
+class Worker(BaseModel):
+    """`lanternist worker`, which runs the hosted edition's jobs; the local `serve` runs its own queue,
+    one render at a time, and reads only the heartbeat and staleness."""
+
+    renders: int = 2  # renders one worker runs at once: they mostly wait on fal
+    per_user: int = 1  # renders one person may have running at once, across every worker
+    heartbeat_seconds: float = 10  # how often a worker stamps its jobs, and hears of cancels
+    stale_seconds: float = 60  # a job whose heartbeat is older goes back to the queue for another worker
+
+
 class DatabaseConfig(BaseModel):
     model_config = ConfigDict(validate_default=True)
     # Empty: the SQLite file in the library. The hosted edition's Postgres, as
@@ -211,6 +221,7 @@ class Settings(BaseModel):
     hosted: Hosted = Hosted()
     workos: WorkOS = WorkOS()
     storage: Storage = Storage()
+    worker: Worker = Worker()
     paths: Paths = Paths()
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)  # reads the environment when made
     ollama: Ollama = Ollama()

@@ -211,6 +211,8 @@ export interface Job {
   version: number | null;
   kind: JobKind;
   status: JobStatus;
+  /** Running, and its owner asked to cancel it: its worker hears at its next heartbeat. */
+  cancelling: boolean;
   params: Record<string, unknown>;
   progress: Progress;
   result:

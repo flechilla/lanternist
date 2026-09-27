@@ -21,6 +21,12 @@ bucket = ""                                       # lanternist-dev, lanternist-s
 cache_gb = 20                                     # files kept on disk where jobs run, trimmed after each job
 downloads = 8                                     # files a stage fetches from R2 at once, when its cache lacks them
 
+[worker]                                          # `lanternist worker`, which runs the hosted edition's jobs
+renders = 2                                       # renders one worker runs at once: they mostly wait on fal
+per_user = 1                                      # renders one person may have running at once, on all workers
+heartbeat_seconds = 10                            # how often a worker stamps its jobs, and hears of cancels
+stale_seconds = 60                                # after this without a heartbeat, another worker takes the job
+
 [paths]
 library = "~/Lanternist"                                      # database, assets, step cache, films
 voices = ["~/Lanternist/voices", "~/ai/bedtime-stories/voices"] # <name>.wav + optional <name>.txt

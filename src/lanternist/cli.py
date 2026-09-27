@@ -1,9 +1,11 @@
-"""lanternist: doctor · import · write · board · render · serve · keys · models"""
+"""lanternist: doctor · import · write · board · render · serve · worker · db · keys · models"""
 
 import asyncio
 import contextlib
 import json
+import logging
 import shutil
+import signal
 import sys
 import time
 from pathlib import Path
@@ -20,7 +22,10 @@ if TYPE_CHECKING:
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 keys_app = typer.Typer(no_args_is_help=True, help="API keys for remote models (OpenRouter, fal.ai).")
 app.add_typer(keys_app, name="keys")
+db_app = typer.Typer(no_args_is_help=True, help="The database: its schema.")
+app.add_typer(db_app, name="db")
 
+log = logging.getLogger("lanternist")
 MARK = {"ok": "✓", "warn": "!", "fail": "✗"}
 
 
@@ -243,10 +248,62 @@ def voices():
 
 @app.command()
 def serve(host: str = "127.0.0.1", port: int = 8420, reload: bool = False):
-    """Run the app: API, web UI and the render queue."""
+    """Run the app: API, web UI and, in the local edition, the render queue."""
     import uvicorn
 
     uvicorn.run("lanternist.api.app:app", host=host, port=port, reload=reload, log_level="info")
+
+
+@app.command()
+def worker():
+    """Run the hosted edition's jobs: claim them until SIGTERM or Ctrl-C, then hand the running ones back
+    to the queue, once each has stored what fal was paid for."""
+    from .db import Database, DatabaseError
+    from .jobs import Runner
+    from .providers.s3 import S3
+
+    cfg = settings()
+    if not cfg.hosted_edition:
+        print(
+            "the local edition runs its jobs inside `lanternist serve`: start that instead", file=sys.stderr
+        )
+        raise typer.Exit(1)
+    db = Database(cfg.database_url, cfg.database.pool_size)
+    try:
+        db.require_head()
+    except DatabaseError as e:
+        print(e, file=sys.stderr)
+        raise typer.Exit(1) from None
+    S3(cfg)  # the files are on R2: without its bucket and keys, say which to set
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    asyncio.run(_work(Runner(cfg, db, cfg.worker.renders)))
+
+
+async def _work(runner) -> None:
+    stopping = asyncio.Event()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        asyncio.get_running_loop().add_signal_handler(sig, stopping.set)
+    runner.start()
+    log.info("worker %s: %d renders at once, on %s", runner.name, runner.renders, runner.db.shown)
+    await stopping.wait()
+    log.info("worker %s: stopping, handing its jobs back", runner.name)
+    await runner.stop()
+
+
+@db_app.command("upgrade")
+def db_upgrade():
+    """Migrate the database to this version's schema: the hosted edition's deploy runs it before starting
+    `serve` and the workers. The local `serve` does it itself at every start."""
+    from .db import Database, DatabaseError
+
+    cfg = settings()
+    db = Database(cfg.database_url, cfg.database.pool_size)
+    try:
+        db.migrate()
+    except DatabaseError as e:
+        print(e, file=sys.stderr)
+        raise typer.Exit(1) from None
+    print(f"{db.shown} is at {db.revision()}")
 
 
 @app.command()

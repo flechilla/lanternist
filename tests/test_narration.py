@@ -239,14 +239,14 @@ async def test_a_sample_doesnt_wait_behind_a_render(cfg, db, until):
             s.add(Job(owner_id=LOCAL, id="r1", story_id=None, kind="render", params={}, progress={}))
             s.commit()
         runner._wake(False)
-        await until(lambda: runner.current is not None)
+        await until(lambda: "r1" in runner.running)
         sample = runner.enqueue(LOCAL, None, "sample", None, {"voice": "Aria"})
-        await until(lambda: db.update_job(sample.id).status == "done")
-        assert runner.current is not None and runner.current[0] == "r1"  # the render is still going
+        await until(lambda: db.get_job(LOCAL, sample.id).status == "done")
+        assert list(runner.running) == ["r1"]  # the render is still going
     finally:
         release.set()
         await runner.stop()
-    assert db.update_job(sample.id).result == {"kind": "sample"}
+    assert db.get_job(LOCAL, sample.id).result == {"kind": "sample"}
 
 
 def test_narration_is_priced_per_character(fake_cfg, cfg):

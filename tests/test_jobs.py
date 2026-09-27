@@ -4,11 +4,12 @@ import asyncio
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
 
 from lanternist import jobs, pace
 from lanternist.cli import _printer
-from lanternist.config import Settings
-from lanternist.db import LOCAL, Job, Story
+from lanternist.config import Settings, Worker
+from lanternist.db import LOCAL, Job, Story, now
 from lanternist.jobs import THROTTLE, Progress, Runner
 from lanternist.pipeline import ITEM, Event, Pipeline
 from lanternist.storyboard import CastMember
@@ -26,9 +27,9 @@ async def test_deleting_a_story_while_its_job_runs_keeps_the_queue_going(cfg, db
         return {}
 
     runner.execute = delete_the_story
-    await runner.run(db.claim_job(jobs.FAST, False))  # raised AttributeError on the missing row
+    await runner.run(db.claim_job(runner.name, jobs.FAST, False))  # raised AttributeError on the missing row
     assert db.jobs(LOCAL, active=False, limit=10) == []
-    assert runner.current is None
+    assert not runner.running
 
 
 def test_claim_gives_each_worker_its_own_job(db):
@@ -40,7 +41,7 @@ def test_claim_gives_each_worker_its_own_job(db):
     def worker() -> list[str]:
         start.wait()
         claimed = []
-        while job := db.claim_job(jobs.FAST, False):
+        while job := db.claim_job(threading.current_thread().name, jobs.FAST, False):
             claimed.append(job.id)
         return claimed
 
@@ -64,7 +65,7 @@ async def test_the_snapshot_follows_every_scene_and_portrait_to_done(fake_cfg, d
     sb.cast.append(CastMember(id="bo", name="Bo", look="boy in a blue cap"))
     sb.portraits = True
     job = db.add_job(LOCAL, None, "board", None, {}, None)
-    progress = Progress(db, job.id)
+    progress = Progress(db, job.id, "w")
     seen: dict[tuple[str, str], list[str]] = {}
 
     def follow(e: Event) -> None:
@@ -86,7 +87,7 @@ async def test_the_snapshot_follows_every_scene_and_portrait_to_done(fake_cfg, d
     assert "asset" not in snap["stages"]["portraits"]  # each portrait under its character, not the row
 
     # Everything is made now: the next board shows each step as it was, from the cache.
-    again = Progress(db, job.id)
+    again = Progress(db, job.id, "w")
     await Pipeline(fake_cfg, again.stage, db=db, job_id=job.id, owner=LOCAL).board(sb)
     assert again.snap["scenes"]["2"]["keyframes"] == {
         "state": "cached",
@@ -99,8 +100,9 @@ async def test_the_snapshot_follows_every_scene_and_portrait_to_done(fake_cfg, d
 
 
 async def test_the_last_of_a_burst_of_events_is_written(cfg, db):
-    job = db.add_job(LOCAL, None, "board", None, {}, None)
-    progress = Progress(db, job.id)
+    db.add_job(LOCAL, None, "board", None, {}, None)
+    job = db.claim_job("w", jobs.FAST, False)
+    progress = Progress(db, job.id, "w")
     progress.stage(Event("keyframes", "start", done=0, total=2))
     progress.stage(Event("keyframes", "queued", scene=1))
     progress.stage(Event("keyframes", "working", scene=1))
@@ -111,7 +113,7 @@ async def test_the_last_of_a_burst_of_events_is_written(cfg, db):
 
 async def test_a_step_waiting_at_a_provider_says_how_many_are_ahead(cfg, db):
     job = db.add_job(LOCAL, None, "render", None, {}, None)
-    progress = Progress(db, job.id)
+    progress = Progress(db, job.id, "w")
     progress.stage(Event("motion", "waiting", scene=4, ahead=2))
     assert progress.snap["scenes"]["4"]["motion"] == {"state": "waiting", "ahead": 2}
     progress.stage(Event("motion", "working", scene=4))
@@ -119,13 +121,14 @@ async def test_a_step_waiting_at_a_provider_says_how_many_are_ahead(cfg, db):
 
 
 async def test_the_snapshot_shows_what_each_paid_step_cost(cfg, db):
-    job = db.add_job(LOCAL, None, "render", None, {}, None)
+    db.add_job(LOCAL, None, "render", None, {}, None)
+    job = db.claim_job("w", jobs.FAST, False)
     for scene, micros in ((2, 75_000), (2, 25_000), (3, 100_000)):
         db.start_run(
             job_id=job.id, scene=scene, stage="motion", model_id="fal/x", provider="fal", cost_micros=micros
         )
     db.start_run(job_id=job.id, stage="keyframes", model_id="local/x", provider="local", gpu_seconds=16)
-    progress = Progress(db, job.id)
+    progress = Progress(db, job.id, "w")
     progress.stage(Event("motion", "start", done=0, total=2))
     progress.stage(Event("motion", "done", scene=2, done=1, total=2, asset="v.mp4"))
     progress.flush()
@@ -180,7 +183,7 @@ class Clock:
 async def test_each_row_of_a_batch_counts_its_own_time_and_a_redraw_adds_to_it(db, monkeypatch):
     clock = Clock()
     monkeypatch.setattr(jobs, "time", clock)
-    progress = Progress(db, db.add_job(LOCAL, None, "board", None, {}, None).id)
+    progress = Progress(db, db.add_job(LOCAL, None, "board", None, {}, None).id, "w")
 
     def made(stage: str, scene: int | None, secs: float, done: int, total: int) -> None:
         progress.stage(Event(stage, "working", scene=scene))
@@ -203,7 +206,7 @@ async def test_each_row_of_a_batch_counts_its_own_time_and_a_redraw_adds_to_it(d
 
 
 def test_the_portraits_to_draw_are_on_the_snapshot_before_they_start(db):
-    progress = Progress(db, db.add_job(LOCAL, None, "board", None, {}, None).id)
+    progress = Progress(db, db.add_job(LOCAL, None, "board", None, {}, None).id, "w")
     progress.plan_cast(True, ["a", "bo"])
     progress.stage(Event("portraits", "done", who="a", done=1, total=2, asset="a.png"))
     progress.plan_cast(True, ["a", "bo"])  # planned again (a job run twice): what's made stays made
@@ -218,13 +221,14 @@ def test_the_library_says_how_far_a_running_job_is(db):
     with db.session() as s:
         s.add(Story(owner_id=LOCAL, id="s1", slug="a", title="A", version=0))
         s.commit()
+    db.add_job(LOCAL, "s1", "render", 1, {}, None)
+    running = db.claim_job("w", jobs.FAST, False)
     queued = db.add_job(LOCAL, "s1", "board", 1, {}, None)
-    running = db.add_job(LOCAL, "s1", "render", 1, {}, None)
-    db.update_job(running.id, status="running", progress={"fraction": 0.42})
+    db.update_job(running.id, "w", progress={"fraction": 0.42})
     [row] = db.library(LOCAL)
     assert (row.active, row.progress) == (2, 0.42)
-    db.update_job(running.id, status="done")
-    db.update_job(queued.id, status="cancelled")
+    db.end_job(running.id, "w", "done")
+    db.request_cancel(LOCAL, queued.id)
     [row] = db.library(LOCAL)
     assert (row.active, row.progress) == (0, None)
 
@@ -232,7 +236,7 @@ def test_the_library_says_how_far_a_running_job_is(db):
 async def test_how_far_a_job_is_never_goes_back_when_an_estimate_grows(db, monkeypatch):
     clock = Clock()
     monkeypatch.setattr(jobs, "time", clock)
-    progress = Progress(db, db.add_job(LOCAL, None, "render", None, {}, None).id)
+    progress = Progress(db, db.add_job(LOCAL, None, "render", None, {}, None).id, "w")
     progress.expect = {"keyframes": pace.Expect(2, 10.0, basis="history")}
     clock.now += 20
     progress.flush()
@@ -241,3 +245,151 @@ async def test_how_far_a_job_is_never_goes_back_when_an_estimate_grows(db, monke
     clock.now += 1
     progress.flush()
     assert 0 < before == progress.snap["fraction"]
+
+
+# ------------------------------------------------------------------------------------ workers
+def held(db, worker: str, kind: str = "render", story_id: str | None = None) -> Job:
+    """A job `worker` has claimed: added, then claimed, so it's the one claimed."""
+    db.add_job(LOCAL, story_id, kind, None, {}, None)
+    job = db.claim_job(worker, jobs.FAST, kind in jobs.FAST)
+    assert job is not None
+    return job
+
+
+def beat_at(db, job_id: str, when) -> None:
+    with db.session() as s:
+        s.get(Job, job_id).heartbeat_at = when
+        s.commit()
+
+
+def row(db, job_id: str) -> Job:
+    with db.session() as s:
+        return s.get(Job, job_id)
+
+
+def test_heartbeat_stamps_only_its_own_jobs(db):
+    mine, theirs = held(db, "w1"), held(db, "w2")
+    long_ago = now() - timedelta(minutes=5)
+    for job in (mine, theirs):
+        beat_at(db, job.id, long_ago)
+    assert db.heartbeat("w1", [mine.id]) == {mine.id: "held"}
+    assert row(db, mine.id).heartbeat_at > long_ago and row(db, theirs.id).heartbeat_at == long_ago
+
+
+def test_heartbeat_tells_held_cancel_lost_and_gone(db):
+    with db.session() as s:
+        s.add(Story(owner_id=LOCAL, id="s1", slug="a", title="A", version=0))
+        s.commit()
+    carry_on, cancel, lost, gone = (
+        held(db, "w1"),
+        held(db, "w1"),
+        held(db, "w2"),
+        held(db, "w1", story_id="s1"),
+    )
+    assert db.request_cancel(LOCAL, cancel.id)
+    assert db.delete_story(LOCAL, "s1")
+    assert db.heartbeat("w1", [carry_on.id, cancel.id, lost.id, gone.id]) == {
+        carry_on.id: "held",
+        cancel.id: "cancel",
+        lost.id: "lost",  # another worker's: w1 thinks it still holds it
+        gone.id: "gone",
+    }
+
+
+def test_requeue_stale_leaves_a_live_workers_job_alone(db):
+    live, dead = held(db, "w1"), held(db, "w2")
+    beat_at(db, dead.id, now() - timedelta(minutes=2))
+    assert db.requeue_stale(timedelta(seconds=60)) == 1
+    assert (row(db, live.id).status, row(db, live.id).worker) == ("running", "w1")
+    back = row(db, dead.id)
+    assert (back.status, back.worker, back.heartbeat_at) == ("queued", None, None)
+    assert back.started_at is not None  # it ran before, which the claim puts first
+
+
+def test_a_worker_that_lost_its_job_writes_nothing(db):
+    job = held(db, "w1")
+    db.update_job(job.id, "w1", progress={"message": "drawing"})
+    db.requeue_stale(timedelta(0))  # w1 went quiet
+    assert db.claim_job("w2", jobs.FAST, False).id == job.id
+    assert not db.update_job(job.id, "w1", progress={"message": "stale"}, version=7)
+    assert not db.end_job(job.id, "w1", "done", result={"film": "old.mp4"})
+    kept = row(db, job.id)
+    assert (kept.status, kept.worker, kept.progress, kept.version, kept.result) == (
+        "running",
+        "w2",
+        {"message": "drawing"},
+        None,
+        None,
+    )
+    assert db.end_job(job.id, "w2", "queued")  # handed back: nobody holds it, and it has no slot
+    assert (row(db, job.id).worker, row(db, job.id).slot) == (None, None)
+
+
+def fast_beats(cfg: Settings) -> Settings:
+    return cfg.model_copy(update={"worker": Worker(heartbeat_seconds=0.02, stale_seconds=0.2)})
+
+
+def waiting_forever(runner: Runner, stopped: list):
+    """An `execute` that runs until it's stopped, and records whether that was its user's cancel."""
+
+    async def execute(job, progress):
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            stopped.append(runner.user_cancelled(job.id))
+            raise
+
+    return execute
+
+
+async def test_a_cancel_reaches_the_worker_that_holds_the_job(cfg, db, until):
+    api, worker = Runner(cfg, db), Runner(fast_beats(cfg), db)  # two processes: the API's, and a worker's
+    worker.name, stopped = "worker-1", []
+    worker.execute = waiting_forever(worker, stopped)
+    worker.start()
+    try:
+        job = api.enqueue(LOCAL, None, "render", None)
+        await until(lambda: job.id in worker.running)
+        assert api.cancel(LOCAL, job.id) and job.id in worker.running  # the API's own runner holds nothing
+        await until(lambda: db.get_job(LOCAL, job.id).status == "cancelled")
+        assert stopped == [True]  # as the user's cancel, which cancels at fal too
+    finally:
+        await worker.stop()
+
+
+async def test_a_deleted_storys_job_is_cancelled_at_fal(cfg, db, until):
+    with db.session() as s:
+        s.add(Story(owner_id=LOCAL, id="s1", slug="a", title="A", version=0))
+        s.commit()
+    worker, stopped = Runner(fast_beats(cfg), db), []
+    worker.execute = waiting_forever(worker, stopped)
+    worker.start()
+    try:
+        job = worker.enqueue(LOCAL, "s1", "render", 1)
+        await until(lambda: job.id in worker.running)
+        assert db.delete_story(LOCAL, "s1")  # another process deleted it: nobody will resume the job
+        await until(lambda: stopped)
+        assert stopped == [True] and db.jobs(LOCAL, active=False, limit=5) == []
+    finally:
+        await worker.stop()
+
+
+async def test_a_worker_cut_off_from_the_database_stops_its_jobs(cfg, db, until, monkeypatch):
+    worker, stopped = Runner(fast_beats(cfg), db), []
+    worker.execute = waiting_forever(worker, stopped)
+    worker.start()
+    try:
+        job = worker.enqueue(LOCAL, None, "render", None)
+        await until(lambda: job.id in worker.running)
+
+        def unreachable(*_):
+            raise OSError("connection refused")
+
+        for method in ("heartbeat", "claim_job"):
+            monkeypatch.setattr(db, method, unreachable)
+        await until(lambda: stopped)  # within the lease, before another worker may take it
+        assert stopped == [False]  # as a shutdown: fal's requests are left for the next holder
+        await until(lambda: db.get_job(LOCAL, job.id).status == "queued")
+    finally:
+        monkeypatch.undo()
+        await worker.stop()

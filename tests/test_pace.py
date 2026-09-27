@@ -94,7 +94,7 @@ def test_the_plan_prices_time_from_the_estimate_and_the_history(fake_cfg, db):
 
 async def test_the_snapshot_says_how_long_is_left_and_where_the_time_goes(fake_cfg, db, make_story):
     job = db.add_job(LOCAL, None, "render", None, {}, None)
-    progress = Progress(db, job.id)
+    progress = Progress(db, job.id, "w")
     progress.expect = {"narration": Expect(2, 3.0, basis="history"), "mix": Expect(1, 30.0)}
     await Pipeline(fake_cfg, progress.stage, db=db, job_id=job.id, owner=LOCAL).narrate(
         make_story(("still", "still"))

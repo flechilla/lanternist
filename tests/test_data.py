@@ -183,6 +183,31 @@ def test_migration_0005_adds_the_step_cache_and_keeps_every_row(db):
     command.upgrade(cfg, "head")
 
 
+def test_migration_0006_keeps_queued_running_and_done_jobs(db):
+    cfg = db.alembic_config()
+    command.downgrade(cfg, "0005")
+    with db.engine.begin() as c:
+        for job_id, status in (("j1", "queued"), ("j2", "running"), ("j3", "done")):
+            c.execute(
+                text(
+                    "insert into jobs (id, owner_id, kind, status, params, progress, created_at) "
+                    f"values ('{job_id}', 'local', 'render', '{status}', '{{}}', '{{}}', '2026-09-01')"
+                )
+            )
+    command.upgrade(cfg, "head")
+    kept = {j.id: (j.status, j.worker, j.slot, j.cancel_requested_at) for j in db.jobs(LOCAL, False, 10)}
+    assert kept == {
+        "j1": ("queued", None, None, None),
+        "j2": ("running", None, None, None),
+        "j3": ("done", None, None, None),
+    }
+    assert db.requeue_stale(timedelta(0)) == 1  # the local start: a running job from before runs again
+    command.downgrade(cfg, "0005")
+    with db.engine.connect() as c:
+        assert c.execute(text("select count(*) from jobs")).scalar() == 3
+    command.upgrade(cfg, "head")
+
+
 @pytest.mark.sqlite_only
 @pytest.mark.skipif(not REAL_DB.is_file(), reason="no library database on this machine")
 def test_migration_on_a_copy_of_the_real_library(tmp_path):
@@ -316,11 +341,21 @@ def test_a_first_sign_in_twice_at_once_makes_one_user(db, lands_first):
     assert db.user(ann.id).email == "ann@new.example.com"
 
 
+def finish(db: Database, job_id: str, status: str = "done", **fields) -> None:
+    """End a job as its worker would have."""
+    with db.session() as s:
+        job = s.get(Job, job_id)
+        job.status, job.finished_at = status, now()
+        for k, v in fields.items():
+            setattr(job, k, v)
+        s.commit()
+
+
 def test_library_queries_do_not_grow_with_stories(db, statements):
     def add_story(n: int) -> None:
         story = db.create_story(LOCAL, f"Story {n}", "en", {"title": f"Story {n}"})
         board = db.add_job(LOCAL, story.id, "board", 1, {}, None)
-        db.update_job(board.id, status="done", finished_at=now(), result={"poster": f"{n}.png"})
+        finish(db, board.id, result={"poster": f"{n}.png"})
         db.add_job(LOCAL, story.id, "render", 1, {}, None)
 
     add_story(0)
@@ -341,7 +376,7 @@ def test_the_library_shows_the_latest_film_and_the_latest_picture(db):
 
     def ended(kind: str, minutes_ago: int, status: str = "done") -> str:
         job = db.add_job(LOCAL, story.id, kind, 1, {}, None)
-        db.update_job(job.id, status=status, finished_at=now() - timedelta(minutes=minutes_ago))
+        finish(db, job.id, status=status, finished_at=now() - timedelta(minutes=minutes_ago))
         return job.id
 
     ended("render", 40)

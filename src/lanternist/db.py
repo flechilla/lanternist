@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import (
     JSON,
     BigInteger,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
@@ -69,8 +70,10 @@ EVERYONE = "shared"  # owns the step records of what everyone shares, the voice 
 SHARED = {
     # The worker's, on the job it has claimed; a step run is written with the job's owner.
     "claim_job",
-    "requeue_running",
+    "heartbeat",
+    "requeue_stale",
     "update_job",
+    "end_job",
     "spend_by_step",
     "start_run",
     "update_run",
@@ -87,6 +90,7 @@ SHARED = {
     # The database itself.
     "migrate",
     "revision",
+    "require_head",
     "close",
     "alembic_config",
     # Sign-in, which is how the owner is found.
@@ -185,6 +189,12 @@ class StoryVersion(Base):
 
 class Job(Base):
     __tablename__ = "jobs"
+    __table_args__ = (
+        # Two claims can't take the same render slot of one owner: that's what settles their limit.
+        UniqueConstraint("owner_id", "slot", name="uq_jobs_owner_id_slot"),
+        CheckConstraint("slot IS NULL OR status = 'running'", name="ck_jobs_slot_running"),
+        Index("ix_jobs_owner_id_started_at", "owner_id", "started_at"),
+    )
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
     owner_id: Mapped[str] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE", name="fk_jobs_owner_id"), index=True
@@ -202,6 +212,12 @@ class Job(Base):
     created_at: Mapped[datetime] = mapped_column(default=now)
     started_at: Mapped[datetime | None] = mapped_column(nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # Who runs it (`<host>-<pid>`), and when they last said so; cleared when it goes back to the queue.
+    worker: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # The owner asked to cancel it while it ran; its worker hears at its next heartbeat.
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    slot: Mapped[int | None] = mapped_column(Integer, nullable=True)  # which of the owner's render slots
 
 
 TERMINAL = ("done", "failed", "cancelled")
@@ -405,6 +421,19 @@ class Database:
                 f"the database at {self.shown} doesn't answer ({str(e.orig).splitlines()[0]}): start it, "
                 f"or fix {WHERE}"
             ) from None
+
+    def require_head(self) -> None:
+        """DatabaseError unless the database is at the latest migration. The hosted edition's processes
+        don't migrate at start, since two of them migrating at once would race: its deploy runs
+        `lanternist db upgrade` first."""
+        from alembic.script import ScriptDirectory
+
+        head, at = ScriptDirectory.from_config(self.alembic_config()).get_current_head(), self.revision()
+        if at != head:
+            raise DatabaseError(
+                f"the database is at {at or 'no migration yet'} and this version needs {head}: run "
+                "`lanternist db upgrade`"
+            )
 
     # users ------------------------------------------------------------------------------------
     def user(self, user_id: str) -> User | None:
@@ -726,27 +755,40 @@ class Database:
             s.commit()
             return job
 
-    def requeue_running(self) -> None:
-        """Put every job a stopped server left running back in the queue."""
+    def requeue_stale(self, older_than: timedelta) -> int:
+        """Put back in the queue every running job whose worker hasn't stamped a heartbeat on it for
+        `older_than`, or never did: its worker died or lost the database. Returns how many."""
+        stale = or_(Job.heartbeat_at.is_(None), Job.heartbeat_at <= now() - older_than)
+        back = (
+            update(Job)
+            .where(Job.status == "running", stale)
+            .values(status="queued", worker=None, slot=None, heartbeat_at=None)
+        )
         with self.session() as s:
-            for job in s.scalars(select(Job).where(Job.status == "running")):
-                job.status = "queued"
+            count = len(s.scalars(back.returning(Job.id)).all())
             s.commit()
+            return count
 
-    def cancel_queued(self, owner: str, job_id: str) -> bool:
-        """Cancel a job that hasn't started; False if it has, or is gone."""
+    def request_cancel(self, owner: str, job_id: str) -> bool:
+        """Cancel one of the owner's jobs: a queued one at once, a running one by asking its worker,
+        which hears at its next heartbeat. False if it has ended, or isn't theirs."""
+        mine = (Job.id == job_id, Job.owner_id == owner)
         with self.session() as s:
-            job = self._job(s, owner, job_id)
-            if job is None or job.status != "queued":
-                return False
-            job.status, job.finished_at = "cancelled", now()
+            queued = (
+                update(Job).where(*mine, Job.status == "queued").values(status="cancelled", finished_at=now())
+            )
+            done = s.scalars(queued.returning(Job.id)).all()
+            if not done:
+                asked = func.coalesce(Job.cancel_requested_at, now())  # a second click asks nothing more
+                running = update(Job).where(*mine, Job.status == "running").values(cancel_requested_at=asked)
+                done = s.scalars(running.returning(Job.id)).all()
             s.commit()
-            return True
+            return bool(done)
 
-    def claim_job(self, fast_kinds: tuple[str, ...], fast: bool) -> Job | None:
-        """Mark the oldest queued job of one lane (the fast kinds, or everything else) running, and return
-        it. One statement, so two workers asking at once never get the same job: on Postgres each skips
-        the row the other has locked, and SQLite runs one write at a time."""
+    def claim_job(self, worker: str, fast_kinds: tuple[str, ...], fast: bool) -> Job | None:
+        """Mark the oldest queued job of one lane (the fast kinds, or everything else) running, held by
+        `worker`, and return it. One statement, so two workers asking at once never get the same job: on
+        Postgres each skips the row the other has locked, and SQLite runs one write at a time."""
         queued = aliased(Job)  # the subquery reads the table the statement updates
         lane = queued.kind.in_(fast_kinds) if fast else queued.kind.not_in(fast_kinds)
         oldest = (
@@ -757,16 +799,36 @@ class Database:
             .with_for_update(skip_locked=True)
             .scalar_subquery()
         )
+        at = now()
         claim = (
             update(Job)
             .where(Job.id == oldest)
-            .values(status="running", started_at=now(), error=None)
+            .values(status="running", worker=worker, heartbeat_at=at, started_at=at, error=None)
             .returning(Job)
         )
         with self.session() as s:
             job = s.scalars(claim).one_or_none()
             s.commit()
             return job
+
+    def heartbeat(self, worker: str, job_ids: list[str]) -> dict[str, str]:
+        """Stamp the jobs `worker` runs, and say of each what became of it: `held`, carry on; `cancel`,
+        its owner asked to cancel it; `lost`, it went back to the queue or to another worker; `gone`,
+        deleted with its story. One statement, and a second only when a job isn't held."""
+        if not job_ids:
+            return {}
+        stamp = (
+            update(Job)
+            .where(Job.id.in_(job_ids), Job.worker == worker, Job.status == "running")
+            .values(heartbeat_at=now())
+            .returning(Job.id, Job.cancel_requested_at)
+        )
+        with self.session() as s:
+            held = {job_id: "held" if asked is None else "cancel" for job_id, asked in s.execute(stamp)}
+            s.commit()
+            missing = [job_id for job_id in job_ids if job_id not in held]
+            there = set(s.scalars(select(Job.id).where(Job.id.in_(missing)))) if missing else set()
+        return held | {job_id: "lost" if job_id in there else "gone" for job_id in missing}
 
     def get_job(self, owner: str, job_id: str) -> Job | None:
         with self.session() as s:
@@ -786,15 +848,23 @@ class Database:
         with self.session() as s:
             return list(s.scalars(q))
 
-    def update_job(self, job_id: str, **fields) -> Job | None:
-        """Set fields on a job; None if it's gone, deleted with its story."""
+    def update_job(self, job_id: str, worker: str, **fields) -> bool:
+        """Set fields on a job `worker` still runs; False, changing nothing, when it has moved on: back
+        in the queue, to another worker, or deleted with its story."""
+        return self._fenced(job_id, worker, fields)
+
+    def end_job(self, job_id: str, worker: str, status: str, **fields) -> bool:
+        """End `worker`'s run of a job, freeing its slot: done, failed or cancelled, keeping who ran it,
+        or queued, handed back for any worker to take. False, changing nothing, when it has moved on."""
+        handed_back = {"worker": None, "heartbeat_at": None} if status == "queued" else {}
+        return self._fenced(job_id, worker, {**fields, "status": status, "slot": None, **handed_back})
+
+    def _fenced(self, job_id: str, worker: str, fields: dict) -> bool:
+        held = update(Job).where(Job.id == job_id, Job.worker == worker, Job.status == "running")
         with self.session() as s:
-            job = s.get(Job, job_id)
-            if job is not None:
-                for k, v in fields.items():
-                    setattr(job, k, v)
-                s.commit()
-            return job
+            changed = s.scalars(held.values(**fields).returning(Job.id)).all()
+            s.commit()
+            return bool(changed)
 
     # step runs --------------------------------------------------------------------------------
     def start_run(self, **fields) -> int:

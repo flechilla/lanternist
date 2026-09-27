@@ -52,6 +52,11 @@ runner = Runner(cfg, db)
 async def lifespan(_: FastAPI):
     if cfg.hosted_edition:
         S3(cfg)  # the hosted edition's files are on R2: without its bucket and keys, say which to set
+        # Its deploy migrates (`lanternist db upgrade`), and `lanternist worker` runs the jobs: this
+        # process only adds them and asks to cancel them.
+        db.require_head()
+        yield
+        return
     db.migrate()
     runner.start()
     yield
@@ -87,6 +92,7 @@ def job_dict(j: Job) -> dict:
         "version": j.version,
         "kind": j.kind,
         "status": j.status,
+        "cancelling": j.status == "running" and j.cancel_requested_at is not None,
         "params": j.params,
         "progress": dollars(j.progress),
         "result": dollars(j.result),

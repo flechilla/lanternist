@@ -313,8 +313,8 @@ export default function Reel({ sb, board, job, telling, onTell, onCancel, onWatc
                   Pause motion
                 </button>
                 {behindButton}
-                <button className="hbtn quiet" onClick={onCancel}>
-                  Cancel
+                <button className="hbtn quiet" onClick={onCancel} disabled={job.cancelling}>
+                  {job.cancelling ? "Cancelling…" : "Cancel"}
                 </button>
               </div>
             </div>
