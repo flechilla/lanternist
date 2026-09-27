@@ -72,6 +72,20 @@ async def test_a_request_is_logged_priced_and_downloaded(fal, db, world, tmp_pat
     assert dest.stat().st_size > 1000
 
 
+async def test_fakes_share_their_state_across_worlds(tmp_path):
+    """`serve` and `worker` are two processes, each with its own world on one library."""
+    first, second = FakeWorld(tmp_path / "fake"), FakeWorld(tmp_path / "fake")
+    key = {"authorization": "Key test-key"}
+    async with httpx.AsyncClient(transport=first.transport(), headers=key) as client:
+        sent = (await client.post(f"https://queue.fal.run/{KLING}", json={"duration": "5"})).json()
+    async with httpx.AsyncClient(transport=second.transport(), headers=key) as client:
+        while (await client.get(sent["status_url"])).json()["status"] != "COMPLETED":
+            pass
+        video = (await client.get(sent["response_url"])).json()["video"]["url"]
+    assert first.fal.medium(video) and first.fal.requests[sent["request_id"]].polls == 3
+    assert second.fal.submits == [] and list(second.fal.requests) == [sent["request_id"]]
+
+
 async def test_billable_units_can_come_from_the_status_response(fal, db, world):
     world.fal.billable_units_on = "status"
     res = await fal.run(KLING, {"duration": "10"}, spec())
@@ -194,7 +208,7 @@ async def test_uploads_are_reused(fal, world, tmp_path):
     f.write_bytes(b"\x89PNG fake")
     url = await fal.upload(f, asset="abc.png")
     assert await fal.upload(f, asset="abc.png") == url and len(world.fal.uploads) == 1
-    assert world.fal.media[url][0] == b"\x89PNG fake"
+    assert world.fal.medium(url) == b"\x89PNG fake"
 
 
 async def test_upload_falls_back_when_the_cdn_refuses(fal, world, tmp_path, monkeypatch):

@@ -5,9 +5,13 @@ end with no keys and no network. fal's queue walks IN_QUEUE -> IN_PROGRESS -> CO
 results are ffmpeg test media; OpenRouter and Ollama answer a JSON schema with a sample that fits
 it (a storyboard gets one scene per numbered paragraph), and plain prompts with a short story.
 Tests steer failures through the attributes on FakeFal and FakeOpenRouter. WorkOS signs in anyone
-whose code is `fake:<email>`, which the fake sign-in page makes. R2 keeps objects in a temp folder
-and checks every signature, as the real one does; the app serves it at FAKE_S3 so a browser can follow a
-presigned URL to it.
+whose code is `fake:<email>`, which the fake sign-in page makes. R2 checks every signature, as the real
+one does; the app serves it at FAKE_S3 so a browser can follow a presigned URL to it.
+
+fal's requests and media, and R2's objects, live in files under the world's root (`<library>/fake/`
+in fake mode), since the hosted edition runs `serve` and `worker` as two processes: the API serves a
+file the worker stored, and a second worker polls the first one's request. The steering stays in
+memory, in the process a test runs in.
 """
 
 import asyncio
@@ -15,12 +19,14 @@ import base64
 import hashlib
 import hmac
 import html
-import itertools
 import json
+import mimetypes
+import os
 import re
 import tempfile
+import uuid
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qsl, quote, unquote, urlparse
@@ -85,6 +91,14 @@ def _authorized(request: httpx.Request, scheme: str, bad: set[str]) -> bool:
     return auth.startswith(f"{scheme} ") and auth.split(" ", 1)[1] not in bad
 
 
+def _write(path: Path, body: bytes) -> None:
+    """Write a file another process may be reading: all of it, or none of it."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    part = path.with_name(f".{path.name}.{uuid.uuid4().hex}")
+    part.write_bytes(body)
+    os.replace(part, path)
+
+
 def _seconds(value, default: float = 5.0) -> float:
     m = re.match(r"\s*(\d+(?:\.\d+)?)", str(value)) if value is not None else None
     return float(m.group(1)) if m else default
@@ -116,19 +130,36 @@ class FakeFal:
     # When set, a request for a finished result waits for it: a test cancels once fal has billed.
     result_gate: asyncio.Event | None = None
     result_asked: asyncio.Event = field(default_factory=asyncio.Event)
-    requests: dict[str, FakeRequest] = field(default_factory=dict)
+    # What this process sent, in order; the requests themselves are files, shared by every process.
     submits: list[str] = field(default_factory=list)
     cancels: list[str] = field(default_factory=list)
     uploads: list[str] = field(default_factory=list)
-    media: dict[str, tuple[bytes, str]] = field(default_factory=dict)
-    workdir: Path = field(default_factory=lambda: Path(tempfile.mkdtemp(prefix="lanternist-fakefal-")))
-    _ids: itertools.count = field(default_factory=lambda: itertools.count(1))
+    root: Path = field(default_factory=lambda: Path(tempfile.mkdtemp(prefix="lanternist-fakefal-")))
+
+    @property
+    def requests(self) -> dict[str, FakeRequest]:
+        """Every request submitted on this root, by any process, as it is now."""
+        found = sorted((self.root / "requests").glob("*.json"))
+        return {p.stem: FakeRequest(**json.loads(p.read_text())) for p in found}
+
+    def request(self, rid: str) -> FakeRequest | None:
+        path = self.root / "requests" / f"{rid}.json"
+        return FakeRequest(**json.loads(path.read_text())) if path.is_file() else None
+
+    def save(self, req: FakeRequest) -> None:
+        _write(self.root / "requests" / f"{req.id}.json", json.dumps(asdict(req)).encode())
+
+    def medium(self, url: str) -> bytes | None:
+        """What the fake CDN serves at `url`."""
+        path = self.root / "media" / urlparse(url).path.lstrip("/")
+        return path.read_bytes() if path.is_file() else None
 
     async def handle(self, request: httpx.Request) -> httpx.Response:
         host, path = urlparse(str(request.url)).hostname, request.url.path
         if host == "v3.fal.media" and request.method == "GET":
-            body, ctype = self.media.get(str(request.url).split("?")[0], (b"", ""))
-            return httpx.Response(200 if body else 404, content=body, headers={"content-type": ctype})
+            body = self.medium(str(request.url))
+            ctype = mimetypes.guess_type(request.url.path)[0] or "application/octet-stream"
+            return httpx.Response(200 if body else 404, content=body or b"", headers={"content-type": ctype})
         if host == "storage.googleapis.com":
             return httpx.Response(200)
         if host == "v3.fal.media":
@@ -200,8 +231,7 @@ class FakeFal:
         if not request.headers.get("authorization", "").startswith("Bearer "):
             return _json({"detail": "no storage token"}, 401)
         name = request.headers.get("x-fal-file-name", "file")
-        url = f"https://v3.fal.media/files/uploaded/{next(self._ids)}-{name}"
-        self.media[url] = (request.content, request.headers.get("content-type", ""))
+        url = self._store(f"{uuid.uuid4().hex[:12]}-{name}", request.content, folder="uploaded")
         self.uploads.append(url)
         return _json({"access_url": url})
 
@@ -213,8 +243,8 @@ class FakeFal:
             if self.fail_submit:
                 status, body = self.fail_submit.pop(0)
                 return _json(body, status, {"retry-after": "0"} if status == 429 else None)
-            rid = f"req-{next(self._ids)}"
-            self.requests[rid] = FakeRequest(rid, path, json.loads(request.content or b"{}"))
+            rid = f"req-{uuid.uuid4().hex[:12]}"
+            self.save(FakeRequest(rid, path, json.loads(request.content or b"{}")))
             self.submits.append(rid)
             return _json(
                 {
@@ -227,15 +257,17 @@ class FakeFal:
             )
         _endpoint, rest = path.split("/requests/", 1)
         rid, _, action = rest.partition("/")
-        req = self.requests.get(rid)
+        req = self.request(rid)
         if req is None:
             return _json({"detail": "request not found"}, 404)
         if action == "cancel":
             req.cancelled = True
+            self.save(req)
             self.cancels.append(rid)
             return _json({"status": "CANCELLATION_REQUESTED"}, 202)
         if action == "status":
             req.polls += 1
+            self.save(req)
             if req.polls == 1 and self.polls_before_done:
                 return _json({"status": "IN_QUEUE", "queue_position": 0})
             if req.polls <= self.polls_before_done:
@@ -267,15 +299,16 @@ class FakeFal:
         if req.output is not None:
             return
         a, ep = req.arguments, req.endpoint
-        out = self.workdir / req.id
+        out = self.root / "work" / req.id
+        out.parent.mkdir(parents=True, exist_ok=True)
         if "clone-voice" in ep:
-            url = self._store(f"{req.id}.safetensors", b"fake speaker embedding", "application/octet-stream")
+            url = self._store(f"{req.id}.safetensors", b"fake speaker embedding")
             req.output, req.units = {"speaker_embedding": {"url": url}}, 0.5
         elif "image-to-video" in ep or "mmaudio" in ep:
             secs = _seconds(a.get("duration"), 5.0)
             path = out.with_suffix(".mp4")
             await media.video(int(secs * 24), 24, 320, 180, path)
-            url = self._store(path.name, path.read_bytes(), "video/mp4")
+            url = self._store(path.name, path.read_bytes())
             req.output, req.units = {"video": {"url": url, "content_type": "video/mp4"}}, secs
             if a.get("prompt_expansion_mode", "disabled") != "disabled":
                 req.output["expanded_prompt"] = f"Shot: {a['prompt']}"
@@ -283,7 +316,7 @@ class FakeFal:
             text = a.get("text") or a.get("prompt") or ""
             path = out.with_suffix(".wav")
             await asyncio.to_thread(media.tts, {"id": req.id, "chunks": [text or "hello"], "out": str(path)})
-            url = self._store(path.name, path.read_bytes(), "audio/wav")
+            url = self._store(path.name, path.read_bytes())
             req.output, req.units = (
                 {"audio": {"url": url, "content_type": "audio/wav"}},
                 round(len(text) / 1000, 4),
@@ -295,7 +328,7 @@ class FakeFal:
             await media.image(
                 {"id": req.id, "seed": a.get("seed") or 1, "width": w, "height": h, "out": str(path)}
             )
-            url = self._store(path.name, path.read_bytes(), "image/png")
+            url = self._store(path.name, path.read_bytes())
             refs = len(a.get("image_urls") or [])
             units = round(w * h / 1e6 + refs, 4) if "klein" in ep else 1.0
             req.output = {
@@ -303,11 +336,11 @@ class FakeFal:
                 "seed": a.get("seed"),
             }
             req.units = units
+        self.save(req)
 
-    def _store(self, name: str, body: bytes, ctype: str) -> str:
-        url = f"https://v3.fal.media/files/fake/{name}"
-        self.media[url] = (body, ctype)
-        return url
+    def _store(self, name: str, body: bytes, folder: str = "fake") -> str:
+        _write(self.root / "media" / "files" / folder / name, body)
+        return f"https://v3.fal.media/files/{folder}/{name}"
 
 
 FAKE_STORY = "TITLE: The Fake Lantern\n\n" + "\n\n".join(
@@ -526,8 +559,9 @@ def _when(stamp: str) -> datetime | None:
 
 @dataclass
 class FakeS3:
-    """R2's S3 API, path-style under FAKE_S3: objects in a temp folder, with each signature, payload hash
-    and expiry checked as R2 checks them, so a request signed wrong fails here too."""
+    """R2's S3 API, path-style under FAKE_S3: objects in files under `root`, beside the headers each was
+    stored with, with each signature, payload hash and expiry checked as R2 checks them, so a request
+    signed wrong fails here too."""
 
     root: Path = field(default_factory=lambda: Path(tempfile.mkdtemp(prefix="lanternist-fakes3-")))
     page: int = 1000  # keys per list page; a test makes it small to see the paging
@@ -539,18 +573,20 @@ class FakeS3:
     pace: float = 0.0  # seconds a GET of an object takes, so a test sees how many run at once
     most_at_once: int = 0  # the most GETs of objects that were running together
     _running: int = 0
-    meta: dict[str, dict[str, str]] = field(
-        default_factory=dict
-    )  # bucket/key -> the headers it was stored with
-    requests: list[str] = field(default_factory=list)  # "PUT <key>", in order
+    requests: list[str] = field(default_factory=list)  # "PUT <key>", in order, sent by this process
 
     def file(self, bucket: str, key: str) -> Path:
-        return self.root / bucket / key
+        return self.root / "objects" / bucket / key
+
+    def meta(self, bucket: str, key: str) -> dict[str, str]:
+        """The headers an object was stored with."""
+        path = self.root / "meta" / bucket / f"{key}.json"
+        return json.loads(path.read_text()) if path.is_file() else {}
 
     def keys(self, bucket: str, prefix: str = "") -> list[str]:
-        base = self.root / bucket
+        base = self.root / "objects" / bucket
         found = (str(p.relative_to(base)) for p in base.rglob("*") if p.is_file()) if base.is_dir() else ()
-        return sorted(k for k in found if k.startswith(prefix))
+        return sorted(k for k in found if k.startswith(prefix) and not Path(k).name.startswith("."))
 
     async def handle(self, request: httpx.Request) -> httpx.Response:
         path = unquote(request.url.raw_path.decode().split("?", 1)[0])
@@ -574,10 +610,9 @@ class FakeS3:
             return self._list(bucket, query)
         target = self.file(bucket, key)
         if request.method == "PUT":
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(body)
-            kept = ("content-type", "cache-control")
-            self.meta[f"{bucket}/{key}"] = {h: request.headers[h] for h in kept if h in request.headers}
+            kept = {h: request.headers[h] for h in ("content-type", "cache-control") if h in request.headers}
+            _write(self.root / "meta" / bucket / f"{key}.json", json.dumps(kept).encode())
+            _write(target, body)
             return httpx.Response(200)
         if request.method == "DELETE":
             target.unlink(missing_ok=True)
@@ -589,7 +624,7 @@ class FakeS3:
         await asyncio.sleep(self.pace)
         self._running -= 1
         data = target.read_bytes()
-        headers = {"accept-ranges": "bytes", **self.meta.get(f"{bucket}/{key}", {})}
+        headers = {"accept-ranges": "bytes", **self.meta(bucket, key)}
         for name in ("content-disposition", "content-type", "cache-control"):
             if f"response-{name}" in query:
                 headers[name] = query[f"response-{name}"]
@@ -678,14 +713,16 @@ class FakeTransport(httpx.MockTransport):
 
 
 class FakeWorld:
-    """The fakes behind one transport, routed by host and path."""
+    """The fakes behind one transport, routed by host and path, keeping their state under `root`: every
+    world on the same root sees the same fal requests and R2 objects."""
 
-    def __init__(self):
-        self.fal = FakeFal()
+    def __init__(self, root: Path | None = None):
+        root = root or Path(tempfile.mkdtemp(prefix="lanternist-fakes-"))
+        self.fal = FakeFal(root=root / "fal")
         self.openrouter = FakeOpenRouter()
         self.ollama = FakeOllama()
         self.workos = FakeWorkOS()
-        self.s3 = FakeS3()
+        self.s3 = FakeS3(root=root / "s3")
         self.close_gate: asyncio.Event | None = None
         self.closing = asyncio.Event()
 

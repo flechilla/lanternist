@@ -9,6 +9,7 @@ import pytest
 
 from lanternist import keys
 from lanternist.providers import s3 as s3mod
+from lanternist.providers.fake import FakeWorld
 from lanternist.providers.s3 import EMPTY, S3, UNSIGNED, S3Error, Signer, attachment
 
 # AWS's worked examples (sig-v4-header-based-auth.html, sigv4-query-string-auth.html): their keys, their
@@ -78,15 +79,19 @@ def _file(tmp_path, data: bytes, name: str = "f.bin"):
     return path, hashlib.sha256(data).hexdigest()
 
 
-async def test_put_get_head_delete(s3, fakes, tmp_path):
+async def test_put_get_head_delete(s3, fakes, fake_cfg, tmp_path):
     src, sha = _file(tmp_path, b"a picture's bytes")
     key = "u/ann/derived/ab/ab12-thumb@1-w384.jpg"  # "@" is encoded in the path, and signed that way
     await s3.put(key, src, sha, "image/jpeg", "private, max-age=31536000, immutable")
     assert await s3.head(key) == len(b"a picture's bytes")
-    assert fakes.s3.meta[f"{s3.bucket}/{key}"] == {
+    assert fakes.s3.meta(s3.bucket, key) == {
         "content-type": "image/jpeg",
         "cache-control": "private, max-age=31536000, immutable",
     }
+    other = FakeWorld(fake_cfg.library / "fake")  # another process's fakes, on the same library
+    assert other.s3.keys(s3.bucket) == [key] and other.s3.meta(s3.bucket, key) == fakes.s3.meta(
+        s3.bucket, key
+    )
     dest = tmp_path / "back" / "copy.jpg"
     assert await s3.get(key, dest) and dest.read_bytes() == b"a picture's bytes"
     assert await s3.read(key) == b"a picture's bytes"
