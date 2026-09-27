@@ -88,7 +88,7 @@ Files go to an R2 bucket: set `[storage] endpoint` and `bucket`, and `R2_ACCESS_
 `R2_SECRET_ACCESS_KEY` from an R2 token limited to that bucket. The bucket needs a lifecycle rule
 that deletes `scratch/` after 7 days. Fake mode stores files in a fake R2 inside the app.
 
-`plans/MVP_PLAN.md` has the plan this was built from; `plans/M2_PLAN.md` has its live checks still to run; `plans/HOSTED_PLAN.md` is the hosted edition in progress, with a plan per phase (`plans/DB_PLAN.md` and `plans/ACCOUNTS_PLAN.md` done, `plans/STORAGE_PLAN.md` in progress). `CLAUDE.md` holds the
+`plans/MVP_PLAN.md` has the plan this was built from; `plans/M2_PLAN.md` has its live checks still to run; `plans/HOSTED_PLAN.md` is the hosted edition in progress, with a plan per phase (`plans/DB_PLAN.md`, `plans/ACCOUNTS_PLAN.md` and `plans/STORAGE_PLAN.md` done). `CLAUDE.md` holds the
 conventions every change follows.
 
 Licences: FLUX.2 [klein] 9B is non-commercial, so it's for personal use. Qwen3-TTS and Ollama's Qwen models are Apache 2.0. LTX-2.5 is free under the LTX Community licence below $10M annual revenue.

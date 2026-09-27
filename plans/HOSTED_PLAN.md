@@ -1,6 +1,6 @@
 # Lanternist Hosted: the SaaS edition
 
-> **Status, 26 Sep 2026: Phase A done (`DB_PLAN.md`, merged as #13); Phase B done (`ACCOUNTS_PLAN.md`, merged as #33); Phase C built (`STORAGE_PLAN.md`, on `feat/storage`) and checked against R2; the rest planned.** The product direction changed on 22 Sep: Lanternist is to be a hosted service. People buy credits and spend them on films, and a plan (tier) decides which models they may use. Running on your own GPU stays, as the way we develop the app. Each phase gets its own plan in `plans/` when it starts, and the work is tracked in the epic, issue #14. §5 lists the decisions only you can make: sign-in (6) and where the business is registered (2) were settled on 23 Sep.
+> **Status, 26 Sep 2026: Phase A done (`DB_PLAN.md`, merged as #13); Phase B done (`ACCOUNTS_PLAN.md`, merged as #33); Phase C done (`STORAGE_PLAN.md`, merged as #34) and checked against R2; the rest planned.** The product direction changed on 22 Sep: Lanternist is to be a hosted service. People buy credits and spend them on films, and a plan (tier) decides which models they may use. Running on your own GPU stays, as the way we develop the app. Each phase gets its own plan in `plans/` when it starts, and the work is tracked in the epic, issue #14. §5 lists the decisions only you can make: sign-in (6) and where the business is registered (2) were settled on 23 Sep.
 >
 > Facts about Stripe, Paddle, Polar, Clerk, WorkOS, R2, Neon, Hetzner, fal, OpenRouter, moderation models and the law were read from their own pages on 22 Sep 2026 (sources in §6). Anything marked **verify** wasn't confirmed. The legal points are research, not legal advice: §1.10 needs a lawyer before the public launch.
 
@@ -487,6 +487,8 @@ Each phase ends with something that runs end to end. Sizes assume one developer 
 
 ### Phase C: storage on R2 (≈3 days)
 
+`STORAGE_PLAN.md`, issue #16.
+
 - [x] The `Store` interface: the local folder, and R2 with its per-user prefixes, local disk cache and `steps` table.
 - [x] `providers/s3.py` (httpx + our own SigV4 signing) and the fake S3.
 - [x] Thumbnails made by the worker; presigned redirects with hour-stable URLs; downloads with a file name.
@@ -495,7 +497,7 @@ Each phase ends with something that runs end to end. Sizes assume one developer 
 **Exit:**
 - [x] A full film in fake hosted mode with every file on the fake S3.
 - [x] One live R2 round trip (opt-in).
-- [ ] The Board, the reel and the film play from presigned URLs. Done in the tests and, for the Board and the reel, in a browser; the film still needs playing once in a real tab (`STORAGE_PLAN.md` §2).
+- [x] The Board, the reel and the film play from presigned URLs, in the tests and in a browser (`STORAGE_PLAN.md` §2).
 
 ### Phase D: workers (≈3 days)
 
