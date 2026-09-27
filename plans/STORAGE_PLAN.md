@@ -1,6 +1,6 @@
 # Lanternist: storage on R2
 
-> **Status, 26 Sep 2026: in progress on `feat/storage`, as one pull request. The questions in §4 are answered.** This is Phase C of `HOSTED_PLAN.md` (issue #16). Its one blocker, Phase B (#15), is on `main` as #33. Migration 0005 is this phase's (HOSTED_PLAN §1.15); Phases D and E may run beside it and take 0006 and later. The sketch is at https://claude.ai/artifact/YK2AkQiXCA3jAqMdVb38zu.
+> **Status, 26 Sep 2026: built on `feat/storage`, as one pull request, and checked against R2 (`lanternist-dev`). The questions in §4 are answered.** This is Phase C of `HOSTED_PLAN.md` (issue #16). Its one blocker, Phase B (#15), is on `main` as #33. Migration 0005 is this phase's (HOSTED_PLAN §1.15); Phases D and E may run beside it and take 0006 and later. The sketch is at https://claude.ai/artifact/YK2AkQiXCA3jAqMdVb38zu.
 >
 > **Measured before writing:**
 > - **What a story weighs.** The lab library (`~/Lanternist-lab`, 20 films made on 22 Sep) holds 8.8 GB of assets. ffmpeg's scene clips are 4.49 GB of it (51%), the films 1.97 GB (22%), paid video from fal 1.55 GB (18%), pictures 0.70 GB (8%) and narration 0.05 GB. So about half of what a story weighs costs nothing to make again.
@@ -88,7 +88,7 @@ Two backends behind the same methods. The folder is today's `Store`. `R2Store` e
 - **httpx, through `providers.transport(cfg)`,** like fal, OpenRouter and WorkOS. So fake mode serves a fake S3 with every line of the real client (invariant 8). No SDK.
 - **Calls:** `put(key, path, sha256, type)`, `get(key, dest)` (streamed to a file), `head(key) -> int | None`, `delete(key)`, `list(prefix)` (ListObjectsV2, following `continuation-token`), `delete_prefix(prefix)` (DeleteObjects in batches of 1,000), and `presign(key, at, seconds, download)`.
 - **Signing** is AWS Signature Version 4, region `auto`, service `s3`: headers for our own calls, the query string for presigned GETs. It's our own, about 50 lines of `hmac`, `hashlib` and `urllib.parse`, with no new dependency (question 2). It's tested against AWS's published SigV4 examples, whose signatures are fixed strings, and against R2 in the live test.
-- **Integrity for free.** A PUT's `x-amz-content-sha256` is the file's SHA-256, which the store has already computed for the asset's name. R2 checks the body against it (**verify** in the live test).
+- **Integrity for free.** A PUT's `x-amz-content-sha256` is the file's SHA-256, which the store has already computed for the asset's name. R2 checks the body against it: the live test's wrong hash got `400 XAmzContentSHA256Mismatch`.
 - **One PUT per file.** R2 takes up to 5 GB in a single PUT; a 4-minute film is 350–400 MB. The body streams from the file.
 - **Errors:** `S3Error(ProviderError)`, with a sentence: "R2 refused the upload of u/…/film.mp4: check R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY". 429, 5xx and transport errors are retried with `providers.backoff()`. A 403 or 404 isn't.
 - **Keys.** `keys.PLATFORM` gains `r2_key_id: R2_ACCESS_KEY_ID` and `r2: R2_SECRET_ACCESS_KEY`: from the environment only, and scrubbed by `redact()` (invariant 4). The access key id isn't a secret: S3's design puts it in every presigned URL, in `X-Amz-Credential`.
@@ -104,7 +104,7 @@ Two backends behind the same methods. The folder is today's `Store`. `R2Store` e
 4. **Everything else is a 302 to a presigned GET** on R2's S3 endpoint. Presigned URLs don't work on custom domains, support ranges (films seek), and cost no egress.
    - **Signed at the top of the hour and valid for 2 hours.** Every request in the same hour gets the same URL, so the browser's cache keeps working, and each URL has at least an hour left when it's handed out. A film paused for longer than that reloads through the API.
    - **The 302 itself** is cacheable until the end of the hour (`private`), so a page reloaded within the hour doesn't ask again.
-   - **A download** (`?download=name`) adds `response-content-disposition: attachment` with the name, UTF-8 included, as the query string's part of the signature (**verify** with R2 in the live test).
+   - **A download** (`?download=name`) adds `response-content-disposition: attachment` with the name, UTF-8 included, as the query string's part of the signature. R2 honours it: the live test's `Película ñ-v3.mp4` came back as `filename*=UTF-8''Pel%C3%ADcula%20%C3%B1-v3.mp4`.
 5. **The local edition** answers with the file, as today.
 
 The browser follows the redirect with the fragment it asked for (`#t=2` on the reel's `<video>`), as the fetch standard says.
@@ -173,7 +173,13 @@ One pull request, `feat/storage` (question 5), with a commit per step below. The
 - [x] `FakeS3` in `providers/fake.py`, routed by `FakeWorld`.
 - [x] `keys.PLATFORM` gains the R2 keys; `[storage]` in `config.py` and `lanternist.example.toml`.
 - [x] The client's tests (AWS's five published signatures match exactly).
-- [ ] The live round trip, once the R2 token is in `.env`.
+- [x] The live round trip against `lanternist-dev` (26 Sep, with your permission, inside R2's free tier):
+  - a PUT with a key holding an `@`, as thumbnails have, then a HEAD;
+  - a body that isn't its hash, refused with 400;
+  - a ranged GET (206) through a URL signed at the top of the hour, with the object's type and `Cache-Control`;
+  - the download name, UTF-8 included;
+  - a URL signed three hours earlier, refused with 403;
+  - a list, and deleting the prefix, which left nothing.
 
 ### C2: the R2 store (≈ 2 days)
 
@@ -192,7 +198,11 @@ One pull request, `feat/storage` (question 5), with a commit per step below. The
   - Download MP4 saved as `the-lantern-keeper-v1.mp4`.
 
   The `<video>` itself didn't start: Chrome keeps the automation tab hidden, and it defers media there. The server log shows the MP4 was never asked for. Press play once yourself on a real tab.
-- [ ] With your keys: one hosted film on `lanternist-dev` in a browser, fake models and real R2, to see the presigned URLs work from the real endpoint.
+- [ ] ~~With your keys: one hosted film on `lanternist-dev` in a browser, fake models and real R2.~~
+  Not possible as written: fake mode fakes every provider through `providers.transport()`, R2
+  included. A hosted film on the real bucket needs real models too: the cheapest film all on fal is
+  about $0.11 (`test_a_one_scene_film_all_on_fal`), and it's your call. The live round trip already
+  shows the real endpoint serving presigned GETs with ranges, types and download names.
 
 **Exit** (the definition of done above): items 1–5, with `scripts/check` and `scripts/check postgres` green. Then this plan's and HOSTED_PLAN's boxes and status lines, and a comment on #16.
 
