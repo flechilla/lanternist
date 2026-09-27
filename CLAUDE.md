@@ -8,10 +8,11 @@ writer, fal.ai for media) with the user's own keys.
 - `README.md`: what it does and how to run it.
 - `plans/`: `MVP_PLAN.md` (done), `M2_PLAN.md` (in progress: its live checks), `HOSTED_PLAN.md`
   (in progress: the SaaS edition, with credits and plans, tracked in issue #14), and a plan per hosted
-  phase: `DB_PLAN.md` (Phase A, done), `ACCOUNTS_PLAN.md` (Phase B, done) and `STORAGE_PLAN.md`
-  (Phase C, done). Each holds the design, the decisions and why, and the phase checklists.
-  Read the relevant section before changing a subsystem. When a PR finishes a plan item, tick its box
-  and update the status line at the top. New plans go in `plans/` too.
+  phase: `DB_PLAN.md` (Phase A, done), `ACCOUNTS_PLAN.md` (Phase B, done), `STORAGE_PLAN.md`
+  (Phase C, done) and `WORKERS_PLAN.md` (Phase D, in progress). Each holds the design, the decisions
+  and why, and the phase checklists. Read the relevant section before changing a subsystem. When a PR
+  finishes a plan item, tick its box and update the status line at the top. New plans go in `plans/`
+  too.
 
 ## Commands
 

@@ -1,6 +1,6 @@
 # Lanternist Hosted: the SaaS edition
 
-> **Status, 26 Sep 2026: Phase A done (`DB_PLAN.md`, merged as #13); Phase B done (`ACCOUNTS_PLAN.md`, merged as #33); Phase C done (`STORAGE_PLAN.md`, merged as #34) and checked against R2; the rest planned.** The product direction changed on 22 Sep: Lanternist is to be a hosted service. People buy credits and spend them on films, and a plan (tier) decides which models they may use. Running on your own GPU stays, as the way we develop the app. Each phase gets its own plan in `plans/` when it starts, and the work is tracked in the epic, issue #14. §5 lists the decisions only you can make: sign-in (6) and where the business is registered (2) were settled on 23 Sep.
+> **Status, 27 Sep 2026: Phase A done (`DB_PLAN.md`, merged as #13); Phase B done (`ACCOUNTS_PLAN.md`, merged as #33); Phase C done (`STORAGE_PLAN.md`, merged as #34) and checked against R2; Phase D planned (`WORKERS_PLAN.md`, on `feat/workers`); the rest planned.** The product direction changed on 22 Sep: Lanternist is to be a hosted service. People buy credits and spend them on films, and a plan (tier) decides which models they may use. Running on your own GPU stays, as the way we develop the app. Each phase gets its own plan in `plans/` when it starts, and the work is tracked in the epic, issue #14. §5 lists the decisions only you can make: sign-in (6) and where the business is registered (2) were settled on 23 Sep, and hosting (5) on 26 Sep.
 >
 > Facts about Stripe, Paddle, Polar, Clerk, WorkOS, R2, Neon, Hetzner, fal, OpenRouter, moderation models and the law were read from their own pages on 22 Sep 2026 (sources in §6). Anything marked **verify** wasn't confirmed. The legal points are research, not legal advice: §1.10 needs a lawyer before the public launch.
 
@@ -354,6 +354,8 @@ A lawyer reviews this section before Phase I (#29). The business is in the US (d
 
 ### 1.11 Deploy and operations
 
+> Decided on 26 Sep (#26): OVHcloud US, not Hetzner (§5). Phase G's plan rewrites this section.
+
 **Start small:**
 - **Servers.** Docker Compose on one Hetzner server: Caddy (TLS), the API and one worker. A CX43 (8 shared vCPU, 16 GB) is €15.99/month after Hetzner's June price rise. A dedicated-CPU CCX13 for the worker (€42.99) comes when encodes need it. A second, smaller server (CX33, €8.49) is staging.
 - **Postgres** on Neon's Launch plan, with scale-to-zero off: about $19/month, and 7 days of point-in-time restore we don't have to run. The worker connects directly, not through Neon's transaction pooler.
@@ -501,10 +503,12 @@ Each phase ends with something that runs end to end. Sizes assume one developer 
 
 ### Phase D: workers (≈3 days)
 
+`WORKERS_PLAN.md`, issue #17.
+
 - [ ] `lanternist worker`; `serve` without the runner in hosted.
 - [ ] Heartbeats, `requeue_stale`, cancel across processes, renders at once per plan.
 - [ ] SIGTERM hands running jobs back to the queue.
-- [ ] libx264 in hosted: time a 4-minute film's clips and mix on a CX43, and write the number here.
+- [ ] libx264 in hosted: time a 4-minute film's clips and mix on the OVH VPS, and write the number here.
 
 **Exit:**
 - [ ] Two workers, three users: fair turns.
@@ -620,7 +624,7 @@ On Stripe Managed Payments (decision 2), once it's on for Monsoft's account (#31
    - 1 credit = $0.01;
    - +100% markup by default, set per model;
    - credits don't expire at launch.
-5. **Hosting.** *Recommended:* one Hetzner server with Compose, Neon for Postgres, and R2 (§1.11).
+5. **Hosting.** *Decided 26 Sep 2026 (#26):* OVHcloud US, in Vint Hill: a VPS-4 for the API and a worker, a VPS-1 or VPS-2 for staging, Neon for Postgres, and R2. Hetzner's CX line can't be ordered and is sold only in Europe (`WORKERS_PLAN.md` §4).
 6. **Sign-in.** *Decided 23 Sep 2026 (#23):* WorkOS AuthKit, behind `auth.py`, with email codes and Google and no passwords. The custom domain waits for paying users.
 7. **The interface's language.** Translate the app into Spanish and Brazilian Portuguese before the public launch, or after? The Customer Portal and AuthKit's pages already speak both.
 8. **The domain and the name.** The blueprint's advice stands: a trademark search, then register the domains on the same day.
