@@ -1,11 +1,14 @@
 """The two editions: what the hosted one leaves out, and what it offers instead."""
 
 import pytest
+from alembic import command
 from pydantic import ValidationError
 from test_api import storyboard
+from typer.testing import CliRunner
 
-from lanternist import config, registry
+from lanternist import cli, config, registry
 from lanternist.config import Settings
+from lanternist.db import Database, Job, now
 
 PRESET = "Vivian"  # a voice of the hosted tests' narrator (HOSTED_TOML): hosted clones no recording
 
@@ -29,6 +32,21 @@ def test_the_hosted_edition_refuses_models_it_cant_run():
                 "defaults": remote
                 | {"writer": "openrouter/openai/gpt-5.6-luna", "checker": "ollama/qwen3.8"},
             }
+        )
+
+
+def test_the_hosted_encoder_is_libx264():
+    remote = {
+        "writer": "openrouter/openai/gpt-5.6-luna",
+        "tts": "fal/qwen-3-tts-1.7b",
+        "image": "fal/flux-2-klein-9b",
+        "video": "fal/h3-max-turbo",
+    }
+    assert Settings.model_validate({"edition": "hosted", "defaults": remote}).render.encoder == "libx264"
+    assert Settings().render.encoder == "h264_nvenc"  # the local edition's, as before: no step key changes
+    with pytest.raises(ValidationError, match=r"render\.encoder is h264_nvenc, which needs a GPU"):
+        Settings.model_validate(
+            {"edition": "hosted", "defaults": remote, "render": {"encoder": "h264_nvenc"}}
         )
 
 
@@ -133,3 +151,49 @@ def test_a_hosted_story_renders_on_remote_models(hosted_client, wait):
     assert not any(stages[s]["local"] for s in ("narration", "keyframes", "motion"))
     assert job["progress"]["spent_usd"] > 0  # fal's fake bills like fal
     assert c.get(f"/api/assets/{job['result']['film']}").status_code == 200
+
+
+# ------------------------------------------------------------------------------------ workers
+def test_hosted_serve_runs_no_jobs(hosted_client):
+    """In hosted, `lanternist worker` runs them; the API only adds them and asks to cancel them."""
+    import lanternist.api.app as appmod
+
+    assert appmod.runner._loops == [] and appmod.runner._beat is None
+
+
+def test_a_running_job_says_cancelling(hosted_client):
+    import lanternist.api.app as appmod
+
+    ann = hosted_client.get("/api/me").json()["id"]
+    job = appmod.db.add_job(ann, None, "render", None, {}, None)
+    with appmod.db.session() as s:  # held by a worker in another process, which heartbeats
+        s.get(Job, job.id).status, s.get(Job, job.id).worker, s.get(Job, job.id).heartbeat_at = (
+            "running",
+            "elsewhere-1",
+            now(),
+        )
+        s.commit()
+    assert hosted_client.get(f"/api/jobs/{job.id}").json()["cancelling"] is False
+    assert hosted_client.post(f"/api/jobs/{job.id}/cancel").json() == {"cancelled": True}
+    shown = hosted_client.get(f"/api/jobs/{job.id}").json()
+    assert (shown["status"], shown["cancelling"]) == ("running", True)  # until its worker hears
+
+
+def test_a_worker_on_an_old_schema_says_to_upgrade(hosted_config):
+    db = Database(hosted_config().database_url)
+    db.migrate()
+    command.downgrade(db.alembic_config(), "0005")
+    out = CliRunner().invoke(cli.app, ["worker"])
+    assert out.exit_code == 1
+    assert "the database is at 0005 and this version needs 0006: run `lanternist db upgrade`" in out.output
+    assert CliRunner().invoke(cli.app, ["db", "upgrade"]).exit_code == 0 and db.revision() == "0006"
+    db.close()
+
+
+def test_the_local_worker_command_says_where_jobs_run(tmp_path, monkeypatch):
+    (tmp_path / "local.toml").write_text(f'[paths]\nlibrary = "{tmp_path / "lib"}"\n')
+    monkeypatch.setenv("LANTERNIST_CONFIG", str(tmp_path / "local.toml"))
+    config.settings.cache_clear()
+    out = CliRunner().invoke(cli.app, ["worker"])
+    config.settings.cache_clear()
+    assert out.exit_code == 1 and "the local edition runs its jobs inside `lanternist serve`" in out.output

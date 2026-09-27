@@ -33,14 +33,15 @@ _fake = None
 
 
 def transport(cfg: Settings) -> httpx.AsyncBaseTransport | None:
-    """The fake fal and OpenRouter in fake mode; None means the real network."""
+    """The fake fal and OpenRouter in fake mode; None means the real network. The fakes keep their
+    state in the library, so `serve` and `worker` on one library see the same fal and R2."""
     global _fake
     if not cfg.fake_engines:
         return None
     if _fake is None:
         from .fake import FakeWorld
 
-        _fake = FakeWorld()
+        _fake = FakeWorld(cfg.library / "fake", cfg.fake_pace)
     return _fake.transport()
 
 

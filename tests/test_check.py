@@ -80,7 +80,7 @@ async def test_a_picture_that_fails_its_check_is_drawn_again_with_a_new_seed(fak
 async def test_the_progress_shows_a_failed_picture_until_its_redraw_lands(fake_cfg, db, fakes, make_story):
     fakes.openrouter.replies = [TWICE]
     job = db.add_job(LOCAL, None, "board", None, {}, None)
-    progress = Progress(db, job.id)
+    progress = Progress(db, job.id, "w")
     seen = []
 
     def follow(e: Event) -> None:
@@ -118,7 +118,7 @@ async def test_the_progress_shows_a_failed_picture_until_its_redraw_lands(fake_c
 async def test_a_fail_with_no_reason_is_still_a_fail(fake_cfg, db, fakes, make_story):
     fakes.openrouter.replies = [TWICE.replace('"Ann appears twice."', '""')]
     job = db.add_job(LOCAL, None, "board", None, {}, None)
-    progress = Progress(db, job.id)
+    progress = Progress(db, job.id, "w")
     states = []
 
     def follow(e: Event) -> None:
@@ -284,7 +284,10 @@ async def test_a_cached_board_needs_no_prices(fake_cfg, db, fakes, make_story, m
 
 def job_row(db, story_id: str, version: int, kind: str = "board") -> Job:
     with db.session() as s:
+        # Held by this process's worker, as a job the runner has claimed.
+        worker = Runner(Settings(), db).name
         job = Job(owner_id=LOCAL, story_id=story_id, kind=kind, version=version, params={}, progress={})
+        job.status, job.worker = "running", worker
         s.add(job)
         s.commit()
         s.refresh(job)

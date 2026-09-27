@@ -88,7 +88,16 @@ Files go to an R2 bucket: set `[storage] endpoint` and `bucket`, and `R2_ACCESS_
 `R2_SECRET_ACCESS_KEY` from an R2 token limited to that bucket. The bucket needs a lifecycle rule
 that deletes `scratch/` after 7 days. Fake mode stores files in a fake R2 inside the app.
 
-`plans/MVP_PLAN.md` has the plan this was built from; `plans/M2_PLAN.md` has its live checks still to run; `plans/HOSTED_PLAN.md` is the hosted edition in progress, with a plan per phase (`plans/DB_PLAN.md` and `plans/ACCOUNTS_PLAN.md` done, `plans/STORAGE_PLAN.md` in progress). `CLAUDE.md` holds the
+Hosted runs as two commands on one database. `lanternist serve` is the API: it adds jobs, asks to
+cancel them and streams their progress. `lanternist worker` claims the jobs and runs them, as many
+processes as you like (`[worker]` in `lanternist.example.toml`). SIGTERM or Ctrl-C hands a worker's
+running jobs back to the queue, and a worker that dies has its jobs taken by another after
+`[worker] stale_seconds`. Neither migrates the database: run `lanternist db upgrade` first, at every
+deploy. In fake mode, run `serve` and `worker` in two terminals on the same `LANTERNIST_CONFIG`:
+the fakes keep their state in the library, so both see the same fal and R2. `LANTERNIST_FAKE_PACE`
+makes each fake fal request last that long too.
+
+`plans/MVP_PLAN.md` has the plan this was built from; `plans/M2_PLAN.md` has its live checks still to run; `plans/HOSTED_PLAN.md` is the hosted edition in progress, with a plan per phase (`plans/DB_PLAN.md`, `plans/ACCOUNTS_PLAN.md` and `plans/STORAGE_PLAN.md` done, `plans/WORKERS_PLAN.md` in progress). `CLAUDE.md` holds the
 conventions every change follows.
 
 Licences: FLUX.2 [klein] 9B is non-commercial, so it's for personal use. Qwen3-TTS and Ollama's Qwen models are Apache 2.0. LTX-2.5 is free under the LTX Community licence below $10M annual revenue.

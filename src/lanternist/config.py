@@ -191,6 +191,16 @@ class Storage(BaseModel):
     downloads: int = 8  # files a stage fetches from R2 at once, on a machine whose cache lacks them
 
 
+class Worker(BaseModel):
+    """`lanternist worker`, which runs the hosted edition's jobs; the local `serve` runs its own queue,
+    one render at a time, and reads only the heartbeat and staleness."""
+
+    renders: int = 2  # renders one worker runs at once: they mostly wait on fal
+    per_user: int = 1  # renders one person may have running at once, across every worker
+    heartbeat_seconds: float = 10  # how often a worker stamps its jobs, and hears of cancels
+    stale_seconds: float = 60  # a job whose heartbeat is older goes back to the queue for another worker
+
+
 class DatabaseConfig(BaseModel):
     model_config = ConfigDict(validate_default=True)
     # Empty: the SQLite file in the library. The hosted edition's Postgres, as
@@ -211,6 +221,7 @@ class Settings(BaseModel):
     hosted: Hosted = Hosted()
     workos: WorkOS = WorkOS()
     storage: Storage = Storage()
+    worker: Worker = Worker()
     paths: Paths = Paths()
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)  # reads the environment when made
     ollama: Ollama = Ollama()
@@ -229,6 +240,15 @@ class Settings(BaseModel):
         # The hosted edition runs no model on its own machine, so a local default would fail every story.
         if self.edition != "hosted":
             return self
+        # Its workers have no GPU: ffmpeg encodes on the CPU. The encoder is in the clips' and the
+        # film's step keys, so hosted films never mix with local ones.
+        if "encoder" not in self.render.model_fields_set:
+            self.render = self.render.model_copy(update={"encoder": "libx264"})
+        elif self.render.encoder != "libx264":
+            raise ValueError(
+                f"render.encoder is {self.render.encoder}, which needs a GPU the hosted edition's workers "
+                "don't have: use libx264"
+            )
         d = self.defaults
         for field in MODEL_DEFAULTS:
             model = getattr(d, field)

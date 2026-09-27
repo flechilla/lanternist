@@ -154,8 +154,8 @@ export function Dock({ job, queued, sb, board, reel, telling, onTell, onCancel }
             {open ? "Hide details" : "Details"}
           </button>
         )}
-        <button className="small danger" onClick={onCancel}>
-          Cancel
+        <button className="small danger" onClick={onCancel} disabled={job.cancelling}>
+          {job.cancelling ? "Cancelling…" : "Cancel"}
         </button>
       </div>
       {scenes.length > 0 && (

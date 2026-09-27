@@ -278,6 +278,7 @@ async def test_a_restart_polls_the_running_requests_instead_of_paying_again(
     fakes.fal.polls_before_done = 2
     for req in fakes.fal.requests.values():
         req.polls = 0
+        fakes.fal.save(req)
     await Pipeline(fake_cfg, db=db, owner=LOCAL).motion(
         sb, await Pipeline(fake_cfg, db=db, owner=LOCAL).board(sb)
     )

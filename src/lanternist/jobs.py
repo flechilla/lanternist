@@ -1,17 +1,25 @@
-"""The render queue: one in-process worker that runs jobs one at a time, in order.
+"""The render queue: a Runner claims jobs from the database and runs them. The local `serve` runs one,
+one render at a time (the GPU); in hosted, `lanternist worker` processes do, several renders each, and
+the API's Runner only adds jobs and asks to cancel them.
 
-Job state lives in the database, so a restart re-queues whatever was running; its finished steps are
-served from the cache and it carries on where it stopped. Progress is a snapshot on the job row
-that the SSE endpoint streams to the browser.
+Job state lives in the database, so any process can pick up where another stopped. A worker stamps a
+heartbeat on the jobs it holds, and a job whose heartbeat goes stale goes back to the queue for
+another; its finished steps come from the cache, and fal's open requests are polled again, not paid
+for again. The heartbeat also brings back what the worker must hear: a cancel, or that the job moved
+on. Every write a worker makes to its job's row names the worker, so one that lost its job changes
+nothing. Progress is a snapshot on the job row that the SSE endpoint streams to the browser.
 """
 
 import asyncio
 import contextlib
 import logging
+import os
 import shutil
+import socket
 import time
 import traceback
 from collections.abc import Sequence
+from datetime import timedelta
 from typing import Any, cast
 
 from . import pace, prefs, store
@@ -68,8 +76,8 @@ class Progress:
     is what the provider billed for that scene in that stage; a portrait's and a check's are counted
     in their stage's spend only, since their runs aren't logged by scene."""
 
-    def __init__(self, db: Database, job_id: str):
-        self.db, self.job_id = db, job_id
+    def __init__(self, db: Database, job_id: str, worker: str):
+        self.db, self.job_id, self.worker = db, job_id, worker
         self.snap: dict[str, Any] = {"stages": {}, "scenes": {}, "cast": {}, "log": [], "message": ""}
         self.t0 = time.time()
         # What each stage of a board or render is expected to take: how long is left comes from it.
@@ -182,7 +190,7 @@ class Progress:
         self._last_write = time.time()
         self._spend()
         self._time()
-        self.db.update_job(self.job_id, progress=dict(self.snap))
+        self.db.update_job(self.job_id, self.worker, progress=dict(self.snap))
 
     def _time(self) -> None:
         """How long each stage has worked; and, for a job that knows what its stages should take, how
@@ -237,18 +245,23 @@ class Progress:
 # A few seconds on a remote model each: they run in a lane of their own, beside the queue, so a voice
 # sample never waits behind a render. They never take the GPU.
 FAST = ("sample",)
-STOP_GRACE = 30  # seconds a stopping server gives its running jobs to store what they were paid for
+STOP_GRACE = 30  # seconds a stopping worker gives its running jobs to store what they were paid for
+POLL = {True: 1.0, False: 2.0}  # seconds an idle lane waits before asking again, by lane: fast or not
+LEASE = 0.75  # of [worker] stale_seconds: a worker cut off this long stops its jobs before others take them
 
 
 class Runner:
-    def __init__(self, cfg: Settings, db: Database):
-        self.cfg, self.db = cfg, db
+    """Claims jobs and runs them: `renders` at once in the render lane, and one sample at a time."""
+
+    def __init__(self, cfg: Settings, db: Database, renders: int = 1):
+        self.cfg, self.db, self.renders = cfg, db, renders
+        self.name = f"{socket.gethostname()}-{os.getpid()}"[-64:]  # who holds a job, on its row
         self.wakes = {False: asyncio.Event(), True: asyncio.Event()}  # by lane: fast or not
-        self.current: tuple[str, asyncio.Task] | None = None  # the queue's running job
-        self.current_fast: tuple[str, asyncio.Task] | None = None
+        self.running: dict[str, asyncio.Task] = {}  # this process's jobs, by id
         self._loops: list[asyncio.Task] = []
+        self._beat: asyncio.Task | None = None
         self._event_loop: asyncio.AbstractEventLoop | None = None
-        # Jobs the user cancelled, as opposed to a shutdown: only these cancel remote requests.
+        # Jobs the user cancelled, as opposed to a shutdown or a lost job: only these cancel remote requests.
         self.cancel_requested: set[str] = set()
 
     def user_cancelled(self, job_id: str) -> bool:
@@ -256,17 +269,25 @@ class Runner:
 
     # control ------------------------------------------------------------------------------------
     def start(self) -> None:
-        self.db.requeue_running()  # interrupted by a restart: run again, cached steps skip
+        if not self.cfg.hosted_edition:  # no other process holds a local job: run them all again now
+            self.db.requeue_stale(timedelta(0))
         self._event_loop = asyncio.get_running_loop()
-        self._loops = [asyncio.create_task(self.loop(fast)) for fast in (False, True)]
+        lanes = [False] * self.renders + [True]
+        self._loops = [asyncio.create_task(self.loop(fast)) for fast in lanes]
+        self._beat = asyncio.create_task(self.beat())
 
     async def stop(self) -> None:
-        tasks = [running[1] for running in (self.current, self.current_fast) if running] + self._loops
+        """Stop claiming, and hand the running jobs back to the queue once each has stored what fal
+        was paid for (engines.base.whole), within STOP_GRACE; the heartbeat goes on meanwhile, so no
+        one takes them early."""
+        tasks = [*self.running.values(), *self._loops]
         for task in tasks:
             task.cancel()
-        # A job being stopped first finishes storing what fal was paid for (engines.base.whole).
         if tasks:
             await asyncio.wait(tasks, timeout=STOP_GRACE)
+        if self._beat:
+            self._beat.cancel()
+            await asyncio.wait([self._beat])
 
     def _wake(self, fast: bool) -> None:
         # Routes enqueue from FastAPI's thread pool; the event belongs to the server's loop.
@@ -289,49 +310,88 @@ class Runner:
         return job
 
     def cancel(self, owner: str, job_id: str) -> bool:
-        """Cancel one of the owner's jobs, running or queued; False if it had ended, or isn't theirs."""
-        if self.db.get_job(owner, job_id) is None:
+        """Cancel one of the owner's jobs, running or queued; False if it had ended, or isn't theirs. A
+        job running here stops at once; one another worker holds stops at that worker's next heartbeat."""
+        if not self.db.request_cancel(owner, job_id):
             return False
-        for running in (self.current, self.current_fast):
-            if running and running[0] == job_id:
-                if job_id not in self.cancel_requested:  # a second click has nothing more to cancel
-                    self.cancel_requested.add(job_id)
-                    running[1].cancel()
-                return True
-        return self.db.cancel_queued(owner, job_id)
+        self._stop_job(job_id, user=True)
+        return True
+
+    def _stop_job(self, job_id: str, user: bool) -> None:
+        """Stop a job running here: as its user's cancel, which cancels at fal too, or as a shutdown,
+        which leaves fal's requests for whoever runs it next."""
+        task = self.running.get(job_id)
+        if task is None or job_id in self.cancel_requested:  # a second click has nothing more to cancel
+            return
+        if user:
+            self.cancel_requested.add(job_id)
+        task.cancel()
 
     # loop -------------------------------------------------------------------------------------
     async def loop(self, fast: bool = False) -> None:
-        """Run one lane's queued jobs one at a time, oldest first."""
+        """Claim one lane's jobs and run them, one at a time; ask again at once when one ends, and every
+        POLL seconds while there are none, since another process may have added them."""
         wake = self.wakes[fast]
         while True:
-            job = self.db.claim_job(FAST, fast)
+            try:
+                job = await asyncio.to_thread(
+                    self.db.claim_job, self.name, FAST, fast, self.cfg.worker.per_user
+                )
+            except Exception:  # the database is away: ask again later, don't stop the lane
+                log.warning("couldn't ask the database for a job; asking again shortly", exc_info=True)
+                job = None
             if job is None:
                 wake.clear()
                 with contextlib.suppress(TimeoutError):
-                    await asyncio.wait_for(wake.wait(), timeout=5)
+                    await asyncio.wait_for(wake.wait(), timeout=POLL[fast])
                 continue
-            await self.run(job, fast)
+            await self.run(job)
             if self.cfg.hosted_edition:  # the disk cache of R2's files, kept under [storage] cache_gb
                 await asyncio.to_thread(store.trim, self.cfg)
 
-    async def run(self, job: Job, fast: bool = False) -> None:
-        """Run a job the queue has claimed (marked running) to its end."""
+    async def beat(self) -> None:
+        """Stamp this worker's jobs every [worker] heartbeat_seconds, act on what became of each, and
+        put back in the queue the jobs of workers that stopped stamping theirs. Cut off from the
+        database for the LEASE, it stops its jobs itself, before another worker may take them."""
+        w = self.cfg.worker
+        landed = time.monotonic()
+        while True:
+            await asyncio.sleep(w.heartbeat_seconds)
+            try:
+                # A call that hangs counts as one that failed, so the lease holds when the network does.
+                async with asyncio.timeout(w.heartbeat_seconds):
+                    answers = await asyncio.to_thread(self.db.heartbeat, self.name, list(self.running))
+                    back = await asyncio.to_thread(self.db.requeue_stale, timedelta(seconds=w.stale_seconds))
+            except Exception:  # the database is away: the lease decides what that means
+                if time.monotonic() - landed >= LEASE * w.stale_seconds:
+                    for job_id in list(self.running):
+                        self._stop_job(job_id, user=False)
+                log.warning("couldn't reach the database for the heartbeat", exc_info=True)
+                continue
+            landed = time.monotonic()
+            if back:
+                log.info("put %d job(s) back in the queue: their worker stopped stamping them", back)
+            for job_id, answer in answers.items():
+                if answer != "held":  # a cancel; or a deleted story, which no one will resume
+                    self._stop_job(job_id, user=answer in ("cancel", "gone"))
+
+    async def run(self, job: Job) -> None:
+        """Run a job this worker has claimed (marked running, held by it) to its end."""
         job_id = job.id
-        progress = Progress(self.db, job_id)
+        progress = Progress(self.db, job_id, self.name)
         task = asyncio.create_task(self.execute(job, progress))
-        if fast:
-            self.current_fast = (job_id, task)
-        else:
-            self.current = (job_id, task)
+        self.running[job_id] = task
+        if job.cancel_requested_at:  # asked while it went back to the queue
+            self._stop_job(job_id, user=True)
         status, result, error = "done", None, None
         try:
             result = await task
         except asyncio.CancelledError:
+            # A shutdown, or the job moved on: whoever runs it next carries on. A user's cancel heard while
+            # the worker stops still ends the job, and the stop still goes on.
+            status = "cancelled" if self.user_cancelled(job_id) else "queued"
             if cast(asyncio.Task, asyncio.current_task()).cancelling():  # run() always runs in a task
-                status = "queued"  # the server is shutting down: run it again on the next start
                 raise
-            status = "cancelled"
         except BudgetExceeded as e:  # not a crash: the UI offers to raise the budget and carry on
             status, result, error = "failed", {"budget": e.info()}, redact(str(e))
             progress.note(f"stopped before spending: {error}")
@@ -340,22 +400,25 @@ class Runner:
             status, error = "failed", redact(f"{e}\n\n{traceback.format_exc()[-3000:]}")
             progress.note(f"failed: {(redact(str(e)) or repr(e)).splitlines()[0][:200]}")
         finally:
-            if fast:
-                self.current_fast = None
-            else:
-                self.current = None
+            del self.running[job_id]
             self.cancel_requested.discard(job_id)
-            if status == "done":
-                for st in progress.snap["stages"].values():
-                    st["status"] = "done"
-            # Deleting a story deletes its jobs, a running one too; the row is then gone and this does nothing.
-            self.db.update_job(
-                job_id,
-                status=status,
-                result=result,
-                error=error,
-                finished_at=now(),
-                progress=dict(progress.snap),
+            self._end(job_id, status, result, error, progress)
+
+    def _end(
+        self, job_id: str, status: str, result: dict | None, error: str | None, progress: Progress
+    ) -> None:
+        if status == "done":
+            for st in progress.snap["stages"].values():
+                st["status"] = "done"
+        fields: dict[str, Any] = {"result": result, "error": error, "progress": dict(progress.snap)}
+        if status != "queued":
+            fields["finished_at"] = now()
+        # A job that moved on (another worker's, or deleted with its story) is left as it is.
+        try:
+            self.db.end_job(job_id, self.name, status, **fields)
+        except Exception:  # the database is away: the job's heartbeat stops, and it's requeued
+            log.warning(
+                "couldn't write the end of job %s; another worker will take it", job_id, exc_info=True
             )
 
     async def execute(self, job: Job, progress: Progress) -> dict:
@@ -477,7 +540,7 @@ class Runner:
         """The version the job's pictures come from: the one its check saved, when nothing else was
         saved while it ran, so the new version is exactly what this job made; else the one it started on."""
         if kept and kept[0] == (job.version or 0) + 1:
-            self.db.update_job(job.id, version=kept[0])
+            self.db.update_job(job.id, self.name, version=kept[0])
             return kept[0]
         return job.version
 

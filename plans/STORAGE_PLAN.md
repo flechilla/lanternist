@@ -1,6 +1,6 @@
 # Lanternist: storage on R2
 
-> **Status, 26 Sep 2026: built on `feat/storage`, as one pull request, and checked against R2 (`lanternist-dev`). The questions in §4 are answered.** This is Phase C of `HOSTED_PLAN.md` (issue #16). Its one blocker, Phase B (#15), is on `main` as #33. Migration 0005 is this phase's (HOSTED_PLAN §1.15); Phases D and E may run beside it and take 0006 and later. The sketch is at https://claude.ai/artifact/YK2AkQiXCA3jAqMdVb38zu.
+> **Status, 26 Sep 2026: done, merged as #34 (`feat/storage`), in one pull request, and checked against R2 (`lanternist-dev`). The questions in §4 are answered.** This is Phase C of `HOSTED_PLAN.md` (issue #16). Its one blocker, Phase B (#15), is on `main` as #33. Migration 0005 is this phase's (HOSTED_PLAN §1.15); Phases D and E take 0006 and later. The sketch is at https://claude.ai/artifact/YK2AkQiXCA3jAqMdVb38zu.
 >
 > **Measured before writing:**
 > - **What a story weighs.** The lab library (`~/Lanternist-lab`, 20 films made on 22 Sep) holds 8.8 GB of assets. ffmpeg's scene clips are 4.49 GB of it (51%), the films 1.97 GB (22%), paid video from fal 1.55 GB (18%), pictures 0.70 GB (8%) and narration 0.05 GB. So about half of what a story weighs costs nothing to make again.
@@ -197,7 +197,8 @@ One pull request, `feat/storage` (question 5), with a commit per step below. The
   - the film's address answered 302, then 206 `video/mp4` from its presigned URL;
   - Download MP4 saved as `the-lantern-keeper-v1.mp4`.
 
-  The `<video>` itself didn't start: Chrome keeps the automation tab hidden, and it defers media there. The server log shows the MP4 was never asked for. Press play once yourself on a real tab.
+  The `<video>` itself didn't start: Chrome keeps the automation tab hidden, and it defers media there. The server log shows the MP4 was never asked for.
+- [x] The film played on a real tab, with its narration and subtitles (26 Sep, port 8431, on `main` after #34): a 4-scene story written and rendered for `ann@example.com` through the fake sign-in, its address a 302 to the fake bucket.
 - **Not done, and not a box:** the plan asked for a hosted film on `lanternist-dev` in a browser, with
   fake models and real R2. Fake mode fakes every provider through `providers.transport()`, R2 included,
   so that can't run. A film on the real bucket needs the real hosted edition:

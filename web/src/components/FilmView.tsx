@@ -70,8 +70,8 @@ export default function FilmView({
           <div className="row">
             <h2>Rendering version {running.version}</h2>
             <span className="spacer" />
-            <button className="small danger" onClick={() => onCancel(running)}>
-              Cancel render
+            <button className="small danger" onClick={() => onCancel(running)} disabled={running.cancelling}>
+              {running.cancelling ? "Cancelling…" : "Cancel render"}
             </button>
           </div>
           <p className="muted">

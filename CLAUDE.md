@@ -8,10 +8,11 @@ writer, fal.ai for media) with the user's own keys.
 - `README.md`: what it does and how to run it.
 - `plans/`: `MVP_PLAN.md` (done), `M2_PLAN.md` (in progress: its live checks), `HOSTED_PLAN.md`
   (in progress: the SaaS edition, with credits and plans, tracked in issue #14), and a plan per hosted
-  phase: `DB_PLAN.md` (Phase A, done), `ACCOUNTS_PLAN.md` (Phase B, done) and `STORAGE_PLAN.md`
-  (Phase C, in progress). Each holds the design, the decisions and why, and the phase checklists.
-  Read the relevant section before changing a subsystem. When a PR finishes a plan item, tick its box
-  and update the status line at the top. New plans go in `plans/` too.
+  phase: `DB_PLAN.md` (Phase A, done), `ACCOUNTS_PLAN.md` (Phase B, done), `STORAGE_PLAN.md`
+  (Phase C, done) and `WORKERS_PLAN.md` (Phase D, in progress). Each holds the design, the decisions
+  and why, and the phase checklists. Read the relevant section before changing a subsystem. When a PR
+  finishes a plan item, tick its box and update the status line at the top. New plans go in `plans/`
+  too.
 
 ## Commands
 
@@ -48,7 +49,7 @@ user's models and takes the GPU for minutes). Neither runs by default.
 | `db.py`, `migrations/` | SQLite (a local library) or Postgres (hosted) through SQLAlchemy; Alembic migrations |
 | `auth.py` | Who is asking: the local user, or whoever signed in (hosted) |
 | `estimate.py` | What a board or render would cost, before it runs; the budget check uses the same prices |
-| `jobs.py` | The in-process job queue and progress snapshots |
+| `jobs.py` | The job queue: a `Runner` claims jobs, heartbeats them and runs them (inside `serve` locally, in `lanternist worker` in hosted); progress snapshots |
 | `api/app.py` | FastAPI: REST, SSE progress, the built web app |
 | `keys.py`, `prefs.py`, `config.py` | API keys; settings saved in the app; `lanternist.toml` |
 | `web/src/` | React + TypeScript; `api.ts` is the only place that calls the backend |

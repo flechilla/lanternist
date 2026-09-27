@@ -8,19 +8,21 @@ instead, cloned from one migrated once per session, and dropped after the test."
 import asyncio
 import importlib
 import os
+import threading
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, create_engine, event, make_url, text
 
-from lanternist import config, keys, providers
+from lanternist import config, jobs, keys, providers
 from lanternist.auth import FAKE_USER
 from lanternist.config import Paths, Settings
 from lanternist.db import LOCAL, Database, Story
+from lanternist.jobs import Runner
 from lanternist.providers.fake import FakeWorld
 from lanternist.storyboard import CastMember, Line, Scene, Storyboard
 
@@ -225,11 +227,30 @@ video = "fal/h3-max-turbo"
 """
 
 
-def _serve(
-    tmp_path, voices, database_url, monkeypatch, head: str = "", headers: dict | None = None
-) -> Iterator[TestClient]:
-    """The app in fake mode on its own library and database, as `lanternist serve` would run it, with
-    `head` at the top of its lanternist.toml, and `headers` on every request."""
+@contextmanager
+def running_worker(cfg: Settings, db: Database, renders: int = 2) -> Iterator[Runner]:
+    """A worker beside the app, as `lanternist worker` runs it: a Runner on an event loop of its own, in
+    a thread, handing its jobs back when the block ends."""
+    loop = asyncio.new_event_loop()
+    thread = threading.Thread(target=loop.run_forever, daemon=True)
+    thread.start()
+    runner = Runner(cfg, db, renders)
+
+    async def start() -> None:
+        runner.start()
+
+    asyncio.run_coroutine_threadsafe(start(), loop).result()
+    try:
+        yield runner
+    finally:
+        asyncio.run_coroutine_threadsafe(runner.stop(), loop).result(timeout=jobs.STOP_GRACE + 5)
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join()
+        loop.close()
+
+
+def _configure(tmp_path, voices, database_url, monkeypatch, head: str = "") -> None:
+    """Fake mode on the test's own library and database, with `head` at the top of its lanternist.toml."""
     toml = tmp_path / "lanternist.toml"
     toml.write_text(
         f'{head}[paths]\nlibrary = "{tmp_path / "lib"}"\nvoices = ["{voices}"]\n\n'
@@ -239,11 +260,38 @@ def _serve(
     monkeypatch.setenv("LANTERNIST_CONFIG", str(toml))
     monkeypatch.setenv("LANTERNIST_FAKE_ENGINES", "1")
     config.settings.cache_clear()
+
+
+@pytest.fixture
+def hosted_config(tmp_path, voices, database_url, monkeypatch) -> Iterator[Callable[..., Settings]]:
+    """Writes the hosted edition's lanternist.toml, with `worker` as its [worker] table, for a command or
+    process the test runs to read; returns the settings."""
+
+    def configure(worker: str = "") -> Settings:
+        _configure(tmp_path, voices, database_url, monkeypatch, f"{HOSTED_TOML}[worker]\n{worker}\n")
+        return config.settings()
+
+    yield configure
+    config.settings.cache_clear()
+
+
+def _serve(
+    tmp_path, voices, database_url, monkeypatch, head: str = "", headers: dict | None = None
+) -> Iterator[TestClient]:
+    """The app in fake mode on its own library and database, as `lanternist serve` would run it, with
+    `head` at the top of its lanternist.toml, and `headers` on every request."""
+    _configure(tmp_path, voices, database_url, monkeypatch, head)
     import lanternist.api.app as appmod
 
     appmod = importlib.reload(appmod)
-    with TestClient(appmod.app, headers=headers) as c:
-        yield c
+    if not appmod.cfg.hosted_edition:
+        with TestClient(appmod.app, headers=headers) as c:
+            yield c
+    else:  # the deploy migrates, and a worker process runs the jobs; an idle one asks for work often
+        appmod.db.migrate()
+        monkeypatch.setattr(jobs, "POLL", {True: 0.05, False: 0.05})
+        with TestClient(appmod.app, headers=headers) as c, running_worker(appmod.cfg, appmod.db):
+            yield c
     appmod.db.close()
     config.settings.cache_clear()
 
@@ -259,7 +307,8 @@ def hosted_client(tmp_path, voices, database_url, monkeypatch):
     """The hosted edition, signed in as ann, writing from its own pages. A request with
     `headers={FAKE_USER: "bob"}` is bob's."""
     headers = {FAKE_USER: "ann", "Origin": "http://testserver"}
-    yield from _serve(tmp_path, voices, database_url, monkeypatch, HOSTED_TOML, headers)
+    head = f"{HOSTED_TOML}[worker]\nheartbeat_seconds = 0.2\n\n"
+    yield from _serve(tmp_path, voices, database_url, monkeypatch, head, headers)
 
 
 @pytest.fixture
