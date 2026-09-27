@@ -785,31 +785,67 @@ class Database:
             s.commit()
             return bool(done)
 
-    def claim_job(self, worker: str, fast_kinds: tuple[str, ...], fast: bool) -> Job | None:
-        """Mark the oldest queued job of one lane (the fast kinds, or everything else) running, held by
-        `worker`, and return it. One statement, so two workers asking at once never get the same job: on
-        Postgres each skips the row the other has locked, and SQLite runs one write at a time."""
-        queued = aliased(Job)  # the subquery reads the table the statement updates
+    def claim_job(
+        self, worker: str, fast_kinds: tuple[str, ...], fast: bool, per_user: int = 1
+    ) -> Job | None:
+        """Mark the next queued job of one lane (the fast kinds, or everything else) running, held by
+        `worker`, and return it. On Postgres two workers asking at once each skip the row the other has
+        locked; on SQLite, a job claimed meanwhile isn't queued any more, and the claim tries again.
+
+        Samples go oldest first. A render goes to whoever was served longest ago, so someone who queues
+        later doesn't wait behind everyone's backlog, except that a job that ran before (its worker died
+        or stopped) goes first; and it takes one of its owner's `per_user` slots, which the unique
+        (owner, slot) settles when two workers claim for one person at once."""
+        queued, other = aliased(Job), aliased(Job)  # the subqueries read the table the statement updates
         lane = queued.kind.in_(fast_kinds) if fast else queued.kind.not_in(fast_kinds)
-        oldest = (
-            select(queued.id)
-            .where(queued.status == "queued", lane)
-            .order_by(queued.created_at)
-            .limit(1)
-            .with_for_update(skip_locked=True)
-            .scalar_subquery()
-        )
-        at = now()
-        claim = (
-            update(Job)
-            .where(Job.id == oldest)
-            .values(status="running", worker=worker, heartbeat_at=at, started_at=at, error=None)
-            .returning(Job)
-        )
-        with self.session() as s:
-            job = s.scalars(claim).one_or_none()
-            s.commit()
-            return job
+        pick = select(queued.id, queued.owner_id).where(queued.status == "queued", lane)
+        if fast:
+            pick = pick.order_by(queued.created_at)
+        else:
+            running = (
+                select(func.count())
+                .where(other.owner_id == queued.owner_id, other.slot.is_not(None))
+                .scalar_subquery()
+            )
+            served = (
+                select(func.max(other.started_at))
+                .where(other.owner_id == queued.owner_id, other.kind.not_in(fast_kinds))
+                .scalar_subquery()
+            )
+            pick = pick.where(running < per_user).order_by(
+                queued.started_at.nulls_last(), served.nulls_first(), queued.created_at
+            )
+        pick = pick.limit(1).with_for_update(skip_locked=True)
+        for _ in range(1 if fast else per_user):
+            with self.session() as s:
+                found = s.execute(pick).first()
+                if found is None:
+                    return None
+                job_id, owner = found
+                slot = None
+                if not fast:
+                    taken = s.scalars(select(Job.slot).where(Job.owner_id == owner, Job.slot.is_not(None)))
+                    slot = min(set(range(per_user)) - set(taken), default=None)
+                    if slot is None:  # their last slot went meanwhile
+                        continue
+                at = now()
+                claim = (
+                    update(Job)
+                    .where(Job.id == job_id, Job.status == "queued")
+                    .values(
+                        status="running", worker=worker, slot=slot, heartbeat_at=at, started_at=at, error=None
+                    )
+                    .returning(Job)
+                )
+                try:
+                    job = s.scalars(claim).one_or_none()
+                    s.commit()
+                except IntegrityError:  # another worker took that slot first
+                    s.rollback()
+                    continue
+                if job is not None:
+                    return job
+        return None
 
     def heartbeat(self, worker: str, job_ids: list[str]) -> dict[str, str]:
         """Stamp the jobs `worker` runs, and say of each what became of it: `held`, carry on; `cancel`,

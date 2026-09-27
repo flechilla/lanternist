@@ -334,7 +334,9 @@ class Runner:
         wake = self.wakes[fast]
         while True:
             try:
-                job = await asyncio.to_thread(self.db.claim_job, self.name, FAST, fast)
+                job = await asyncio.to_thread(
+                    self.db.claim_job, self.name, FAST, fast, self.cfg.worker.per_user
+                )
             except Exception:  # the database is away: ask again later, don't stop the lane
                 log.warning("couldn't ask the database for a job; asking again shortly", exc_info=True)
                 job = None

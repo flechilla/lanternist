@@ -24,6 +24,7 @@ import mimetypes
 import os
 import re
 import tempfile
+import time
 import uuid
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
@@ -113,11 +114,15 @@ class FakeRequest:
     cancelled: bool = False
     output: dict | None = None
     units: float | None = None
+    submitted: float = 0.0  # time.time() at submit
 
 
 @dataclass
 class FakeFal:
     polls_before_done: int = 2
+    pace: float = (
+        0.0  # seconds a request takes at least, as LANTERNIST_FAKE_PACE says, to watch it or stop it
+    )
     billable_units_on: str = "result"  # which response carries X-Fal-Billable-Units: result | status | none
     bad_keys: set[str] = field(default_factory=lambda: {"bad"})
     deprecated: set[str] = field(default_factory=set)
@@ -244,7 +249,7 @@ class FakeFal:
                 status, body = self.fail_submit.pop(0)
                 return _json(body, status, {"retry-after": "0"} if status == 429 else None)
             rid = f"req-{uuid.uuid4().hex[:12]}"
-            self.save(FakeRequest(rid, path, json.loads(request.content or b"{}")))
+            self.save(FakeRequest(rid, path, json.loads(request.content or b"{}"), submitted=time.time()))
             self.submits.append(rid)
             return _json(
                 {
@@ -270,7 +275,7 @@ class FakeFal:
             self.save(req)
             if req.polls == 1 and self.polls_before_done:
                 return _json({"status": "IN_QUEUE", "queue_position": 0})
-            if req.polls <= self.polls_before_done:
+            if not self._finished(req):
                 return _json({"status": "IN_PROGRESS", "logs": []})
             if req.endpoint in self.fail_result:
                 return _json(
@@ -284,7 +289,7 @@ class FakeFal:
             headers = {"x-fal-billable-units": str(req.units)} if self.billable_units_on == "status" else None
             return _json({"status": "COMPLETED", "metrics": {"inference_time": 1.5}}, headers=headers)
         if action == "":
-            if req.polls <= self.polls_before_done:
+            if not self._finished(req):
                 return _json({"detail": "still in progress"}, 400)
             self.result_asked.set()
             if self.result_gate:
@@ -293,6 +298,9 @@ class FakeFal:
             headers = {"x-fal-billable-units": str(req.units)} if self.billable_units_on == "result" else None
             return _json(req.output, headers=headers)
         return _json({"detail": "unknown action"}, 404)
+
+    def _finished(self, req: FakeRequest) -> bool:
+        return req.polls > self.polls_before_done and time.time() >= req.submitted + self.pace
 
     async def _make(self, req: FakeRequest) -> None:
         """The request's output, as test media on the fake CDN, plus its billable units."""
@@ -716,9 +724,9 @@ class FakeWorld:
     """The fakes behind one transport, routed by host and path, keeping their state under `root`: every
     world on the same root sees the same fal requests and R2 objects."""
 
-    def __init__(self, root: Path | None = None):
+    def __init__(self, root: Path | None = None, pace: float = 0.0):
         root = root or Path(tempfile.mkdtemp(prefix="lanternist-fakes-"))
-        self.fal = FakeFal(root=root / "fal")
+        self.fal = FakeFal(root=root / "fal", pace=pace)
         self.openrouter = FakeOpenRouter()
         self.ollama = FakeOllama()
         self.workos = FakeWorkOS()

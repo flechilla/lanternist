@@ -35,6 +35,21 @@ def test_the_hosted_edition_refuses_models_it_cant_run():
         )
 
 
+def test_the_hosted_encoder_is_libx264():
+    remote = {
+        "writer": "openrouter/openai/gpt-5.6-luna",
+        "tts": "fal/qwen-3-tts-1.7b",
+        "image": "fal/flux-2-klein-9b",
+        "video": "fal/h3-max-turbo",
+    }
+    assert Settings.model_validate({"edition": "hosted", "defaults": remote}).render.encoder == "libx264"
+    assert Settings().render.encoder == "h264_nvenc"  # the local edition's, as before: no step key changes
+    with pytest.raises(ValidationError, match=r"render\.encoder is h264_nvenc, which needs a GPU"):
+        Settings.model_validate(
+            {"edition": "hosted", "defaults": remote, "render": {"encoder": "h264_nvenc"}}
+        )
+
+
 def test_the_hosted_edition_starts_only_on_models_it_offers(tmp_path, monkeypatch):
     """Chatterbox runs remotely but only clones, so hosted doesn't offer it; nor a picture model as the
     narrator."""
@@ -165,7 +180,7 @@ def test_a_running_job_says_cancelling(hosted_client):
 
 
 def test_a_worker_on_an_old_schema_says_to_upgrade(hosted_config):
-    db = Database(hosted_config.database_url)
+    db = Database(hosted_config().database_url)
     db.migrate()
     command.downgrade(db.alembic_config(), "0005")
     out = CliRunner().invoke(cli.app, ["worker"])

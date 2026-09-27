@@ -49,7 +49,7 @@ user's models and takes the GPU for minutes). Neither runs by default.
 | `db.py`, `migrations/` | SQLite (a local library) or Postgres (hosted) through SQLAlchemy; Alembic migrations |
 | `auth.py` | Who is asking: the local user, or whoever signed in (hosted) |
 | `estimate.py` | What a board or render would cost, before it runs; the budget check uses the same prices |
-| `jobs.py` | The in-process job queue and progress snapshots |
+| `jobs.py` | The job queue: a `Runner` claims jobs, heartbeats them and runs them (inside `serve` locally, in `lanternist worker` in hosted); progress snapshots |
 | `api/app.py` | FastAPI: REST, SSE progress, the built web app |
 | `keys.py`, `prefs.py`, `config.py` | API keys; settings saved in the app; `lanternist.toml` |
 | `web/src/` | React + TypeScript; `api.ts` is the only place that calls the backend |

@@ -276,6 +276,7 @@ def worker():
         raise typer.Exit(1) from None
     S3(cfg)  # the files are on R2: without its bucket and keys, say which to set
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)  # a line for every poll of fal says nothing
     asyncio.run(_work(Runner(cfg, db, cfg.worker.renders)))
 
 

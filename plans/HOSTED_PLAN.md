@@ -1,6 +1,6 @@
 # Lanternist Hosted: the SaaS edition
 
-> **Status, 27 Sep 2026: Phase A done (`DB_PLAN.md`, merged as #13); Phase B done (`ACCOUNTS_PLAN.md`, merged as #33); Phase C done (`STORAGE_PLAN.md`, merged as #34) and checked against R2; Phase D planned (`WORKERS_PLAN.md`, on `feat/workers`); the rest planned.** The product direction changed on 22 Sep: Lanternist is to be a hosted service. People buy credits and spend them on films, and a plan (tier) decides which models they may use. Running on your own GPU stays, as the way we develop the app. Each phase gets its own plan in `plans/` when it starts, and the work is tracked in the epic, issue #14. §5 lists the decisions only you can make: sign-in (6) and where the business is registered (2) were settled on 23 Sep, and hosting (5) on 26 Sep.
+> **Status, 27 Sep 2026: Phase A done (`DB_PLAN.md`, merged as #13); Phase B done (`ACCOUNTS_PLAN.md`, merged as #33); Phase C done (`STORAGE_PLAN.md`, merged as #34) and checked against R2; Phase D built on `feat/workers` (`WORKERS_PLAN.md`), waiting for its VPS timing and live check; the rest planned.** The product direction changed on 22 Sep: Lanternist is to be a hosted service. People buy credits and spend them on films, and a plan (tier) decides which models they may use. Running on your own GPU stays, as the way we develop the app. Each phase gets its own plan in `plans/` when it starts, and the work is tracked in the epic, issue #14. §5 lists the decisions only you can make: sign-in (6) and where the business is registered (2) were settled on 23 Sep, and hosting (5) on 26 Sep.
 >
 > Facts about Stripe, Paddle, Polar, Clerk, WorkOS, R2, Neon, Hetzner, fal, OpenRouter, moderation models and the law were read from their own pages on 22 Sep 2026 (sources in §6). Anything marked **verify** wasn't confirmed. The legal points are research, not legal advice: §1.10 needs a lawyer before the public launch.
 
@@ -420,7 +420,7 @@ New and changed tables. Money is `_micros` `BigInteger`; spend history outlives 
 |---|---|---|
 | `users` | **new** | `id`, `auth_subject` (WorkOS's user id, unique; `local` for the local user), `email`, `role` (`user`/`admin`), `created_at`, `deleted_at`. Phases E and H add `plan`, `plan_status`, `plan_renews_at` and `billing_customer_id` |
 | `stories`, `jobs`, `step_runs` | add `owner_id` | `stories`, `jobs` → `users` `ON DELETE CASCADE`; `step_runs` → `SET NULL`, so spend outlives accounts |
-| `jobs` | add `heartbeat_at`, `worker`, `cancel_requested` | Workers across processes (§1.7) |
+| `jobs` | add `heartbeat_at`, `worker`, `cancel_requested_at`, `slot` (unique with `owner_id`) | Workers across processes (§1.7), and the per-person limit the database settles (`WORKERS_PLAN.md` §1.3) |
 | `settings` | add `owner_id`, part of the key | Settings per user |
 | `sessions` | **new** | `id` (the hash of the cookie's token), `user_id`, `provider_session`, `created_at`, `expires_at` |
 | `ledger` | **new** | `id`, `user_id` (`SET NULL`), `kind`, `amount_micros` (signed), `job_id`, `step_run_id` (unique when set), `external_id` (unique when set), `note`, `created_at` |
@@ -505,9 +505,9 @@ Each phase ends with something that runs end to end. Sizes assume one developer 
 
 `WORKERS_PLAN.md`, issue #17.
 
-- [ ] `lanternist worker`; `serve` without the runner in hosted.
-- [ ] Heartbeats, `requeue_stale`, cancel across processes, renders at once per plan.
-- [ ] SIGTERM hands running jobs back to the queue.
+- [x] `lanternist worker`; `serve` without the runner in hosted.
+- [x] Heartbeats, `requeue_stale`, cancel across processes, renders at once per plan.
+- [x] SIGTERM hands running jobs back to the queue.
 - [ ] libx264 in hosted: time a 4-minute film's clips and mix on the OVH VPS, and write the number here.
 
 **Exit:**

@@ -240,6 +240,15 @@ class Settings(BaseModel):
         # The hosted edition runs no model on its own machine, so a local default would fail every story.
         if self.edition != "hosted":
             return self
+        # Its workers have no GPU: ffmpeg encodes on the CPU. The encoder is in the clips' and the
+        # film's step keys, so hosted films never mix with local ones.
+        if "encoder" not in self.render.model_fields_set:
+            self.render = self.render.model_copy(update={"encoder": "libx264"})
+        elif self.render.encoder != "libx264":
+            raise ValueError(
+                f"render.encoder is {self.render.encoder}, which needs a GPU the hosted edition's workers "
+                "don't have: use libx264"
+            )
         d = self.defaults
         for field in MODEL_DEFAULTS:
             model = getattr(d, field)

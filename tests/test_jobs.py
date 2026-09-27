@@ -41,7 +41,7 @@ def test_claim_gives_each_worker_its_own_job(db):
     def worker() -> list[str]:
         start.wait()
         claimed = []
-        while job := db.claim_job(threading.current_thread().name, jobs.FAST, False):
+        while job := db.claim_job(threading.current_thread().name, jobs.FAST, False, per_user=20):
             claimed.append(job.id)
         return claimed
 
@@ -251,7 +251,7 @@ async def test_how_far_a_job_is_never_goes_back_when_an_estimate_grows(db, monke
 def held(db, worker: str, kind: str = "render", story_id: str | None = None) -> Job:
     """A job `worker` has claimed: added, then claimed, so it's the one claimed."""
     db.add_job(LOCAL, story_id, kind, None, {}, None)
-    job = db.claim_job(worker, jobs.FAST, kind in jobs.FAST)
+    job = db.claim_job(worker, jobs.FAST, kind in jobs.FAST, per_user=10)
     assert job is not None
     return job
 
@@ -393,3 +393,94 @@ async def test_a_worker_cut_off_from_the_database_stops_its_jobs(cfg, db, until,
     finally:
         monkeypatch.undo()
         await worker.stop()
+
+
+# ------------------------------------------------------------------------------------ fair turns
+def people(db, *names: str) -> list[str]:
+    return [db.sign_in(f"test|{name}", f"{name}@example.com").id for name in names]
+
+
+def test_claim_takes_turns_between_users(db):
+    """Two workers and one render each at a time: whoever was served longest ago goes next, so Cleo,
+    who queued last, doesn't wait behind Ann's and Bob's backlogs."""
+    ann, bob, cleo = people(db, "ann", "bob", "cleo")
+    for owner, count in ((ann, 3), (bob, 2), (cleo, 2)):
+        for _ in range(count):
+            db.add_job(owner, None, "render", None, {}, None)
+    order, running = [], []
+    for _ in range(7):
+        if len(running) == 2:  # both workers are busy: the render that started first ends first
+            first = running.pop(0)
+            db.end_job(first.id, first.worker, "done")
+        job = db.claim_job("w", jobs.FAST, False)
+        order.append(job.owner_id)
+        running.append(job)
+    assert order == [ann, bob, cleo, ann, bob, cleo, ann]
+
+
+def test_a_person_at_their_limit_is_skipped(db):
+    ann, bob = people(db, "ann", "bob")
+    for owner in (ann, ann, bob):
+        db.add_job(owner, None, "render", None, {}, None)
+    assert db.claim_job("w1", jobs.FAST, False).owner_id == ann
+    assert db.claim_job("w2", jobs.FAST, False).owner_id == bob  # ann's second is older, but she has one
+    assert db.claim_job("w3", jobs.FAST, False) is None
+    assert db.claim_job("w3", jobs.FAST, False, per_user=2).owner_id == ann
+
+
+def test_a_job_that_ran_before_goes_first(db):
+    ann, bob = people(db, "ann", "bob")
+    db.add_job(ann, None, "render", None, {}, None)
+    db.add_job(bob, None, "render", None, {}, None)
+    ran = db.claim_job("w1", jobs.FAST, False, per_user=2)
+    db.add_job(ann, None, "render", None, {}, None)
+    db.requeue_stale(timedelta(0))  # w1 died with ann's first render
+    again = db.claim_job("w2", jobs.FAST, False)
+    assert again.id == ran.id and again.slot == 0
+
+
+def test_two_claims_for_one_person_cannot_both_win(db):
+    """Two workers can each count the other's claim before it commits: the unique (owner, slot)
+    settles it."""
+    [ann] = people(db, "ann")
+    for _ in range(8):
+        db.add_job(ann, None, "render", None, {}, None)
+    start = threading.Barrier(4)
+
+    def claim(n: int) -> Job | None:
+        start.wait()
+        return db.claim_job(f"w{n}", jobs.FAST, False)
+
+    with ThreadPoolExecutor(4) as pool:
+        won = [job for job in pool.map(claim, range(4)) if job is not None]
+    assert len(won) == 1 and won[0].slot == 0
+    assert len(db.jobs(ann, active=True, limit=10)) == 8  # one running, seven waiting their turn
+
+
+async def test_two_workers_and_three_users_take_fair_turns(cfg, db, until):
+    ann, bob, cleo = people(db, "ann", "bob", "cleo")
+    starts: list[str] = []
+    at_once: dict[str, int] = {}
+
+    async def execute(job, progress):  # a render of a fixed length
+        starts.append(job.owner_id)
+        at_once[job.owner_id] = at_once.get(job.owner_id, 0) + 1
+        assert at_once[job.owner_id] == 1, "two renders at once for one person"
+        await asyncio.sleep(0.1)
+        at_once[job.owner_id] -= 1
+        return {}
+
+    workers = [Runner(cfg, db), Runner(cfg, db)]
+    for n, worker in enumerate(workers):
+        worker.name, worker.execute = f"w{n}", execute
+        worker.start()
+    try:
+        for owner, count in ((ann, 3), (bob, 2), (cleo, 2)):
+            for _ in range(count):
+                workers[0].enqueue(owner, None, "render", None)
+        await until(lambda: len(starts) == 7 and not any(w.running for w in workers), timeout=10)
+    finally:
+        for worker in workers:
+            await worker.stop()
+    # Everyone's first film starts before anyone's second, and everyone's second before Ann's third.
+    assert set(starts[:3]) == set(starts[3:6]) == {ann, bob, cleo} and starts[6] == ann

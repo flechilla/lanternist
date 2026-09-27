@@ -32,8 +32,8 @@ configured in `pyproject.toml`.
   `CancelledError`, kill the child, wait for it, and re-raise.
 - `httpx.AsyncClient` always gets an explicit `timeout`. Open it with `async with`, around the
   batch, not per call.
-- Don't swallow `CancelledError`. The runner uses `cancelling()` to tell a shutdown (re-queue) from a
-  user's cancel.
+- Don't swallow `CancelledError`. The runner tells a user's cancel (`cancel_requested`), which cancels
+  at fal, from a shutdown or a job that moved on, which hand fal's requests to whoever runs it next.
 - Run concurrent work through `asyncio.gather` under a semaphore sized from config, as `clips` and
   `fal.run` do.
 

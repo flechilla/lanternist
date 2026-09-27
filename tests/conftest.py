@@ -11,7 +11,7 @@ import os
 import threading
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 
 import pytest
@@ -224,9 +224,6 @@ tts = "fal/qwen-3-tts-1.7b"
 image = "fal/flux-2-klein-9b"
 video = "fal/h3-max-turbo"
 
-[worker]
-heartbeat_seconds = 0.2
-
 """
 
 
@@ -266,10 +263,15 @@ def _configure(tmp_path, voices, database_url, monkeypatch, head: str = "") -> N
 
 
 @pytest.fixture
-def hosted_config(tmp_path, voices, database_url, monkeypatch) -> Iterator[Settings]:
-    """The hosted edition's settings, as a command run in the test would read them."""
-    _configure(tmp_path, voices, database_url, monkeypatch, HOSTED_TOML)
-    yield config.settings()
+def hosted_config(tmp_path, voices, database_url, monkeypatch) -> Iterator[Callable[..., Settings]]:
+    """Writes the hosted edition's lanternist.toml, with `worker` as its [worker] table, for a command or
+    process the test runs to read; returns the settings."""
+
+    def configure(worker: str = "") -> Settings:
+        _configure(tmp_path, voices, database_url, monkeypatch, f"{HOSTED_TOML}[worker]\n{worker}\n")
+        return config.settings()
+
+    yield configure
     config.settings.cache_clear()
 
 
@@ -305,7 +307,8 @@ def hosted_client(tmp_path, voices, database_url, monkeypatch):
     """The hosted edition, signed in as ann, writing from its own pages. A request with
     `headers={FAKE_USER: "bob"}` is bob's."""
     headers = {FAKE_USER: "ann", "Origin": "http://testserver"}
-    yield from _serve(tmp_path, voices, database_url, monkeypatch, HOSTED_TOML, headers)
+    head = f"{HOSTED_TOML}[worker]\nheartbeat_seconds = 0.2\n\n"
+    yield from _serve(tmp_path, voices, database_url, monkeypatch, head, headers)
 
 
 @pytest.fixture

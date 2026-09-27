@@ -47,6 +47,10 @@ plans/M2_PLAN.md §1.13 for the tables.
 - **The database settles races.** A check and a write in two statements can interleave with another
   process. Make the write itself fail (a unique constraint, a conditional `UPDATE`), and turn that
   failure into the module's error (`StaleVersion`, then a 409), as `save_edit` and `claim_job` do.
+- **A worker's writes to its job are fenced.** `update_job` and `end_job` take the worker's name and
+  match only a job it still runs, so a worker that lost its job (paused, cut off, slow) changes nothing
+  when it comes back. A user's cancel goes through `request_cancel(owner, …)`: a queued job ends at
+  once, and a running one is marked for its worker, which hears at its next `heartbeat`.
 - **Keep writes short**: open a session, write, commit. Remote steps write concurrently from one
   process, so hold no session across an `await` on the network.
 - **No query on the event loop where it's hot.** Sessions are synchronous. An async function that

@@ -41,7 +41,7 @@ def transport(cfg: Settings) -> httpx.AsyncBaseTransport | None:
     if _fake is None:
         from .fake import FakeWorld
 
-        _fake = FakeWorld(cfg.library / "fake")
+        _fake = FakeWorld(cfg.library / "fake", cfg.fake_pace)
     return _fake.transport()
 
 
