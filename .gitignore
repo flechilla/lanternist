@@ -17,3 +17,5 @@ lanternist.toml
 .ruff_cache/
 .mypy_cache/
 *.tsbuildinfo
+.wrangler/
+site/assets/

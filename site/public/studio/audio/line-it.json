@@ -1,0 +1,22 @@
+[
+  { "text": "Su", "start": 0.0, "end": 0.16 },
+  { "text": "uno", "start": 0.22, "end": 0.4 },
+  { "text": "scoglio,", "start": 0.507, "end": 1.36 },
+  { "text": "in", "start": 1.413, "end": 1.52 },
+  { "text": "riva", "start": 1.6, "end": 1.84 },
+  { "text": "al", "start": 1.893, "end": 2.0 },
+  { "text": "mare,", "start": 2.08, "end": 2.64 },
+  { "text": "c'era", "start": 2.72, "end": 2.96 },
+  { "text": "un", "start": 2.987, "end": 3.04 },
+  { "text": "faro,", "start": 3.16, "end": 3.68 },
+  { "text": "e", "start": 3.96, "end": 4.24 },
+  { "text": "nel", "start": 4.28, "end": 4.4 },
+  { "text": "faro", "start": 4.52, "end": 4.96 },
+  { "text": "viveva", "start": 5.024, "end": 5.44 },
+  { "text": "una", "start": 5.48, "end": 5.6 },
+  { "text": "gattina", "start": 5.64, "end": 6.08 },
+  { "text": "grigia", "start": 6.133, "end": 6.64 },
+  { "text": "di", "start": 6.693, "end": 6.8 },
+  { "text": "nome", "start": 6.864, "end": 7.12 },
+  { "text": "Luna.", "start": 7.248, "end": 7.92 }
+]

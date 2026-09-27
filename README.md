@@ -88,6 +88,9 @@ Files go to an R2 bucket: set `[storage] endpoint` and `bucket`, and `R2_ACCESS_
 `R2_SECRET_ACCESS_KEY` from an R2 token limited to that bucket. The bucket needs a lifecycle rule
 that deletes `scratch/` after 7 days. Fake mode stores files in a fake R2 inside the app.
 
+The public page at lanternist.dev lives in `site/`: static files and a Cloudflare Worker for the invitation
+list. `site/README.md` says how to run and deploy it.
+
 `plans/MVP_PLAN.md` has the plan this was built from; `plans/M2_PLAN.md` has its live checks still to run; `plans/HOSTED_PLAN.md` is the hosted edition in progress, with a plan per phase (`plans/DB_PLAN.md` and `plans/ACCOUNTS_PLAN.md` done, `plans/STORAGE_PLAN.md` in progress). `CLAUDE.md` holds the
 conventions every change follows.
 

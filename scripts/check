@@ -4,7 +4,7 @@
 #   scripts/check           every gate below; postgres only when LANTERNIST_TEST_DATABASE_URL is set
 #   scripts/check python    format, lint, types, tests (unit, fake pipeline, API, migrations) on SQLite
 #   scripts/check postgres  the tests again on Postgres: set LANTERNIST_TEST_DATABASE_URL to an admin URL
-#   scripts/check web       format, lint, types and build of the React app
+#   scripts/check web       format, lint, types and build of the React app; format of the site
 #   scripts/check dup       copy-paste across Python, TypeScript and CSS
 #   scripts/check fix       apply the formatters and the safe lint fixes, then stop
 #
@@ -39,6 +39,8 @@ check_web() {
   pnpm --dir web run --silent lint
   step "web: types and build"
   pnpm --dir web run --silent build
+  step "site: format"
+  web/node_modules/.bin/prettier --config web/.prettierrc.json --check site
 }
 
 check_dup() {
@@ -51,6 +53,7 @@ fix() {
   uv run ruff check --fix .
   pnpm --dir web run --silent format
   pnpm --dir web run --silent lint --fix
+  web/node_modules/.bin/prettier --config web/.prettierrc.json --write site
 }
 
 # Plain `;` sequences, never `a && b`: bash ignores `set -e` inside a function called on the left of

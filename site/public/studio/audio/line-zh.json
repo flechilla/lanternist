@@ -1,0 +1,19 @@
+[
+  { "text": "在海", "start": 0.0, "end": 0.48 },
+  { "text": "边的", "start": 0.48, "end": 0.8 },
+  { "text": "一块", "start": 0.8, "end": 1.12 },
+  { "text": "礁石", "start": 1.12, "end": 1.76 },
+  { "text": "上，", "start": 1.76, "end": 2.56 },
+  { "text": "矗立", "start": 2.56, "end": 2.96 },
+  { "text": "着一", "start": 2.96, "end": 3.44 },
+  { "text": "座灯", "start": 3.44, "end": 4.0 },
+  { "text": "塔，", "start": 4.0, "end": 5.12 },
+  { "text": "灯塔", "start": 5.12, "end": 5.6 },
+  { "text": "里住", "start": 5.6, "end": 6.16 },
+  { "text": "着一", "start": 6.16, "end": 6.48 },
+  { "text": "只名", "start": 6.48, "end": 6.8 },
+  { "text": "叫露", "start": 6.8, "end": 7.28 },
+  { "text": "娜的", "start": 7.28, "end": 7.92 },
+  { "text": "灰色", "start": 7.92, "end": 8.4 },
+  { "text": "小猫。", "start": 8.4, "end": 8.96 }
+]
