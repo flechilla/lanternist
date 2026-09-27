@@ -370,7 +370,7 @@ async def test_a_stopping_server_lets_its_job_store_what_it_was_paid_for(cfg, db
     assert stored and job.cancelled()
 
 
-async def test_whole_passes_the_cancel_on_even_when_the_work_then_fails():
+async def test_whole_passes_the_cancel_on_even_when_the_work_then_fails(caplog):
     async def failing() -> None:
         await asyncio.sleep(0.02)
         raise RuntimeError("R2 didn't answer")
@@ -381,6 +381,7 @@ async def test_whole_passes_the_cancel_on_even_when_the_work_then_fails():
     with pytest.raises(asyncio.CancelledError) as e:
         await task
     assert isinstance(e.value.__cause__, RuntimeError)  # the failure, kept as the cause
+    assert "wasn't kept as its job stopped" in caplog.text and "R2 didn't answer" in caplog.text
 
 
 async def test_a_stopped_server_ends_its_lanes_even_when_a_job_fails_to_store(cfg, db, monkeypatch):
@@ -418,24 +419,52 @@ async def test_a_second_cancel_of_a_running_job_cancels_nothing_more(cfg, db):
         await running
 
 
+async def _held_at_fals_result(fake_cfg, db, fakes, make_story):
+    """A boarded one-scene video story whose motion runs until fal has finished (and billed) its shot,
+    and is then held while the result is read."""
+    sb = make_story(("video",))
+    sb.models.video, sb.models.ambience = "fal/h3-max-turbo", "none"
+    board = await Pipeline(fake_cfg, db=db, owner=LOCAL).board(sb)
+    fakes.fal.result_gate = asyncio.Event()
+    fakes.fal.result_asked.clear()
+    p = Pipeline(fake_cfg, db=db, user_cancelled=lambda: True, owner=LOCAL)
+    motion = asyncio.create_task(p.motion(sb, board))
+    await fakes.fal.result_asked.wait()
+    return sb, board, motion
+
+
+async def _submits_on_the_next_run(fake_cfg, db, fakes, sb, board, motion) -> int:
+    """What running the motion again sends to fal, once the cancelled run has ended."""
+    with contextlib.suppress(asyncio.CancelledError):
+        await motion
+    fakes.fal.result_gate = fakes.close_gate = None
+    submits = len(fakes.fal.submits)
+    await Pipeline(fake_cfg, db=db, owner=LOCAL).motion(sb, board)
+    return len(fakes.fal.submits) - submits
+
+
 async def test_a_cancel_once_fal_has_finished_resumes_rather_than_paying_again(
     fake_cfg, db, fakes, make_story
 ):
     """fal has billed once it says a request is complete: a cancel while its result is fetched leaves
     the request to be resumed, rather than cancelling what can't be undone and paying for it again."""
-    sb = make_story(("video",))
-    sb.models.video, sb.models.ambience = "fal/h3-max-turbo", "none"
-    p = Pipeline(fake_cfg, db=db, user_cancelled=lambda: True, owner=LOCAL)
-    board = await p.board(sb)
-    fakes.fal.result_gate = asyncio.Event()
-    fakes.fal.result_asked.clear()
-    motion = asyncio.create_task(p.motion(sb, board))
-    await fakes.fal.result_asked.wait()
+    sb, board, motion = await _held_at_fals_result(fake_cfg, db, fakes, make_story)
     motion.cancel()
     fakes.fal.result_gate.set()
-    with contextlib.suppress(asyncio.CancelledError):
-        await motion
-    fakes.fal.result_gate = None
-    submits = len(fakes.fal.submits)
-    await Pipeline(fake_cfg, db=db, owner=LOCAL).motion(sb, board)
-    assert len(fakes.fal.submits) == submits and not fakes.fal.cancels
+    assert await _submits_on_the_next_run(fake_cfg, db, fakes, sb, board, motion) == 0
+    assert not fakes.fal.cancels
+
+
+async def test_a_cancel_while_fals_connection_closes_resumes_rather_than_paying_again(
+    fake_cfg, db, fakes, make_story
+):
+    """Closing the connection to fal awaits, after the result is in: a cancel landing there leaves the
+    run open, since nothing has stored its result yet."""
+    sb, board, motion = await _held_at_fals_result(fake_cfg, db, fakes, make_story)
+    fakes.close_gate = asyncio.Event()  # the next client to close is fal's, once its result is read
+    fakes.closing.clear()
+    fakes.fal.result_gate.set()
+    await fakes.closing.wait()
+    motion.cancel()
+    fakes.close_gate.set()
+    assert await _submits_on_the_next_run(fake_cfg, db, fakes, sb, board, motion) == 0

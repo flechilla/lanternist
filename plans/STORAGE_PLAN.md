@@ -198,11 +198,16 @@ One pull request, `feat/storage` (question 5), with a commit per step below. The
   - Download MP4 saved as `the-lantern-keeper-v1.mp4`.
 
   The `<video>` itself didn't start: Chrome keeps the automation tab hidden, and it defers media there. The server log shows the MP4 was never asked for. Press play once yourself on a real tab.
-- [ ] ~~With your keys: one hosted film on `lanternist-dev` in a browser, fake models and real R2.~~
-  Not possible as written: fake mode fakes every provider through `providers.transport()`, R2
-  included. A hosted film on the real bucket needs real models too: the cheapest film all on fal is
-  about $0.11 (`test_a_one_scene_film_all_on_fal`), and it's your call. The live round trip already
-  shows the real endpoint serving presigned GETs with ranges, types and download names.
+- **Not done, and not a box:** the plan asked for a hosted film on `lanternist-dev` in a browser, with
+  fake models and real R2. Fake mode fakes every provider through `providers.transport()`, R2 included,
+  so that can't run. A film on the real bucket needs the real hosted edition:
+  - real models (the cheapest film all on fal is about $0.11);
+  - sign-in through WorkOS staging, since the fake sign-in page is fake mode's only;
+  - a writer on OpenRouter, or an imported storyboard;
+  - your go-ahead for the spend.
+
+  The live round trip already shows the real endpoint serving presigned GETs with ranges, types and
+  download names. The first film on a real bucket fits Phase G's staging run.
 
 **Exit** (the definition of done above): items 1–5, with `scripts/check` and `scripts/check postgres` green. Then this plan's and HOSTED_PLAN's boxes and status lines, and a comment on #16.
 
@@ -275,6 +280,16 @@ One pull request, `feat/storage` (question 5), with a commit per step below. The
   - The message for files R2 kept suggests checking the token only for `AccessDenied`; the voice
     catalogue lost a wrapper and a second engine build; the cancel guard and the no-thumbnail lookup
     have tests.
+- **Found by a fourth self-review, before the PR, and fixed:**
+  - **fal marked a run done before its connection closed.** Closing awaits, so a cancel landing there
+    left the run done and its result never stored, and the next run paid again. This was in `main`
+    too. The run is now marked done after the close
+    (`test_a_cancel_while_fals_connection_closes_resumes_rather_than_paying_again`, through the fake
+    transport's `close_gate`).
+  - **A store that failed as its job stopped was silent;** `whole()` now logs it, as the next run
+    will pay for that step again.
+  - The fake S3 takes an error code per kept key, so the plain "delete again" message has its test;
+    the film on the real bucket is written up above rather than left as a box.
 - **A step record that names a file R2 no longer has** raises `StoreError` rather than being a
   miss: only a hand deletion on the bucket could cause it, and a HEAD for every record to rule it
   out would cost every cached re-render a request per file.

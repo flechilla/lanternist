@@ -28,6 +28,7 @@ from urllib.parse import urlparse
 from .. import registry
 from ..config import Settings
 from ..db import Database, to_micros
+from ..keys import redact
 from ..providers.fal import Fal, FalResult, RunSpec
 from ..registry import ModelEntry
 from ..store import Store
@@ -289,7 +290,13 @@ async def whole[T](work: Awaitable[T]) -> T:
         except asyncio.CancelledError:
             cancelled = True
     if cancelled:  # a failure while finishing doesn't take the cancel's place: the runner reads it
-        raise asyncio.CancelledError from (None if task.cancelled() else task.exception())
+        failed = None if task.cancelled() else task.exception()
+        if failed:
+            log.warning(
+                "a finished step wasn't kept as its job stopped, so the next run pays for it: %s",
+                redact(str(failed)),
+            )
+        raise asyncio.CancelledError from failed
     return task.result()
 
 

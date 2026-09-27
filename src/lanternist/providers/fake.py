@@ -533,7 +533,9 @@ class FakeS3:
     page: int = 1000  # keys per list page; a test makes it small to see the paging
     now: Callable[[], datetime] = lambda: datetime.now(UTC)
     fail: list[int] = field(default_factory=list)  # the next requests answer these statuses (0: as usual)
-    undeletable: set[str] = field(default_factory=set)  # keys a DeleteObjects keeps, with an <Error> each
+    undeletable: dict[str, str] = field(
+        default_factory=dict
+    )  # key -> the <Error> code a DeleteObjects keeps it with
     pace: float = 0.0  # seconds a GET of an object takes, so a test sees how many run at once
     most_at_once: int = 0  # the most GETs of objects that were running together
     _running: int = 0
@@ -564,8 +566,8 @@ class FakeS3:
             if request.method == "POST" and "delete" in query:
                 errors = ""
                 for gone in (html.unescape(k) for k in re.findall(r"<Key>(.*?)</Key>", body.decode())):
-                    if gone in self.undeletable:
-                        errors += f"<Error><Key>{html.escape(gone)}</Key><Code>AccessDenied</Code></Error>"
+                    if code := self.undeletable.get(gone):
+                        errors += f"<Error><Key>{html.escape(gone)}</Key><Code>{code}</Code></Error>"
                     else:
                         self.file(bucket, gone).unlink(missing_ok=True)
                 return httpx.Response(200, content=f"<DeleteResult>{errors}</DeleteResult>".encode())
@@ -661,6 +663,20 @@ class FakeS3:
         return httpx.Response(200, headers={"content-type": "application/xml"}, content=xml.encode())
 
 
+class FakeTransport(httpx.MockTransport):
+    """The fakes' transport. A test can hold a client's close open (`FakeWorld.close_gate`), since
+    closing awaits, and a cancel can land there."""
+
+    def __init__(self, world: "FakeWorld"):
+        super().__init__(world.handle)
+        self.world = world
+
+    async def aclose(self) -> None:
+        if (gate := self.world.close_gate) is not None:
+            self.world.closing.set()
+            await gate.wait()
+
+
 class FakeWorld:
     """The fakes behind one transport, routed by host and path."""
 
@@ -670,6 +686,8 @@ class FakeWorld:
         self.ollama = FakeOllama()
         self.workos = FakeWorkOS()
         self.s3 = FakeS3()
+        self.close_gate: asyncio.Event | None = None
+        self.closing = asyncio.Event()
 
     async def handle(self, request: httpx.Request) -> httpx.Response:
         if request.url.path.startswith(FAKE_S3):
@@ -683,4 +701,4 @@ class FakeWorld:
         return await self.fal.handle(request)
 
     def transport(self) -> httpx.MockTransport:
-        return httpx.MockTransport(self.handle)
+        return FakeTransport(self)
