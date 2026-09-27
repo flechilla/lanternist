@@ -373,7 +373,9 @@ class Database:
             else:
                 # Managed Postgres closes idle connections, so each one is tested before use.
                 pool = {} if pool_size is None else {"pool_size": pool_size}
-                self.engine = create_engine(self.url, pool_pre_ping=True, **pool)
+                # A worker's lease counts on a lost server failing in seconds, not hanging for minutes.
+                alive = {"connect_timeout": 10, "keepalives": 1, "keepalives_idle": 30}
+                self.engine = create_engine(self.url, pool_pre_ping=True, connect_args=alive, **pool)
         except ImportError:
             raise DatabaseError(
                 f"no driver for {self.url.drivername}: install the postgres extra "
@@ -789,8 +791,9 @@ class Database:
         self, worker: str, fast_kinds: tuple[str, ...], fast: bool, per_user: int = 1
     ) -> Job | None:
         """Mark the next queued job of one lane (the fast kinds, or everything else) running, held by
-        `worker`, and return it. On Postgres two workers asking at once each skip the row the other has
-        locked; on SQLite, a job claimed meanwhile isn't queued any more, and the claim tries again.
+        `worker`, and return it; None when there's none, or when another worker took it first (the lane
+        asks again at its next poll). On Postgres two workers asking at once each skip the row the other
+        has locked; on SQLite, a job claimed meanwhile isn't queued any more.
 
         Samples go oldest first. A render goes to whoever was served longest ago, so someone who queues
         later doesn't wait behind everyone's backlog, except that a job that ran before (its worker died

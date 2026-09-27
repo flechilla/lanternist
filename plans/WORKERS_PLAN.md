@@ -224,10 +224,11 @@ One pull request, `feat/workers` (question 3), cut from `chore/phase-c-done`, wi
 
 ## 3. Where the build departed from the design
 
-- **The render claim is a transaction, not one statement.** It picks the job (`FOR UPDATE SKIP LOCKED`, fair order), reads the owner's taken slots, and takes the lowest free one with an `UPDATE … WHERE status = 'queued'`. A slot another worker took first fails on `uq_jobs_owner_id_slot`, and the claim tries again, up to `per_user` times. On SQLite, where `FOR UPDATE` renders nothing, a job claimed between the pick and the update isn't queued any more, and the claim tries again. Samples keep the single statement. Computing the free slot inside one statement has no portable SQL.
+- **The render claim is a transaction, not one statement.** It picks the job (`FOR UPDATE SKIP LOCKED`, fair order), reads the owner's taken slots, and takes the lowest free one with an `UPDATE … WHERE status = 'queued'`. A slot another worker took first fails on `uq_jobs_owner_id_slot`, and the claim tries again, up to `per_user` times. On SQLite, where `FOR UPDATE` renders nothing, a job claimed between the pick and the update isn't queued any more, and the claim tries again. A sample takes no slot, and one claimed meanwhile waits for the next poll. Computing the free slot inside one statement has no portable SQL.
 - **A cancel asked while a job went back to the queue** (a hand-back racing a cancel) is heard at the next claim: the worker cancels it at once, as the user's.
 - **The fake fal honours `LANTERNIST_FAKE_PACE`:** each request lasts at least that long. The process tests need an open request to kill a worker during, and fake hosted mode, whose stages all run on fal, can now be watched like the local one.
 - **`update_job` and `end_job`:** the end has a method of its own, since it frees the slot and, when handing back, clears the worker. Both return whether the write landed.
+- **The lease times the heartbeat itself:** a call that hangs longer than `heartbeat_seconds` counts as failed, and Postgres connections get a 10 s connect timeout and TCP keepalives, so a lost server fails in seconds.
 - **The worker quiets httpx's log**, a line for every poll of fal.
 
 Departures from HOSTED_PLAN and the issue, decided in this plan:

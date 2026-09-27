@@ -17,6 +17,7 @@ from .config import settings
 from .storyboard import Effort, Mode, Storyboard, Subtitles, slugify
 
 if TYPE_CHECKING:
+    from .jobs import Runner
     from .pipeline import Board
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
@@ -280,7 +281,7 @@ def worker():
     asyncio.run(_work(Runner(cfg, db, cfg.worker.renders)))
 
 
-async def _work(runner) -> None:
+async def _work(runner: "Runner") -> None:
     stopping = asyncio.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):
         asyncio.get_running_loop().add_signal_handler(sig, stopping.set)

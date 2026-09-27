@@ -120,9 +120,8 @@ class FakeRequest:
 @dataclass
 class FakeFal:
     polls_before_done: int = 2
-    pace: float = (
-        0.0  # seconds a request takes at least, as LANTERNIST_FAKE_PACE says, to watch it or stop it
-    )
+    # Seconds a request takes at least, as LANTERNIST_FAKE_PACE says, to watch it or stop it.
+    pace: float = 0.0
     billable_units_on: str = "result"  # which response carries X-Fal-Billable-Units: result | status | none
     bad_keys: set[str] = field(default_factory=lambda: {"bad"})
     deprecated: set[str] = field(default_factory=set)
@@ -145,11 +144,11 @@ class FakeFal:
     def requests(self) -> dict[str, FakeRequest]:
         """Every request submitted on this root, by any process, as it is now."""
         found = sorted((self.root / "requests").glob("*.json"))
-        return {p.stem: FakeRequest(**json.loads(p.read_text())) for p in found}
+        return {p.stem: FakeRequest(**json.loads(p.read_text(encoding="utf-8"))) for p in found}
 
     def request(self, rid: str) -> FakeRequest | None:
         path = self.root / "requests" / f"{rid}.json"
-        return FakeRequest(**json.loads(path.read_text())) if path.is_file() else None
+        return FakeRequest(**json.loads(path.read_text(encoding="utf-8"))) if path.is_file() else None
 
     def save(self, req: FakeRequest) -> None:
         _write(self.root / "requests" / f"{req.id}.json", json.dumps(asdict(req)).encode())
@@ -589,7 +588,7 @@ class FakeS3:
     def meta(self, bucket: str, key: str) -> dict[str, str]:
         """The headers an object was stored with."""
         path = self.root / "meta" / bucket / f"{key}.json"
-        return json.loads(path.read_text()) if path.is_file() else {}
+        return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
 
     def keys(self, bucket: str, prefix: str = "") -> list[str]:
         base = self.root / "objects" / bucket

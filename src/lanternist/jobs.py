@@ -358,8 +358,10 @@ class Runner:
         while True:
             await asyncio.sleep(w.heartbeat_seconds)
             try:
-                answers = await asyncio.to_thread(self.db.heartbeat, self.name, list(self.running))
-                back = await asyncio.to_thread(self.db.requeue_stale, timedelta(seconds=w.stale_seconds))
+                # A call that hangs counts as one that failed, so the lease holds when the network does.
+                async with asyncio.timeout(w.heartbeat_seconds):
+                    answers = await asyncio.to_thread(self.db.heartbeat, self.name, list(self.running))
+                    back = await asyncio.to_thread(self.db.requeue_stale, timedelta(seconds=w.stale_seconds))
             except Exception:  # the database is away: the lease decides what that means
                 if time.monotonic() - landed >= LEASE * w.stale_seconds:
                     for job_id in list(self.running):
@@ -385,12 +387,11 @@ class Runner:
         try:
             result = await task
         except asyncio.CancelledError:
-            if not self.user_cancelled(job_id):
-                status = "queued"  # a shutdown, or the job moved on: whoever runs it next carries on
-                if cast(asyncio.Task, asyncio.current_task()).cancelling():  # run() always runs in a task
-                    raise
-            else:
-                status = "cancelled"
+            # A shutdown, or the job moved on: whoever runs it next carries on. A user's cancel heard while
+            # the worker stops still ends the job, and the stop still goes on.
+            status = "cancelled" if self.user_cancelled(job_id) else "queued"
+            if cast(asyncio.Task, asyncio.current_task()).cancelling():  # run() always runs in a task
+                raise
         except BudgetExceeded as e:  # not a crash: the UI offers to raise the budget and carry on
             status, result, error = "failed", {"budget": e.info()}, redact(str(e))
             progress.note(f"stopped before spending: {error}")

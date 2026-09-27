@@ -10,6 +10,7 @@ from lanternist import jobs, pace
 from lanternist.cli import _printer
 from lanternist.config import Settings, Worker
 from lanternist.db import LOCAL, Job, Story, now
+from lanternist.engines.base import whole
 from lanternist.jobs import THROTTLE, Progress, Runner
 from lanternist.pipeline import ITEM, Event, Pipeline
 from lanternist.storyboard import CastMember
@@ -484,3 +485,29 @@ async def test_two_workers_and_three_users_take_fair_turns(cfg, db, until):
             await worker.stop()
     # Everyone's first film starts before anyone's second, and everyone's second before Ann's third.
     assert set(starts[:3]) == set(starts[3:6]) == {ann, bob, cleo} and starts[6] == ann
+
+
+async def test_a_cancel_heard_while_stopping_claims_nothing_more(cfg, db, until):
+    """The heartbeat goes on while a stopping worker's job stores what fal billed; a cancel it hears
+    then ends the job, and the worker still stops."""
+    worker, started = Runner(fast_beats(cfg), db), []
+
+    async def execute(job, progress):
+        started.append(job.id)
+        await whole(asyncio.sleep(0.3))  # storing what fal billed, through the stop
+        return {}
+
+    worker.execute = execute
+    worker.start()
+    first = worker.enqueue(LOCAL, None, "render", None)
+    await until(lambda: started)
+    second = worker.enqueue(LOCAL, None, "render", None)
+    stopping = asyncio.create_task(worker.stop())
+    await asyncio.sleep(0)
+    assert db.request_cancel(LOCAL, first.id)
+    await asyncio.wait_for(stopping, timeout=5)
+    assert started == [first.id]
+    assert (db.get_job(LOCAL, first.id).status, db.get_job(LOCAL, second.id).status) == (
+        "cancelled",
+        "queued",
+    )

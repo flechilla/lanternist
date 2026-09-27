@@ -9,6 +9,7 @@ import sys
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import IO
 
 import pytest
 from test_api import storyboard
@@ -35,17 +36,20 @@ def hosted(hosted_config, monkeypatch) -> Iterator[tuple[Database, Path]]:
 def workers(tmp_path) -> Iterator[Callable[[], subprocess.Popen]]:
     """Starts `lanternist worker` processes, each logging to a file of its own; kills what's left."""
     started: list[subprocess.Popen] = []
+    logs: list[IO[str]] = []
 
     def start() -> subprocess.Popen:
-        log = (tmp_path / f"worker-{len(started)}.log").open("w")
+        logs.append((tmp_path / f"worker-{len(started)}.log").open("w", encoding="utf-8"))
         cmd = [sys.executable, "-c", "from lanternist.cli import app; app()", "worker"]
-        started.append(subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT))
+        started.append(subprocess.Popen(cmd, stdout=logs[-1], stderr=subprocess.STDOUT))
         return started[-1]
 
     yield start
     for p in started:
         p.kill()
         p.wait()
+    for log in logs:
+        log.close()
 
 
 def a_render(db: Database) -> str:
