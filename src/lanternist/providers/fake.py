@@ -1,26 +1,35 @@
-"""In-process fakes of fal.ai, OpenRouter, Ollama and WorkOS, served through an httpx transport.
+"""In-process fakes of fal.ai, OpenRouter, Ollama, WorkOS and R2, served through an httpx transport.
 
 Fake mode (LANTERNIST_FAKE_ENGINES=1) and the tests use these, so the real clients run end to
 end with no keys and no network. fal's queue walks IN_QUEUE -> IN_PROGRESS -> COMPLETED and its
 results are ffmpeg test media; OpenRouter and Ollama answer a JSON schema with a sample that fits
 it (a storyboard gets one scene per numbered paragraph), and plain prompts with a short story.
 Tests steer failures through the attributes on FakeFal and FakeOpenRouter. WorkOS signs in anyone
-whose code is `fake:<email>`, which the fake sign-in page makes.
+whose code is `fake:<email>`, which the fake sign-in page makes. R2 keeps objects in a temp folder
+and checks every signature, as the real one does; the app serves it at FAKE_S3 so a browser can follow a
+presigned URL to it.
 """
 
 import asyncio
 import base64
+import hashlib
+import hmac
+import html
 import itertools
 import json
 import re
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, quote, unquote, urlparse
 
 import httpx
 
 from ..engines import fake as media
+from ..keys import platform_secret
+from .s3 import FAKE_S3, UNSIGNED, Signer
 from .workos import FAKE_CODE
 
 
@@ -104,6 +113,9 @@ class FakeFal:
     )  # asking for any of these 404s the whole batch, as fal does
     fail_submit: list[tuple[int, dict]] = field(default_factory=list)  # next submits answer these
     fail_result: dict[str, str] = field(default_factory=dict)  # endpoint -> error on completion
+    # When set, a request for a finished result waits for it: a test cancels once fal has billed.
+    result_gate: asyncio.Event | None = None
+    result_asked: asyncio.Event = field(default_factory=asyncio.Event)
     requests: dict[str, FakeRequest] = field(default_factory=dict)
     submits: list[str] = field(default_factory=list)
     cancels: list[str] = field(default_factory=list)
@@ -242,6 +254,9 @@ class FakeFal:
         if action == "":
             if req.polls <= self.polls_before_done:
                 return _json({"detail": "still in progress"}, 400)
+            self.result_asked.set()
+            if self.result_gate:
+                await self.result_gate.wait()
             await self._make(req)
             headers = {"x-fal-billable-units": str(req.units)} if self.billable_units_on == "result" else None
             return _json(req.output, headers=headers)
@@ -497,6 +512,171 @@ class FakeWorkOS:
         )
 
 
+def _s3_error(status: int, code: str, message: str) -> httpx.Response:
+    xml = f'<?xml version="1.0" encoding="UTF-8"?><Error><Code>{code}</Code><Message>{message}</Message></Error>'
+    return httpx.Response(status, headers={"content-type": "application/xml"}, content=xml.encode())
+
+
+def _when(stamp: str) -> datetime | None:
+    try:
+        return datetime.strptime(stamp, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
+    except ValueError:
+        return None
+
+
+@dataclass
+class FakeS3:
+    """R2's S3 API, path-style under FAKE_S3: objects in a temp folder, with each signature, payload hash
+    and expiry checked as R2 checks them, so a request signed wrong fails here too."""
+
+    root: Path = field(default_factory=lambda: Path(tempfile.mkdtemp(prefix="lanternist-fakes3-")))
+    page: int = 1000  # keys per list page; a test makes it small to see the paging
+    now: Callable[[], datetime] = lambda: datetime.now(UTC)
+    fail: list[int] = field(default_factory=list)  # the next requests answer these statuses (0: as usual)
+    undeletable: dict[str, str] = field(
+        default_factory=dict
+    )  # key -> the <Error> code a DeleteObjects keeps it with
+    pace: float = 0.0  # seconds a GET of an object takes, so a test sees how many run at once
+    most_at_once: int = 0  # the most GETs of objects that were running together
+    _running: int = 0
+    meta: dict[str, dict[str, str]] = field(
+        default_factory=dict
+    )  # bucket/key -> the headers it was stored with
+    requests: list[str] = field(default_factory=list)  # "PUT <key>", in order
+
+    def file(self, bucket: str, key: str) -> Path:
+        return self.root / bucket / key
+
+    def keys(self, bucket: str, prefix: str = "") -> list[str]:
+        base = self.root / bucket
+        found = (str(p.relative_to(base)) for p in base.rglob("*") if p.is_file()) if base.is_dir() else ()
+        return sorted(k for k in found if k.startswith(prefix))
+
+    async def handle(self, request: httpx.Request) -> httpx.Response:
+        path = unquote(request.url.raw_path.decode().split("?", 1)[0])
+        bucket, _, key = path.removeprefix(f"{FAKE_S3}/").partition("/")
+        query = dict(parse_qsl(request.url.query.decode(), keep_blank_values=True))
+        body = await request.aread()
+        self.requests.append(f"{request.method} {key}")
+        if refused := self._refused(request, path, query, body):
+            return refused
+        if self.fail and (status := self.fail.pop(0)):
+            return _s3_error(status, "InternalError", "a fake failure")
+        if not key:
+            if request.method == "POST" and "delete" in query:
+                errors = ""
+                for gone in (html.unescape(k) for k in re.findall(r"<Key>(.*?)</Key>", body.decode())):
+                    if code := self.undeletable.get(gone):
+                        errors += f"<Error><Key>{html.escape(gone)}</Key><Code>{code}</Code></Error>"
+                    else:
+                        self.file(bucket, gone).unlink(missing_ok=True)
+                return httpx.Response(200, content=f"<DeleteResult>{errors}</DeleteResult>".encode())
+            return self._list(bucket, query)
+        target = self.file(bucket, key)
+        if request.method == "PUT":
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(body)
+            kept = ("content-type", "cache-control")
+            self.meta[f"{bucket}/{key}"] = {h: request.headers[h] for h in kept if h in request.headers}
+            return httpx.Response(200)
+        if request.method == "DELETE":
+            target.unlink(missing_ok=True)
+            return httpx.Response(204)
+        if not target.is_file():
+            return _s3_error(404, "NoSuchKey", "The specified key does not exist.")
+        self._running += 1
+        self.most_at_once = max(self.most_at_once, self._running)
+        await asyncio.sleep(self.pace)
+        self._running -= 1
+        data = target.read_bytes()
+        headers = {"accept-ranges": "bytes", **self.meta.get(f"{bucket}/{key}", {})}
+        for name in ("content-disposition", "content-type", "cache-control"):
+            if f"response-{name}" in query:
+                headers[name] = query[f"response-{name}"]
+        status = 200
+        if m := re.fullmatch(r"bytes=(\d+)-(\d*)", request.headers.get("range", "")):
+            first, last = int(m[1]), min(int(m[2]) if m[2] else len(data) - 1, len(data) - 1)
+            headers["content-range"] = f"bytes {first}-{last}/{len(data)}"
+            data, status = data[first : last + 1], 206
+        headers["content-length"] = str(len(data))
+        return httpx.Response(status, headers=headers, content=b"" if request.method == "HEAD" else data)
+
+    def _refused(
+        self, request: httpx.Request, path: str, query: dict[str, str], body: bytes
+    ) -> httpx.Response | None:
+        """Why R2 would refuse the request's signature, or None when it's good."""
+        key_id = platform_secret("r2_key_id", fake=True) or ""
+        signer = Signer(key_id, platform_secret("r2", fake=True) or "")
+        if "X-Amz-Signature" in query:  # a presigned URL
+            given = query["X-Amz-Signature"]
+            signed = {k: v for k, v in query.items() if k != "X-Amz-Signature"}
+            credential, at = (
+                signed.get("X-Amz-Credential", "").split("/")[0],
+                _when(signed.get("X-Amz-Date", "")),
+            )
+            names, payload = signed.get("X-Amz-SignedHeaders", "").split(";"), UNSIGNED
+            if at and self.now() > at + timedelta(seconds=int(signed.get("X-Amz-Expires", "0"))):
+                return _s3_error(403, "AccessDenied", "Request has expired")
+        else:
+            m = re.fullmatch(
+                r"AWS4-HMAC-SHA256 Credential=([^/]+)/[^,]+, SignedHeaders=([^,]+), Signature=(\w+)",
+                request.headers.get("authorization", ""),
+            )
+            if not m:
+                return _s3_error(403, "AccessDenied", "Access Denied")
+            credential, names, given, signed = m[1], m[2].split(";"), m[3], query
+            at, payload = (
+                _when(request.headers.get("x-amz-date", "")),
+                request.headers.get("x-amz-content-sha256", ""),
+            )
+        if credential != key_id:
+            return _s3_error(403, "InvalidAccessKeyId", "The AWS Access Key Id you provided does not exist.")
+        if at is None or any(n not in request.headers for n in names):
+            return _s3_error(403, "AccessDenied", "Access Denied")
+        headers = {n: request.headers[n] for n in names}
+        want = signer.signature(request.method, quote(path, safe="/-_.~"), signed, headers, payload, at)
+        if not hmac.compare_digest(want, given):
+            return _s3_error(
+                403, "SignatureDoesNotMatch", "The request signature we calculated does not match."
+            )
+        if payload != UNSIGNED and payload != hashlib.sha256(body).hexdigest():
+            return _s3_error(
+                400, "XAmzContentSHA256Mismatch", "The body does not match x-amz-content-sha256."
+            )
+        return None
+
+    def _list(self, bucket: str, query: dict[str, str]) -> httpx.Response:
+        after = query.get("continuation-token", "")
+        keys = [k for k in self.keys(bucket, query.get("prefix", "")) if k > after]
+        page, more = keys[: self.page], len(keys) > self.page
+        contents = "".join(f"<Contents><Key>{html.escape(k, quote=False)}</Key></Contents>" for k in page)
+        token = (
+            f"<NextContinuationToken>{html.escape(page[-1], quote=False)}</NextContinuationToken>"
+            if more
+            else ""
+        )
+        xml = (
+            f'<?xml version="1.0" encoding="UTF-8"?><ListBucketResult><Name>{bucket}</Name>'
+            f"<KeyCount>{len(page)}</KeyCount><IsTruncated>{str(more).lower()}</IsTruncated>{token}{contents}"
+            "</ListBucketResult>"
+        )
+        return httpx.Response(200, headers={"content-type": "application/xml"}, content=xml.encode())
+
+
+class FakeTransport(httpx.MockTransport):
+    """The fakes' transport. A test can hold a client's close open (`FakeWorld.close_gate`), since
+    closing awaits, and a cancel can land there."""
+
+    def __init__(self, world: "FakeWorld"):
+        super().__init__(world.handle)
+        self.world = world
+
+    async def aclose(self) -> None:
+        if (gate := self.world.close_gate) is not None:
+            self.world.closing.set()
+            await gate.wait()
+
+
 class FakeWorld:
     """The fakes behind one transport, routed by host and path."""
 
@@ -505,8 +685,13 @@ class FakeWorld:
         self.openrouter = FakeOpenRouter()
         self.ollama = FakeOllama()
         self.workos = FakeWorkOS()
+        self.s3 = FakeS3()
+        self.close_gate: asyncio.Event | None = None
+        self.closing = asyncio.Event()
 
     async def handle(self, request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith(FAKE_S3):
+            return await self.s3.handle(request)
         if request.url.host == "openrouter.ai":
             return await self.openrouter.handle(request)
         if request.url.host == "api.workos.com":
@@ -516,4 +701,4 @@ class FakeWorld:
         return await self.fal.handle(request)
 
     def transport(self) -> httpx.MockTransport:
-        return httpx.MockTransport(self.handle)
+        return FakeTransport(self)

@@ -5,7 +5,7 @@ hands the rest to its engine as one batch:
 
     key(kind, **inputs)       the step key; the engine adds what's model-specific
     estimate(items)           what the batch would cost, from list prices; pure
-    run(items, ctx, on_item)  make them; `on_item` fires as each output lands
+    run(items, ctx, on_item)  make them; `await on_item(out)` stores each output as it lands
 
 A local engine loads its model once for the whole batch, under the GPU lease. A remote one runs the
 items concurrently under its provider's semaphore and never takes the lease.
@@ -19,7 +19,7 @@ one when its output arrives (the worker reads the references straight from the w
 import asyncio
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
@@ -28,6 +28,7 @@ from urllib.parse import urlparse
 from .. import registry
 from ..config import Settings
 from ..db import Database, to_micros
+from ..keys import redact
 from ..providers.fal import Fal, FalResult, RunSpec
 from ..registry import ModelEntry
 from ..store import Store
@@ -119,7 +120,7 @@ class StepContext:
     bind: Callable[[Item], None] = _unbound
 
 
-OnItem = Callable[[Output], None]
+OnItem = Callable[[Output], Awaitable[None]]
 
 
 class Maker:
@@ -239,6 +240,19 @@ class FalEngine(Engine):
         log.info("%s %s done in %.1fs", self.entry.id, item.id, time.monotonic() - t0)
         return res
 
+    async def keep_step(
+        self, ctx: StepContext, key: str, url: str, dest: Path, name: str, meta: dict | None = None
+    ) -> dict:
+        """A part of an item that fal made and billed on its own (a video's shot, a narration chunk, a
+        cloned voice): fetched, stored and recorded as its own step, whole (see `whole`)."""
+
+        async def keep() -> dict:
+            path = await self.fetch(url, dest)
+            record = {"assets": {name: await ctx.store.put(path)}} | ({"meta": meta} if meta else {})
+            return ctx.store.put_step(key, record)
+
+        return await whole(keep())
+
     async def fetch(self, url: str, dest: Path) -> Path:
         """Download a result into the work dir, keeping the extension fal gave it."""
         suffix = Path(urlparse(url).path).suffix.lower()
@@ -250,14 +264,40 @@ class FalEngine(Engine):
         """Put a stored file (or `path`, named `asset`) on fal. Items running together share one upload
         of the same file: every keyframe waits on the one cast sheet upload rather than starting its own."""
         if asset not in self._uploads:
-            self._uploads[asset] = asyncio.ensure_future(
-                self.fal.upload(path or ctx.store.path(asset), asset=asset, ttl_hours=ttl_hours)
-            )
+
+            async def up() -> str:
+                return await self.fal.upload(
+                    path or await ctx.store.file(asset), asset=asset, ttl_hours=ttl_hours
+                )
+
+            self._uploads[asset] = asyncio.ensure_future(up())
         try:
             return await asyncio.shield(self._uploads[asset])
         except Exception:
             self._uploads.pop(asset, None)  # a failed upload is tried afresh next time
             raise
+
+
+async def whole[T](work: Awaitable[T]) -> T:
+    """Run `work` to its end, however often the task awaiting it is cancelled meanwhile, then let the
+    cancel go on. What runs after fal has billed (fetching a result, storing it, recording it) mustn't
+    stop halfway: fal's request is counted done, so a file without its record is paid for again."""
+    task = asyncio.ensure_future(work)
+    cancelled = False
+    while not task.done():
+        try:
+            await asyncio.wait([task])  # which never cancels the work, nor raises its error
+        except asyncio.CancelledError:
+            cancelled = True
+    if cancelled:  # a failure while finishing doesn't take the cancel's place: the runner reads it
+        failed = None if task.cancelled() else task.exception()
+        if failed:
+            log.warning(
+                "a finished step wasn't kept as its job stopped, so the next run pays for it: %s",
+                redact(str(failed)),
+            )
+        raise asyncio.CancelledError from failed
+    return task.result()
 
 
 async def gather_all(jobs: list) -> None:

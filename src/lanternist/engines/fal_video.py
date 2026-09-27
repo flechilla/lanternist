@@ -95,19 +95,19 @@ class FalVideo(FalEngine, VideoEngine):
                     self.arguments(item, j, seconds, url),
                     estimate=self.micros(seconds, self.quality),
                 )
-                clip = await self.fetch(res.data["video"]["url"], ctx.work / f"{shot.id}.mp4")
                 # A model that rewrites its prompt (H3's prompt expansion) says what it made the clip from.
                 meta = {"seconds": seconds} | (
                     {"expanded_prompt": redact(res.data["expanded_prompt"])}
                     if res.data.get("expanded_prompt")
                     else {}
                 )
-                rec = ctx.store.put_step(key, {"assets": {"video": ctx.store.put(clip)}, "meta": meta})
-            parts.append(ctx.store.path(rec["assets"]["video"]))
+                clip = ctx.work / f"{shot.id}.mp4"
+                rec = await self.keep_step(ctx, key, res.data["video"]["url"], clip, "video", meta)
+            parts.append(await ctx.store.file(rec["assets"]["video"]))
             if j + 1 < len(shots):
                 # The next shot starts where this one ends; its frame is named for the shot it came from.
                 image, image_path = f"{key}-last.png", ctx.work / f"{item.id}-{j}-last.png"
                 await ffmpeg.last_frame(parts[-1], image_path)
         joined = ctx.work / f"{item.id}.mp4"
         await ffmpeg.concat(parts, joined, faststart=True)
-        on_item(Output(item, joined, {"shots": shots}))
+        await on_item(Output(item, joined, {"shots": shots}))

@@ -15,6 +15,14 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from . import registry
 from .storyboard import LlmId
 
+USERS_FOLDER, SHARED_FOLDER = "u", "shared"  # the hosted edition's, on disk and on R2
+
+
+def owner_folder(owner: str | None) -> str:
+    """Where an owner's files are in the hosted edition, under the library and on R2: `u/<id>`, or
+    `shared` for what belongs to no one (owner None: voice samples)."""
+    return SHARED_FOLDER if owner is None else f"{USERS_FOLDER}/{owner}"
+
 
 def _expand(v):
     return Path(os.path.expanduser(str(v)))
@@ -172,6 +180,17 @@ class WorkOS(BaseModel):
     client_id: str = ""
 
 
+class Storage(BaseModel):
+    """Where the hosted edition keeps files: an R2 bucket, one per environment. The endpoint and the
+    bucket aren't secret; the keys are R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY. The local edition
+    keeps its library folder and ignores this."""
+
+    endpoint: str = ""  # https://<account id>.r2.cloudflarestorage.com
+    bucket: str = ""  # lanternist-dev, lanternist-staging, lanternist-prod
+    cache_gb: float = 20  # kept on disk where jobs run, since ffmpeg reads files; trimmed after each job
+    downloads: int = 8  # files a stage fetches from R2 at once, on a machine whose cache lacks them
+
+
 class DatabaseConfig(BaseModel):
     model_config = ConfigDict(validate_default=True)
     # Empty: the SQLite file in the library. The hosted edition's Postgres, as
@@ -191,6 +210,7 @@ class Settings(BaseModel):
     edition: Literal["local", "hosted"] = "local"
     hosted: Hosted = Hosted()
     workos: WorkOS = WorkOS()
+    storage: Storage = Storage()
     paths: Paths = Paths()
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)  # reads the environment when made
     ollama: Ollama = Ollama()
@@ -243,7 +263,7 @@ class Settings(BaseModel):
         free, and one for what everyone shares (owner None: voice samples)."""
         if not self.hosted_edition:
             return self.library
-        return self.library / ("shared" if owner is None else f"u/{owner}")
+        return self.library / owner_folder(owner)
 
     @property
     def database_url(self) -> str:

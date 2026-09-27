@@ -5,20 +5,19 @@ import inspect
 import re
 import sqlite3
 import stat
-from collections.abc import Iterator
-from contextlib import contextmanager
 from datetime import timedelta
 from pathlib import Path
 
 import pytest
 from alembic import command
-from sqlalchemy import event, make_url, text
+from sqlalchemy import make_url, text
 from typer.testing import CliRunner
 
 import lanternist
 from lanternist import cli, config, keys, prefs, registry
 from lanternist.config import Defaults, Paths, Settings
 from lanternist.db import (
+    EVERYONE,
     LOCAL,
     SHARED,
     Database,
@@ -162,6 +161,28 @@ def test_migration_0004_gives_every_row_to_the_local_user(db):
     command.upgrade(cfg, "head")
 
 
+def test_migration_0005_adds_the_step_cache_and_keeps_every_row(db):
+    cfg = db.alembic_config()
+    command.downgrade(cfg, "0004")
+    with db.engine.begin() as c:
+        c.execute(
+            text(
+                "insert into stories (id, owner_id, slug, title, language, version, created_at, updated_at) "
+                "values ('s1', 'local', 'luna', 'Luna', 'es', 1, '2026-09-01', '2026-09-01')"
+            )
+        )
+    command.upgrade(cfg, "head")
+    assert db.get_story(LOCAL, "s1").title == "Luna"
+    assert db.user(EVERYONE).auth_subject == EVERYONE
+    db.put_step(EVERYONE, "k" * 64, {"assets": {"audio": "a.wav"}})
+    assert db.get_steps(EVERYONE, ["k" * 64]) == {"k" * 64: {"assets": {"audio": "a.wav"}}}
+    command.downgrade(cfg, "0004")
+    with db.engine.connect() as c:
+        assert c.execute(text("select id from users order by id")).scalars().all() == [LOCAL]
+        assert c.execute(text("select count(*) from stories")).scalar() == 1
+    command.upgrade(cfg, "head")
+
+
 @pytest.mark.sqlite_only
 @pytest.mark.skipif(not REAL_DB.is_file(), reason="no library database on this machine")
 def test_migration_on_a_copy_of_the_real_library(tmp_path):
@@ -176,6 +197,7 @@ def test_migration_on_a_copy_of_the_real_library(tmp_path):
     migrated.migrate()
     assert counts(copy) == before
     assert all(set(rows) <= {LOCAL} for rows in owners(migrated).values())  # step runs: every one, too
+    assert migrated.get_steps(LOCAL, ["0" * 64]) == {}  # the table is there, empty: records stay files
 
 
 def test_deleting_a_story_keeps_what_it_cost(db):
@@ -250,6 +272,35 @@ def test_a_restart_resumes_only_its_own_users_request(db):
     assert db.open_run(bob, "k", "fal") is None  # the same step of bob's is his to pay for
 
 
+def test_each_owner_reads_only_their_own_step_records(db):
+    bob = db.sign_in("fake:bob", None).id
+    db.put_step(LOCAL, "a" * 64, {"assets": {"image": "1.png"}})
+    db.put_step(LOCAL, "a" * 64, {"assets": {"image": "2.png"}})  # made again: the new record wins
+    db.put_step(bob, "b" * 64, {"assets": {"image": "3.png"}})
+    assert db.get_steps(LOCAL, ["a" * 64, "b" * 64, "c" * 64]) == {"a" * 64: {"assets": {"image": "2.png"}}}
+    assert db.get_steps(bob, ["a" * 64]) == {}  # the same step of the local user's is bob's to make
+    assert db.get_steps(bob, []) == {}
+    db.forget_steps(LOCAL)
+    assert db.get_steps(LOCAL, ["a" * 64]) == {}
+    assert db.get_steps(bob, ["b" * 64]) == {"b" * 64: {"assets": {"image": "3.png"}}}
+
+
+def test_a_scratch_record_is_a_miss_once_it_expires(db):
+    db.put_step(LOCAL, "a" * 64, {"assets": {"video": "c.mp4"}}, expires_at=now() - timedelta(seconds=1))
+    db.put_step(LOCAL, "b" * 64, {"assets": {"video": "d.mp4"}}, expires_at=now() + timedelta(days=6))
+    assert list(db.get_steps(LOCAL, ["a" * 64, "b" * 64])) == ["b" * 64]
+    db.put_step(LOCAL, "a" * 64, {"assets": {"video": "c.mp4"}})  # made again, to keep
+    assert list(db.get_steps(LOCAL, ["a" * 64])) == ["a" * 64]
+
+
+def test_two_workers_recording_one_step_at_once_keep_one_record(db, lands_first):
+    """Another worker records the same step just before this one inserts its record: this one writes
+    over it, rather than failing on the primary key."""
+    lands_first(db, lambda: db.put_step(LOCAL, "a" * 64, {"by": "the other"}), "INSERT INTO steps")
+    db.put_step(LOCAL, "a" * 64, {"by": "this one"})
+    assert db.get_steps(LOCAL, ["a" * 64]) == {"a" * 64: {"by": "this one"}}
+
+
 def test_signing_in_makes_a_user_once_and_keeps_their_email_current(db):
     ann = db.sign_in("user_01ANN", "ann@example.com")
     assert db.sign_in("user_01ANN", "ann@new.example.com").id == ann.id
@@ -265,22 +316,7 @@ def test_a_first_sign_in_twice_at_once_makes_one_user(db, lands_first):
     assert db.user(ann.id).email == "ann@new.example.com"
 
 
-@contextmanager
-def statements(db: Database) -> Iterator[list[str]]:
-    """The statements the database is sent while the block runs."""
-    sent: list[str] = []
-
-    def count(_conn, _cursor, statement, *_) -> None:
-        sent.append(statement)
-
-    event.listen(db.engine, "before_cursor_execute", count)
-    try:
-        yield sent
-    finally:
-        event.remove(db.engine, "before_cursor_execute", count)
-
-
-def test_library_queries_do_not_grow_with_stories(db):
+def test_library_queries_do_not_grow_with_stories(db, statements):
     def add_story(n: int) -> None:
         story = db.create_story(LOCAL, f"Story {n}", "en", {"title": f"Story {n}"})
         board = db.add_job(LOCAL, story.id, "board", 1, {}, None)

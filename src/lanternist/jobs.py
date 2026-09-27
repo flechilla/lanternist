@@ -14,7 +14,7 @@ import traceback
 from collections.abc import Sequence
 from typing import Any, cast
 
-from . import pace, prefs
+from . import pace, prefs, store
 from .config import Settings
 from .db import TERMINAL, Database, Job, now
 from .keys import redact
@@ -237,6 +237,7 @@ class Progress:
 # A few seconds on a remote model each: they run in a lane of their own, beside the queue, so a voice
 # sample never waits behind a render. They never take the GPU.
 FAST = ("sample",)
+STOP_GRACE = 30  # seconds a stopping server gives its running jobs to store what they were paid for
 
 
 class Runner:
@@ -260,11 +261,12 @@ class Runner:
         self._loops = [asyncio.create_task(self.loop(fast)) for fast in (False, True)]
 
     async def stop(self) -> None:
-        for running in (self.current, self.current_fast):
-            if running:
-                running[1].cancel()
-        for task in self._loops:
+        tasks = [running[1] for running in (self.current, self.current_fast) if running] + self._loops
+        for task in tasks:
             task.cancel()
+        # A job being stopped first finishes storing what fal was paid for (engines.base.whole).
+        if tasks:
+            await asyncio.wait(tasks, timeout=STOP_GRACE)
 
     def _wake(self, fast: bool) -> None:
         # Routes enqueue from FastAPI's thread pool; the event belongs to the server's loop.
@@ -292,8 +294,9 @@ class Runner:
             return False
         for running in (self.current, self.current_fast):
             if running and running[0] == job_id:
-                self.cancel_requested.add(job_id)
-                running[1].cancel()
+                if job_id not in self.cancel_requested:  # a second click has nothing more to cancel
+                    self.cancel_requested.add(job_id)
+                    running[1].cancel()
                 return True
         return self.db.cancel_queued(owner, job_id)
 
@@ -309,6 +312,8 @@ class Runner:
                     await asyncio.wait_for(wake.wait(), timeout=5)
                 continue
             await self.run(job, fast)
+            if self.cfg.hosted_edition:  # the disk cache of R2's files, kept under [storage] cache_gb
+                await asyncio.to_thread(store.trim, self.cfg)
 
     async def run(self, job: Job, fast: bool = False) -> None:
         """Run a job the queue has claimed (marked running) to its end."""

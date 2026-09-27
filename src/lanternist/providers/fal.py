@@ -235,11 +235,13 @@ class Fal:
                 client, endpoint, arguments, spec, ttl_hours
             )
             t0 = time.monotonic()
+            billed = False
             try:
                 final = await self.poll(client, urls, run_id, on_status, timeout)
+                billed = True  # complete, so paid for: nothing left to cancel, and a next run resumes it
                 r = await self.result(client, urls)
             except asyncio.CancelledError:
-                if spec.user_cancelled():
+                if spec.user_cancelled() and not billed:
                     await asyncio.shield(self._cancel_run(client, run_id, urls))
                 raise  # a shutdown leaves the request running at fal, to be resumed
             except FalError as e:
@@ -254,33 +256,35 @@ class Fal:
                         wall_seconds=round(time.monotonic() - t0, 2),
                     )
                 raise
-            data = r.json()
-            units = _billable_units(r) or _billable_units(final)
-            cost = (
-                to_micros(Decimal(str(units)) * spec.unit_price)
-                if units is not None and spec.unit_price is not None
-                else None
-            )
-            run = self.database.get_run(run_id)
-            meta = dict((run.meta if run else None) or {}) | {
-                "billable_units_from": "result"
-                if _billable_units(r) is not None
-                else "status"
-                if _billable_units(final) is not None
-                else None,
-                "inference_time": (final.json().get("metrics") or {}).get("inference_time"),
-            }
-            self.database.update_run(
-                run_id,
-                status="done",
-                units=units,
-                cost_micros=cost,
-                cost_source="computed" if cost is not None else "none",
-                wall_seconds=round(time.monotonic() - t0, 2),
-                meta=meta,
-                finished_at=now(),
-            )
-            return FalResult(data, request_id, run_id, units, cost, resumed)
+        # Marked done only once the connection has closed: closing it awaits, and a cancel landing there
+        # must leave the run open, for the next run to resume rather than pay again.
+        data = r.json()
+        units = _billable_units(r) or _billable_units(final)
+        cost = (
+            to_micros(Decimal(str(units)) * spec.unit_price)
+            if units is not None and spec.unit_price is not None
+            else None
+        )
+        run = self.database.get_run(run_id)
+        meta = dict((run.meta if run else None) or {}) | {
+            "billable_units_from": "result"
+            if _billable_units(r) is not None
+            else "status"
+            if _billable_units(final) is not None
+            else None,
+            "inference_time": (final.json().get("metrics") or {}).get("inference_time"),
+        }
+        self.database.update_run(
+            run_id,
+            status="done",
+            units=units,
+            cost_micros=cost,
+            cost_source="computed" if cost is not None else "none",
+            wall_seconds=round(time.monotonic() - t0, 2),
+            meta=meta,
+            finished_at=now(),
+        )
+        return FalResult(data, request_id, run_id, units, cost, resumed)
 
     async def _start(self, client, endpoint, arguments, spec, ttl_hours) -> tuple[int, dict, str, bool]:
         if spec.step_key and (open_ := self.database.open_run(spec.owner, spec.step_key, "fal")):

@@ -4,7 +4,7 @@ Lookup order: the environment (OPENROUTER_API_KEY, FAL_KEY), then the OS keychai
 0600 file for machines with no keychain. Keys are never stored in the database, and `redact`
 scrubs them from error text before it is saved or shown.
 
-The hosted edition's own secrets (PLATFORM: sign-in now, payments and storage later) come from the
+The hosted edition's own secrets (PLATFORM: sign-in and storage now, payments later) come from the
 environment only: nobody sets them in the app, and `redact` scrubs them too.
 
     LANTERNIST_KEYRING=0        skip the keychain (tests, headless boxes)
@@ -24,7 +24,13 @@ log = logging.getLogger(__name__)
 SERVICE = "lanternist"
 PROVIDERS = {"openrouter": "OPENROUTER_API_KEY", "fal": "FAL_KEY"}
 LABELS = {"openrouter": "OpenRouter", "fal": "fal.ai"}
-PLATFORM = {"workos": "WORKOS_API_KEY", "workos_webhook": "WORKOS_WEBHOOK_SECRET"}
+PLATFORM = {
+    "workos": "WORKOS_API_KEY",
+    "workos_webhook": "WORKOS_WEBHOOK_SECRET",
+    # R2's key pair. The id isn't secret (every presigned URL carries it), but it's the other half of one.
+    "r2_key_id": "R2_ACCESS_KEY_ID",
+    "r2": "R2_SECRET_ACCESS_KEY",
+}
 
 
 @dataclass

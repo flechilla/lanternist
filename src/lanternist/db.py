@@ -1,5 +1,6 @@
 """The database: users, their stories, the stories' versions, jobs, and what every step cost. Assets
-and the step cache stay plain files (see store.py).
+are files (see store.py). So is the local edition's step cache; the hosted edition keeps its step cache
+here, in `steps`, beside files on R2.
 
 Every row a user owns (a story and its versions, a job, a step run, a setting) carries its owner, and
 every method that reads or changes one takes the owner first and filters on it: a row that isn't
@@ -42,6 +43,7 @@ from sqlalchemy import (
     event,
     func,
     make_url,
+    or_,
     select,
     update,
 )
@@ -61,6 +63,7 @@ class DatabaseError(Exception):
 URLS = "sqlite:///<file>, or postgresql+psycopg://user:password@host:port/name"  # what Database takes
 WHERE = "[database] url in lanternist.toml, or LANTERNIST_DATABASE_URL"  # where the URL comes from
 LOCAL = "local"  # the local edition's one user: their id, and what signs them in
+EVERYONE = "shared"  # owns the step records of what everyone shares, the voice samples; no one signs in as it
 
 # The public methods that don't take the owner first, and why. A test holds every other one to it.
 SHARED = {
@@ -272,6 +275,21 @@ class Setting(Base):
     key: Mapped[str] = mapped_column(String(100))
     value: Mapped[object | None] = mapped_column(JSON)  # nullable, as migration 0002 made it
     updated_at: Mapped[datetime] = mapped_column(default=now, onupdate=now)
+
+
+class Step(Base):
+    """A step's record in the hosted edition, whose step cache lives here rather than in files: what the
+    step made (asset ids) and its metadata. A record of scratch files expires a day before they do."""
+
+    __tablename__ = "steps"
+    __table_args__ = (PrimaryKeyConstraint("owner_id", "key", name="pk_steps"),)
+    owner_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE", name="fk_steps_owner_id")
+    )
+    key: Mapped[str] = mapped_column(String(64))
+    record: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(default=now)
+    expires_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
 
 class Upload(Base):
@@ -930,6 +948,39 @@ class Database:
             if row := s.get(Setting, (owner, key)):
                 s.delete(row)
                 s.commit()
+
+    # steps ------------------------------------------------------------------------------------
+    def get_steps(self, owner: str, keys: list[str]) -> dict[str, dict]:
+        """The owner's records of these steps, by key, in one query. A step that isn't recorded, or whose
+        scratch record has expired, is left out: a miss."""
+        if not keys:
+            return {}
+        q = select(Step.key, Step.record).where(
+            Step.owner_id == owner,
+            Step.key.in_(keys),
+            or_(Step.expires_at.is_(None), Step.expires_at > now()),
+        )
+        with self.session() as s:
+            return dict(s.execute(q).tuples().all())
+
+    def put_step(self, owner: str, key: str, record: dict, expires_at: datetime | None = None) -> None:
+        """Record a step the owner made. A step recorded before (a scratch record that expired, or two
+        workers making the same step at once) gets this record in place of the old one: it's the same step."""
+        values = {"record": record, "created_at": now(), "expires_at": expires_at}
+        with self.session() as s:
+            s.add(Step(owner_id=owner, key=key, **values))
+            try:
+                s.commit()
+            except IntegrityError:
+                s.rollback()
+                s.execute(update(Step).where(Step.owner_id == owner, Step.key == key).values(**values))
+                s.commit()
+
+    def forget_steps(self, owner: str) -> None:
+        """Delete every step record of the owner's: their account is going."""
+        with self.session() as s:
+            s.execute(delete(Step).where(Step.owner_id == owner))
+            s.commit()
 
     # uploads ----------------------------------------------------------------------------------
     def upload_url(

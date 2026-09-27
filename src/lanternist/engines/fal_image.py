@@ -17,7 +17,7 @@ from decimal import Decimal
 from ..db import to_micros
 from ..providers.fal import FalError
 from ..store import step_key
-from .base import Estimate, FalEngine, Item, OnItem, Output, StepContext, gather_all
+from .base import Estimate, FalEngine, Item, OnItem, Output, StepContext, gather_all, whole
 
 ASPECTS = {
     "1:1": 1.0,
@@ -109,5 +109,8 @@ class FalImage(FalEngine):
                 "or pick another picture model.",
                 type="content_policy_violation",
             )
-        path = await self.fetch(images[0]["url"], ctx.work / f"{item.id}.png")
-        on_item(Output(item, path))
+
+        async def deliver() -> None:
+            await on_item(Output(item, await self.fetch(images[0]["url"], ctx.work / f"{item.id}.png")))
+
+        await whole(deliver())

@@ -8,10 +8,10 @@ writer, fal.ai for media) with the user's own keys.
 - `README.md`: what it does and how to run it.
 - `plans/`: `MVP_PLAN.md` (done), `M2_PLAN.md` (in progress: its live checks), `HOSTED_PLAN.md`
   (in progress: the SaaS edition, with credits and plans, tracked in issue #14), and a plan per hosted
-  phase: `DB_PLAN.md` (Phase A, done) and `ACCOUNTS_PLAN.md` (Phase B, in progress). Each holds the
-  design, the decisions and why, and the phase checklists. Read the relevant section before changing a
-  subsystem. When a PR finishes a plan item, tick its box and update the status line at the top. New
-  plans go in `plans/` too.
+  phase: `DB_PLAN.md` (Phase A, done), `ACCOUNTS_PLAN.md` (Phase B, done) and `STORAGE_PLAN.md`
+  (Phase C, in progress). Each holds the design, the decisions and why, and the phase checklists.
+  Read the relevant section before changing a subsystem. When a PR finishes a plan item, tick its box
+  and update the status line at the top. New plans go in `plans/` too.
 
 ## Commands
 
@@ -37,13 +37,13 @@ user's models and takes the GPU for minutes). Neither runs by default.
 | `writer.py` | Idea to storyboard in two passes (prose, then structured prompts) |
 | `prompts.py` | Every picture and video prompt, with the character lock |
 | `pipeline.py` | The stages (`narrate`, `draw`, `motion`, `clips`, `mix`), each cached and batched through `_stage` |
-| `store.py` | Content-addressed assets and the step cache (plain files) |
+| `store.py` | Content-addressed assets and the step cache: a folder locally; R2, a disk cache and `steps` in hosted |
 | `timing.py`, `text.py` | Timeline, shot split, subtitle cues; sentence splitting and TTS chunks |
 | `engines/` | The engine interface (`base.py`), local and fal engines, which engine runs a model (`catalog.py`), ffmpeg, ComfyUI/LTX, the worker runner, the fake engines |
 | `voices.py` | The narrator's reference recordings (a model's presets are in the registry) |
 | `workers/` | Scripts that run *inside other venvs* (Qwen3-TTS, klein) |
 | `gpu.py` | The GPU lease: evict other models, wait for free VRAM |
-| `providers/` | OpenRouter, fal and WorkOS (sign-in) clients, and in-process fakes of all three |
+| `providers/` | OpenRouter, fal, WorkOS (sign-in) and R2 (S3) clients, and in-process fakes of all four |
 | `registry/` | Every model the app offers, with limits and prices (TOML) |
 | `db.py`, `migrations/` | SQLite (a local library) or Postgres (hosted) through SQLAlchemy; Alembic migrations |
 | `auth.py` | Who is asking: the local user, or whoever signed in (hosted) |

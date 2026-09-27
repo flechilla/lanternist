@@ -8,7 +8,7 @@ library chatter on stdout is ignored; stderr goes to a log file.
 
 import asyncio
 import json
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import cast
 
@@ -21,7 +21,11 @@ class EngineError(RuntimeError):
 
 
 async def run_worker(
-    python: Path, script: str, job: dict, workdir: Path, on_event: Callable[[dict], None] | None = None
+    python: Path,
+    script: str,
+    job: dict,
+    workdir: Path,
+    on_event: Callable[[dict], Awaitable[None]] | None = None,
 ) -> list[dict]:
     """Run workers/<script> with `job`; returns the 'item' events in order."""
     workdir.mkdir(parents=True, exist_ok=True)
@@ -50,7 +54,7 @@ async def run_worker(
                 elif event.get("event") == "error":
                     error = event.get("message", "worker error")
                 if on_event:
-                    on_event(event)
+                    await on_event(event)
             rc = await proc.wait()
         except asyncio.CancelledError:
             proc.kill()

@@ -44,18 +44,18 @@ KLEIN_STEPS, KLEIN_GUIDANCE = 4, 1.0
 
 
 def _on_worker(
-    ctx: StepContext, items: list[Item], made: Callable[[Item, dict], None]
-) -> Callable[[dict], None]:
+    ctx: StepContext, items: list[Item], made: Callable[[Item, dict], Awaitable[None]]
+) -> Callable[[dict], Awaitable[None]]:
     """A worker's event handler: its load time as a progress line, then `made` for each output.
     A worker makes its items in order, so once the model is loaded, or an item is made, the next begins."""
     by_id = {it.id: it for it in items}
     ahead = iter(items)
 
-    def on_event(ev: dict) -> None:
+    async def on_event(ev: dict) -> None:
         if ev.get("event") == "loaded":
             ctx.note(f"model loaded in {ev['secs']}s", None)
         elif ev.get("event") == "item":
-            made(by_id[ev["id"]], ev)
+            await made(by_id[ev["id"]], ev)
         else:
             return
         if (it := next(ahead, None)) is not None:
@@ -65,13 +65,16 @@ def _on_worker(
 
 
 async def _fake_worker(
-    cfg: Settings, jobs: list[dict], on_event: Callable[[dict], None], make: Callable[[dict], Awaitable[dict]]
+    cfg: Settings,
+    jobs: list[dict],
+    on_event: Callable[[dict], Awaitable[None]],
+    make: Callable[[dict], Awaitable[dict]],
 ) -> None:
     """What a worker reports, in fake mode: the model loads at once, and each item takes `fake_pace`."""
-    on_event({"event": "loaded", "secs": 0})
+    await on_event({"event": "loaded", "secs": 0})
     for job in jobs:
         await asyncio.sleep(cfg.fake_pace)
-        on_event({"event": "item", **await make(job)})
+        await on_event({"event": "item", **await make(job)})
 
 
 class LocalQwenTts(TtsEngine):
@@ -109,14 +112,14 @@ class LocalQwenTts(TtsEngine):
             for it in items
         ]
 
-        def made(it: Item, ev: dict) -> None:
+        async def made(it: Item, ev: dict) -> None:
             meta = {
                 "duration": ev["duration"],
                 "chunks": it.params["chunks"],
                 "chunk_durations": ev["chunk_durations"],
                 "sample_rate": ev["sample_rate"],
             }
-            on_item(Output(it, Path(ev["out"]), meta, ev.get("secs")))
+            await on_item(Output(it, Path(ev["out"]), meta, ev.get("secs")))
 
         on_event = _on_worker(ctx, items, made)
 
@@ -155,7 +158,8 @@ class LocalKlein(Engine):
             p = it.params
             # A picture drawn earlier in this batch is read from the work dir, where the worker puts it.
             refs = [
-                str(ctx.work / f"{r}.png") if r in it.after else str(ctx.store.path(r)) for r in p["refs"]
+                str(ctx.work / f"{r}.png") if r in it.after else str(await ctx.store.file(r))
+                for r in p["refs"]
             ]
             jobs.append(
                 {
@@ -169,10 +173,10 @@ class LocalKlein(Engine):
                 }
             )
 
-        def made(it: Item, ev: dict) -> None:
+        async def made(it: Item, ev: dict) -> None:
             if it.after:
                 ctx.bind(it)
-            on_item(Output(it, Path(ev["out"]), secs=ev.get("secs")))
+            await on_item(Output(it, Path(ev["out"]), secs=ev.get("secs")))
 
         on_event = _on_worker(ctx, items, made)
 
@@ -226,7 +230,7 @@ class LocalLtx(VideoEngine):
                 t0 = time.monotonic()
                 n, frames = it.scene, self.frames(it.params["shots"])
                 shots = []
-                image = ctx.store.path(it.params["keyframe"])
+                image = await ctx.store.file(it.params["keyframe"])
                 for j, f in enumerate(frames):
                     shot = ctx.work / f"{it.id}-{j}.mp4"
                     ctx.note(f"scene {n}: shot {j + 1}/{len(frames)}, {f} frames", n)
@@ -246,7 +250,7 @@ class LocalLtx(VideoEngine):
                         await ffmpeg.last_frame(shot, image)
                 joined = ctx.work / f"{it.id}.mp4"
                 await ffmpeg.concat(shots, joined)
-                on_item(Output(it, joined, {"frames": frames}, round(time.monotonic() - t0, 1)))
+                await on_item(Output(it, joined, {"frames": frames}, round(time.monotonic() - t0, 1)))
 
 
 class Clips(Maker):
@@ -264,12 +268,12 @@ class Clips(Maker):
             async with sem:
                 ctx.phase(it, "working", None)
                 dest = ctx.work / f"{it.id}.mp4"
-                src = ctx.store.path(p["src"])
+                src = await ctx.store.file(p["src"])
                 if p["mode"] == "video":
                     await ffmpeg.video_clip(src, p["length"], r, dest)
                 else:
                     await ffmpeg.still_clip(src, p["length"], p["camera"], r, dest)
-                on_item(Output(it, dest, {"length": p["length"]}))
+                await on_item(Output(it, dest, {"length": p["length"]}))
 
         await asyncio.gather(*(one(it) for it in items))
 
@@ -297,12 +301,12 @@ class Mix(Maker):
         film = ctx.work / "film.mp4"
         length = p["timeline"].total
         await ffmpeg.mix(
-            [ctx.store.path(c) for c in p["clips"]],
-            [ctx.store.path(w) for w in p["wavs"]],
+            await ctx.store.files(p["clips"]),
+            await ctx.store.files(p["wavs"]),
             p["timeline"],
             ctx.cfg.render,
             film,
             subtitles=srt_path if p["subtitles"] == "burned" else None,
             on_time=lambda secs: ctx.advance(it, min(secs / length, 1)),
         )
-        on_item(Output(it, film, {"duration": round(length, 3)}, extra=extra))
+        await on_item(Output(it, film, {"duration": round(length, 3)}, extra=extra))
