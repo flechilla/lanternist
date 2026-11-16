@@ -144,9 +144,10 @@ def test_each_video_family_sends_exactly_this(cfg, model, expected):
 @pytest.mark.parametrize(
     ("model", "quality", "shots", "seconds", "micros", "waste"),
     [
-        ("fal/h3-max-turbo", None, [6], 6.0, 120_000, 0),  # 768P at the launch price, $0.02/s
-        ("fal/h3-max-turbo", "480P", [5], 4.2, 62_500, 0.8),  # the cheapest test: $0.0125/s
-        ("fal/h3-max", "1080P", [11, 11], 22.4, 1_760_000, 0),
+        # fal's H3 launch price ended on 30 Sep, so these are its regular prices.
+        ("fal/h3-max-turbo", None, [6], 6.0, 240_000, 0),  # 768P, $0.04/s
+        ("fal/h3-max-turbo", "480P", [5], 4.2, 125_000, 0.8),  # the cheapest test: $0.025/s
+        ("fal/h3-max", "1080P", [11, 11], 22.4, 3_520_000, 0),
         ("fal/kling-v3-standard", None, [6], 7.0, 504_000, 0),
         ("fal/veo-3.1", "4k", [8, 6], 14.0, 5_600_000, 0),
         ("fal/wan-2.6-flash", None, [15], 12.0, 375_000, 3.0),
