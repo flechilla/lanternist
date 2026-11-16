@@ -6,7 +6,8 @@ from pathlib import Path
 
 from lanternist import storyboard, text, writer
 
-STORY = (Path(__file__).parent.parent / "site" / "public" / "story.js").read_text()
+PUBLIC = Path(__file__).parent.parent / "site" / "public"
+STORY = (PUBLIC / "story.js").read_text()
 
 
 def _object(name: str) -> dict[str, str]:
@@ -32,12 +33,31 @@ def test_the_site_rerolls_like_the_app() -> None:
 
 
 def test_the_studio_paints_the_apps_styles() -> None:
-    rooms = (Path(__file__).parent.parent / "site" / "public" / "studio" / "rooms.js").read_text()
+    rooms = (PUBLIC / "studio" / "rooms.js").read_text()
     body = re.search(r"export const STYLES = \[(.*?)\];", rooms, re.DOTALL)
     assert body, "rooms.js has no STYLES"
     assert re.findall(r'\["(\w+)",', body.group(1)) == list(writer.STYLES)
 
 
 def test_every_style_has_its_cast_sheets() -> None:
-    img = Path(__file__).parent.parent / "site" / "public" / "studio" / "img"
+    img = PUBLIC / "studio" / "img"
     assert all((img / f"cast-{style}-{take}.webp").is_file() for style in writer.STYLES for take in (0, 1))
+
+
+def test_the_brick_page_offers_the_apps_choices() -> None:
+    page = (PUBLIC / "bricks" / "index.html").read_text()
+    styles = re.search(r'<ul class="styles"[^>]*>(.*?)</ul>', page, re.DOTALL)
+    assert styles, "the brick page lists no picture styles"
+    assert len(re.findall(r"<li>", styles.group(1))) == len(writer.STYLES)
+    picks = re.search(r'<dl class="picks">(.*?)</dl>', page, re.DOTALL)
+    assert picks, "the brick page lists no audiences or kinds"
+    lists = re.findall(r"<dd>(.*?)</dd>", picks.group(1), re.DOTALL)
+    audiences, kinds = (re.findall(r"<(?:span|b)>", dd) for dd in lists)
+    assert (len(audiences), len(kinds)) == (len(writer.AUDIENCES), len(writer.KINDS))
+
+
+def test_the_brick_page_reads_its_first_line_in_every_language() -> None:
+    tale = (PUBLIC / "bricks" / "tale.js").read_text()
+    body = re.search(r"export const FIRST_LINE = \{(.*?)\n\};", tale, re.DOTALL)
+    assert body, "tale.js has no FIRST_LINE"
+    assert re.findall(r"^  (\w+):", body.group(1), re.MULTILINE) == list(text.LANGUAGES)

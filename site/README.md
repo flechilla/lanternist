@@ -1,6 +1,6 @@
 # The site
 
-The public site at lanternist.dev has two pages, and one invitation list behind both.
+The public site at lanternist.dev has three pages, and one invitation list behind them all.
 
 - `/` is a magic-lantern show in paper cut-outs. The visitor's idea goes up on a slide, five reels show
   how Luna's film was made, the film plays, and the page ends at the invitation list.
@@ -9,8 +9,14 @@ The public site at lanternist.dev has two pages, and one invitation list behind 
   the tower open), then each chapter takes the camera down a floor, where a clay mouse does one job of
   the app: the writer, the voice, the painter, the animator, the editor. Luna's film, as Lanternist
   rendered it in clay, plays in the cinema at the bottom, and the invitation is posted at the jetty.
+- `/bricks/` is a box of toy bricks, for children who want to build stories and the grown-ups who
+  make them with them. The visitor snaps a hero, a place and a wish together from word bricks and the
+  box art rebuilds itself around the idea. Five numbered bags then build "The Little Red Brick" the
+  way Lanternist builds a film: the storyboard as a building booklet, the voice as picture bricks as
+  long as their words, the pictures as stud mosaics found in a jumble, the motion as frames the visitor
+  takes by hand, and the film on a television built of bricks. Five lost bricks hide on the page.
 
-Both are plain HTML, CSS and ES modules, with no build step.
+All three are plain HTML, CSS and ES modules, with no build step.
 
 - `public/`, the lantern show: `stage.js` is the 12 fps clock everything moves on, `art.js` the
   cut-outs, `scenes.js` Luna's seven sets, `story.js` her storyboard, `sketch.js` the visitor's slide
@@ -21,6 +27,12 @@ Both are plain HTML, CSS and ES modules, with no build step.
   between frames, `shapes.js`, `props.js`, `crew.js` and `tower.js` build the set, `rooms.js` dresses
   and lights each floor, `rig.js` moves the camera, `foley.js` plays the sound, `intro.js` is the
   opening and `stars.js` the seven hidden stars. It reads Luna's storyboard from `../story.js`.
+- `public/bricks/`, the box of bricks, in flat 2D on a canvas with no library: `brick.js` paints
+  bricks, plates and studs and runs the 12 fps clock, `models.js` is every model (drawn as rows of
+  letters, or carved from shapes), `tale.js` the storyboard, `film.js` the film's eight shots,
+  `sound.js` the sounds (all made in the browser, none recorded) and `main.js` the page. It reads the
+  app's languages and reading speeds from `../story.js`; `tests/test_site.py` checks the choices it
+  lists against the app. Nothing on the page names a toy brand, and the characters are its own.
 - `worker.js` keeps the invitation list in D1 (`migrations/`). Cloudflare serves `public/` before the
   Worker runs, so the Worker only answers `/api/waitlist`.
 
@@ -62,4 +74,4 @@ wrangler d1 execute DB --remote --command "SELECT email, idea, lang, created_at 
 ```
 
 To move to another domain, change `routes` in `wrangler.jsonc` and the `og:image` addresses in
-`public/index.html` and `public/studio/index.html`.
+`public/index.html`, `public/studio/index.html` and `public/bricks/index.html`.

@@ -52,7 +52,7 @@ user's models and takes the GPU for minutes). Neither runs by default.
 | `api/app.py` | FastAPI: REST, SSE progress, the built web app |
 | `keys.py`, `prefs.py`, `config.py` | API keys; settings saved in the app; `lanternist.toml` |
 | `web/src/` | React + TypeScript; `api.ts` is the only place that calls the backend |
-| `site/` | The public site at lanternist.dev: a paper lantern show, the clay night crew at `/studio/`, and a Worker keeping the invitation list (`site/README.md`) |
+| `site/` | The public site at lanternist.dev: a paper lantern show, the clay night crew at `/studio/`, a box of toy bricks at `/bricks/`, and a Worker keeping the invitation list (`site/README.md`) |
 
 ## Invariants
 
