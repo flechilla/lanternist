@@ -1,0 +1,21 @@
+[
+  { "text": "Auf", "start": 0.0, "end": 0.16 },
+  { "text": "einem", "start": 0.2, "end": 0.4 },
+  { "text": "Felsen", "start": 0.52, "end": 1.04 },
+  { "text": "am", "start": 1.147, "end": 1.36 },
+  { "text": "Rand", "start": 1.424, "end": 1.68 },
+  { "text": "des", "start": 1.74, "end": 1.92 },
+  { "text": "Meeres", "start": 2.0, "end": 2.48 },
+  { "text": "stand", "start": 2.573, "end": 3.04 },
+  { "text": "ein", "start": 3.08, "end": 3.2 },
+  { "text": "Leuchtturm,", "start": 3.28, "end": 4.48 },
+  { "text": "und", "start": 4.54, "end": 4.72 },
+  { "text": "darin", "start": 4.8, "end": 5.2 },
+  { "text": "wohnte", "start": 5.24, "end": 5.6 },
+  { "text": "eine", "start": 5.664, "end": 5.92 },
+  { "text": "kleine", "start": 5.989, "end": 6.4 },
+  { "text": "graue", "start": 6.48, "end": 6.88 },
+  { "text": "Katze", "start": 6.98, "end": 7.52 },
+  { "text": "namens", "start": 7.62, "end": 8.16 },
+  { "text": "Luna.", "start": 8.272, "end": 9.04 }
+]

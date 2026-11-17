@@ -1,0 +1,363 @@
+{
+  "_about": "What the studio page's generated media are and how each was made, for reference and for making them again. Paths are under public/studio/.",
+  "sounds": {
+    "model": "fal-ai/elevenlabs/sound-effects/v2",
+    "settings": {
+      "prompt_influence": "0.5 (0.6 for the second tries)",
+      "output_format": "mp3_44100_128"
+    },
+    "finish": "one-shots peak-levelled to -1 dBFS; loops (\"loop\": true) levelled to -22 LUFS; all mono MP3 at 96 kb/s",
+    "files": [
+      {
+        "file": "audio/lantern-light.mp3",
+        "prompt": "A small brass hurricane lantern being lit: a tiny glass clink, then a little flame catching with a soft puff and a gentle hiss.",
+        "seconds": 1.8,
+        "loop": false
+      },
+      {
+        "file": "audio/lamp-whoomp.mp3",
+        "prompt": "A big old lighthouse oil lamp igniting: a deep soft whoomp of flame catching, then a warm low roar that settles. Warm and satisfying.",
+        "seconds": 3,
+        "loop": false
+      },
+      {
+        "file": "audio/bell.mp3",
+        "prompt": "A tiny brass service bell rung twice, bright and clear: ding, ding.",
+        "seconds": 1.6,
+        "loop": false
+      },
+      {
+        "file": "audio/key.mp3",
+        "prompt": "One single crisp keystroke on an old manual typewriter, close up.",
+        "seconds": 0.5,
+        "loop": false
+      },
+      {
+        "file": "audio/carriage.mp3",
+        "prompt": "An old manual typewriter carriage return: the little bell dings, then the carriage slides back with a ratcheting zip.",
+        "seconds": 2,
+        "loop": false
+      },
+      {
+        "file": "audio/squish-1.mp3",
+        "prompt": "Soft plasticine clay squished by a finger: a small soft squelch, close up.",
+        "seconds": 0.6,
+        "loop": false
+      },
+      {
+        "file": "audio/squish-2.mp3",
+        "prompt": "A lump of modelling clay pressed and squeezed in the hand, a short soft squelchy sound.",
+        "seconds": 0.7,
+        "loop": false
+      },
+      {
+        "file": "audio/squish-3.mp3",
+        "prompt": "A small ball of plasticine dropped on a wooden table: a soft dull splat.",
+        "seconds": 0.5,
+        "loop": false
+      },
+      {
+        "file": "audio/squeak-hello.mp3",
+        "prompt": "A tiny cartoon mouse squeaking a cheerful hello: two short high squeaks, cute and friendly.",
+        "seconds": 1,
+        "loop": false
+      },
+      {
+        "file": "audio/squeak-oh.mp3",
+        "prompt": "A tiny cartoon mouse gasping in surprise: one short rising squeak.",
+        "seconds": 0.7,
+        "loop": false
+      },
+      {
+        "file": "audio/squeak-giggle.mp3",
+        "prompt": "A tiny cartoon mouse giggling: a quick run of high happy squeaks.",
+        "seconds": 1.2,
+        "loop": false
+      },
+      {
+        "file": "audio/squeak-yawn.mp3",
+        "prompt": "A tiny cartoon mouse yawning sleepily, high pitched and cute.",
+        "seconds": 1.5,
+        "loop": false
+      },
+      {
+        "file": "audio/shutter.mp3",
+        "prompt": "A vintage 16mm film camera taking a single frame: one crisp mechanical shutter click.",
+        "seconds": 0.5,
+        "loop": false
+      },
+      {
+        "file": "audio/projector.mp3",
+        "prompt": "An old film projector running: the steady rhythmic clatter of the film gate and a soft motor hum.",
+        "seconds": 8,
+        "loop": true
+      },
+      {
+        "file": "audio/sea.mp3",
+        "prompt": "Gentle night sea: small waves lapping against rocks at the foot of a lighthouse, a soft breeze, calm and peaceful.",
+        "seconds": 20,
+        "loop": true
+      },
+      {
+        "file": "audio/wind.mp3",
+        "prompt": "Soft wind sighing around the top of a stone tower at night, calm, no gusts.",
+        "seconds": 15,
+        "loop": true
+      },
+      {
+        "file": "audio/creak.mp3",
+        "prompt": "A large wooden panel lifted away on old hinges: a long creak, then a hollow wooden knock.",
+        "seconds": 3,
+        "loop": false
+      },
+      {
+        "file": "audio/pulley.mp3",
+        "prompt": "A small rope pulley squeaking as a little basket is lowered, a few rhythmic creaks.",
+        "seconds": 2.5,
+        "loop": false
+      },
+      {
+        "file": "audio/needle.mp3",
+        "prompt": "A gramophone needle dropping onto a spinning record, then warm crackle.",
+        "seconds": 2,
+        "loop": false
+      },
+      {
+        "file": "audio/crackle.mp3",
+        "prompt": "Warm vinyl record crackle and soft hiss, steady.",
+        "seconds": 6,
+        "loop": true
+      },
+      {
+        "file": "audio/brush.mp3",
+        "prompt": "A paintbrush making three quick strokes on a canvas, close up.",
+        "seconds": 1.5,
+        "loop": false
+      },
+      {
+        "file": "audio/fader.mp3",
+        "prompt": "A mixing desk fader slid up smoothly, then a soft click.",
+        "seconds": 0.8,
+        "loop": false
+      },
+      {
+        "file": "audio/letterbox.mp3",
+        "prompt": "A letter pushed through a brass letterbox: the metal flap squeaks open and snaps shut with a clack.",
+        "seconds": 1.5,
+        "loop": false
+      },
+      {
+        "file": "audio/purr.mp3",
+        "prompt": "A small cat purring contentedly, close up, gentle and steady.",
+        "seconds": 6,
+        "loop": true
+      },
+      {
+        "file": "audio/meow.mp3",
+        "prompt": "A small cat giving one short, sleepy, cute meow.",
+        "seconds": 1,
+        "loop": false
+      },
+      {
+        "file": "audio/gulls.mp3",
+        "prompt": "Seagulls calling in the distance at dawn over a calm sea.",
+        "seconds": 5,
+        "loop": false
+      },
+      {
+        "file": "audio/applause.mp3",
+        "prompt": "A tiny audience of cartoon mice clapping and cheering with little squeaks.",
+        "seconds": 3,
+        "loop": false
+      },
+      {
+        "file": "audio/whoosh.mp3",
+        "prompt": "A soft quick whoosh, like a sheet of paper swept through the air.",
+        "seconds": 0.6,
+        "loop": false
+      },
+      {
+        "file": "audio/twinkle.mp3",
+        "prompt": "A little magical twinkle: a few bright glassy chime notes rising.",
+        "seconds": 1.2,
+        "loop": false
+      },
+      {
+        "file": "audio/page.mp3",
+        "prompt": "A sheet of paper pulled out of a typewriter: a quick zip and rustle.",
+        "seconds": 1,
+        "loop": false
+      },
+      {
+        "file": "audio/reel.mp3",
+        "prompt": "A film reel spun on a rewind bench: fast ratcheting clicks slowing to a stop.",
+        "seconds": 2,
+        "loop": false
+      },
+      {
+        "file": "audio/snore.mp3",
+        "prompt": "A tiny cartoon mouse snoring softly, high pitched and cute.",
+        "seconds": 4,
+        "loop": false
+      },
+      {
+        "file": "audio/match.mp3",
+        "prompt": "Close-miked foley: a wooden kitchen match struck hard on a matchbox, a loud crisp scratch, then the flame flaring up with a bright fizz and crackle. Clear and present.",
+        "seconds": 2.5,
+        "loop": false
+      },
+      {
+        "file": "audio/room.mp3",
+        "prompt": "Cosy room tone at night: the steady gentle hiss and flutter of an oil lamp flame, soft crackles, and slow calm sea waves outside the window. Clearly audible, relaxing.",
+        "seconds": 12,
+        "loop": true
+      },
+      {
+        "file": "audio/stamp.mp3",
+        "prompt": "Close-miked foley: a heavy brass wax seal stamp pressed firmly into soft wax on paper, a solid satisfying thump.",
+        "seconds": 0.8,
+        "loop": false
+      },
+      {
+        "file": "audio/click.mp3",
+        "prompt": "Close-miked foley: a small wooden toggle switch clicked once, crisp and clear.",
+        "seconds": 0.5,
+        "loop": false
+      }
+    ]
+  },
+  "music": {
+    "files": [
+      {
+        "file": "audio/intro.mp3",
+        "model": "google/lyria-3.5",
+        "prompt": "A 32-second instrumental cue for the opening of a stop-motion film about a crew of clay mice who make films in a lighthouse at night. [0:00-0:05] Near silence: three soft music-box notes in the dark over a hush like the sea. [0:05-0:13] Celesta and pizzicato strings begin a tender, curious melody in D major at 90 bpm. [0:13-0:21] Warm clarinet and bassoon join with brushed snare and upright bass; the tune turns playful and hopeful. [0:21-0:27] A magical swell: strings, glockenspiel and a harp glissando, bright and full of wonder. [0:27-0:32] It settles into a cosy held chord. Acoustic, handmade, whimsical, gentle. No vocals.",
+        "finish": "first 30 s, faded out over the last 5, levelled to -18 LUFS, 128 kb/s stereo"
+      },
+      {
+        "file": "audio/theme.mp3",
+        "model": "elevenlabs/music/v2.5",
+        "prompt": "A gentle, whimsical instrumental loop, about 80 seconds long, for a cosy stop-motion film about clay mice making films in a lighthouse at night: a music-box and celesta melody over pizzicato strings, soft clarinet, upright bass and brushed percussion, warm and playful, 92 bpm in D major. Steady from start to finish, quiet enough to sit under speech, no big ending, no build-ups, no vocals.",
+        "settings": {
+          "music_length_ms": 80000,
+          "force_instrumental": true
+        },
+        "finish": "made seamless (the last 4 s cross-faded into the first 4 s, 76 s in all), levelled to -20 LUFS, 96 kb/s stereo"
+      }
+    ]
+  },
+  "voices": {
+    "model": "fal-ai/elevenlabs/tts/eleven-v3",
+    "files": [
+      {
+        "file": "audio/line-<lang>.mp3 and .json",
+        "text": "shot 1's narration from ../story.js, in each of its ten languages",
+        "settings": {
+          "voice": "Lily",
+          "stability": 0.5,
+          "timestamps": true
+        },
+        "finish": "levelled to -17 LUFS; the character timings grouped into words (two characters a word in Chinese and Japanese) for the karaoke"
+      },
+      {
+        "file": "audio/line-en-7.mp3",
+        "text": "shot 7's narration in English, for the editor's mix",
+        "settings": {
+          "voice": "Lily",
+          "stability": 0.5
+        }
+      },
+      {
+        "file": "audio/vo-1.mp3",
+        "text": "[softly] Every night, at the edge of the sea, when the lighthouse keeper is fast asleep...",
+        "settings": {
+          "voice": "George",
+          "stability": 0.5
+        }
+      },
+      {
+        "file": "audio/vo-2.mp3",
+        "text": "[warmly] ...a very small crew goes to work. They make films. From one line.",
+        "settings": {
+          "voice": "George",
+          "stability": 0.5
+        }
+      }
+    ]
+  },
+  "pictures": {
+    "model": "fal-ai/nano-banana-2",
+    "settings": {
+      "aspect_ratio": "4:3",
+      "resolution": "1K",
+      "output_format": "png",
+      "num_images": 1,
+      "limit_generations": true,
+      "safety_tolerance": "4"
+    },
+    "prompt": "prompts.cast_sheet() for Luna's storyboard, with each of writer.STYLES",
+    "files": [
+      {
+        "file": "img/cast-watercolour-0.webp",
+        "seed": 7
+      },
+      {
+        "file": "img/cast-watercolour-1.webp",
+        "seed": 160162
+      },
+      {
+        "file": "img/cast-3d_film-0.webp",
+        "seed": 7
+      },
+      {
+        "file": "img/cast-3d_film-1.webp",
+        "seed": 160162
+      },
+      {
+        "file": "img/cast-paper_cutout-0.webp",
+        "seed": 7
+      },
+      {
+        "file": "img/cast-paper_cutout-1.webp",
+        "seed": 160162
+      },
+      {
+        "file": "img/cast-clay-0.webp",
+        "seed": 7
+      },
+      {
+        "file": "img/cast-clay-1.webp",
+        "seed": 160162
+      },
+      {
+        "file": "img/cast-ink_pencil-0.webp",
+        "seed": 7
+      },
+      {
+        "file": "img/cast-ink_pencil-1.webp",
+        "seed": 160162
+      },
+      {
+        "file": "img/cast-anime-0.webp",
+        "seed": 7
+      },
+      {
+        "file": "img/cast-anime-1.webp",
+        "seed": 160162
+      }
+    ],
+    "finish": "scaled to 1024 wide, WebP at quality 80"
+  },
+  "film": {
+    "files": [
+      "https://assets.lanternist.dev/studio/film/luna-en.mp4",
+      "https://assets.lanternist.dev/studio/film/luna-es.mp4",
+      "https://assets.lanternist.dev/studio/film/luna-pt.mp4",
+      "film/luna-<lang>.srt",
+      "film/poster.jpg",
+      "poster.jpg"
+    ],
+    "made_with": "lanternist render <storyboard> --mode still --subtitles sidecar, from story.js's storyboard in the clay style, with fal/elevenlabs-v3 (voice Lily) and fal/nano-banana-2, in a scratch library",
+    "finish": "scaled to 1280x720, H.264 CRF 25, AAC 96 kb/s, fast start; the posters are a frame from the English film"
+  }
+}

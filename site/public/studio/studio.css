@@ -1,0 +1,978 @@
+/* The night crew: a lighthouse in clay, filmed at twelve frames a second behind the page. The page
+ * itself is title cards laid over the set, one for each floor, in the lantern show's colours: a dark
+ * hall, lamplight for what can be pressed, cream paper for what is written down. */
+
+:root {
+  --hall: #0e1828;
+  --hall-deep: #070d17;
+  --ink: #ece6d9;
+  --ink-2: #c9c2b4;
+  --ink-3: #939cab;
+  --rule: rgb(255 255 255 / 0.1);
+  --rule-2: rgb(255 255 255 / 0.2);
+  --lamp: #f0b14a;
+  --lamp-ink: #f5c572;
+  --glow: #ffe2a8;
+  --on-lamp: #1a1407;
+  --label: #ece3cf;
+  --paper-ink: #1a2434;
+  --paper-ink-2: #465163;
+  --paper-ink-3: #6f7a8b;
+  --madder: #ef8a7f;
+  --card: rgb(9 14 24 / 0.78);
+  --display: "IM Fell Double Pica", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --display-sc: "IM Fell Double Pica SC", "IM Fell Double Pica", Palatino, Georgia, serif;
+  --ui: "Figtree", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --script: "Courier Prime", "Courier New", ui-monospace, monospace;
+  --gutter: max(16px, 4vw);
+  --bar: 58px;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+html {
+  scroll-behavior: smooth;
+  scroll-snap-type: y proximity;
+  -webkit-text-size-adjust: 100%;
+}
+body {
+  margin: 0;
+  background: var(--hall-deep);
+  color: var(--ink);
+  font: 400 1.0625rem/1.6 var(--ui);
+  overflow-x: hidden;
+}
+body.opening-on {
+  overflow: hidden;
+}
+body.opening-on main {
+  visibility: hidden;
+}
+h1,
+h2,
+h3 {
+  font-family: var(--display);
+  font-weight: 400;
+  margin: 0;
+  text-wrap: balance;
+}
+p {
+  margin: 0;
+}
+a {
+  color: var(--lamp-ink);
+  text-underline-offset: 3px;
+}
+svg {
+  display: block;
+}
+:focus-visible {
+  outline: 2px solid var(--lamp);
+  outline-offset: 3px;
+}
+
+/* The set, behind everything. */
+#set {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  height: 100lvh;
+  display: block;
+  z-index: 0;
+  cursor: default;
+}
+#set.hot {
+  cursor: pointer;
+}
+.grain {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: radial-gradient(ellipse at 50% 55%, transparent 55%, rgb(3 6 12 / 0.55));
+}
+
+/* ---------- buttons ---------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55em;
+  border: 0;
+  border-radius: 3px;
+  padding: 0.85em 1.35em;
+  font: 600 1rem/1.1 var(--ui);
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn.small {
+  padding: 0.6em 1em;
+  font-size: 0.9rem;
+}
+.btn svg {
+  width: 1.2em;
+  height: 1.2em;
+}
+.btn.lamp {
+  background: var(--lamp);
+  color: var(--on-lamp);
+  box-shadow:
+    inset 0 0 0 1px rgb(255 226 168 / 0.5),
+    0 6px 26px rgb(240 177 74 / 0.3);
+}
+.btn.lamp:hover {
+  background: var(--lamp-ink);
+  box-shadow:
+    inset 0 0 0 1px rgb(255 226 168 / 0.7),
+    0 8px 34px rgb(240 177 74 / 0.5);
+}
+.btn:active {
+  translate: 0 1px;
+}
+.btn:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+.btn.ghost {
+  background: transparent;
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--rule-2);
+}
+.btn.ghost:hover {
+  box-shadow: inset 0 0 0 1px var(--ink-2);
+}
+.link {
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--lamp-ink);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+/* ---------- the opening ---------- */
+
+.opening {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: var(--gutter);
+  background: radial-gradient(ellipse at 50% 60%, rgb(7 13 23 / 0.35), rgb(3 6 12 / 0.92) 70%);
+  transition: opacity 0.5s steps(6);
+}
+.opening.away {
+  opacity: 0;
+  pointer-events: none;
+}
+.opening[hidden],
+[data-skip] .opening {
+  display: none;
+}
+.opening-card {
+  display: grid;
+  justify-items: center;
+  gap: 18px;
+  text-align: center;
+  max-width: 34em;
+}
+.opening-card h1 {
+  font-size: clamp(3rem, 9vw, 6.4rem);
+  line-height: 0.95;
+  color: var(--glow);
+  text-shadow: 0 0 40px rgb(240 177 74 / 0.25);
+}
+.opening-line {
+  font: italic 400 clamp(1.1rem, 2.4vw, 1.35rem) / 1.4 var(--display);
+  color: var(--ink-2);
+}
+.opening-card .btn {
+  margin-top: 12px;
+  font-size: 1.1rem;
+  padding: 1em 1.6em;
+}
+.opening-small {
+  font-size: 0.92rem;
+  color: var(--ink-3);
+}
+.opening-foot {
+  position: absolute;
+  left: 50%;
+  bottom: max(28px, env(safe-area-inset-bottom));
+  translate: -50% 0;
+  width: min(90vw, 40em);
+  text-align: center;
+  font: italic 400 clamp(1.15rem, 2.6vw, 1.6rem) / 1.35 var(--display);
+  color: var(--ink);
+  text-shadow: 0 2px 16px rgb(0 0 0 / 0.9);
+}
+.sc,
+.eyebrow {
+  font: 400 1.05rem/1.2 var(--display-sc);
+  letter-spacing: 0.08em;
+  color: var(--lamp-ink);
+}
+
+.title-card {
+  position: absolute;
+  left: 50%;
+  top: 16%;
+  translate: -50% 0;
+  text-align: center;
+  pointer-events: none;
+  text-shadow: 0 4px 30px rgb(0 0 0 / 0.8);
+}
+.title-card[hidden] {
+  display: none;
+}
+.tc-name {
+  font: 400 clamp(3.4rem, 10vw, 8rem) / 0.9 var(--display-sc);
+  letter-spacing: 0.04em;
+  color: var(--glow);
+}
+.tc-line {
+  margin-top: 12px;
+  font: italic 400 clamp(1.2rem, 2.8vw, 2rem) / 1.2 var(--display);
+  color: var(--ink);
+}
+
+/* While the film plays, the page waits; the skip button stays. */
+.opening.playing .opening-card {
+  display: none;
+}
+.opening.playing {
+  background: none;
+  pointer-events: none;
+}
+.skip-film {
+  position: fixed;
+  right: var(--gutter);
+  bottom: max(20px, env(safe-area-inset-bottom));
+  z-index: 45;
+}
+
+/* ---------- the bar ---------- */
+
+.bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  height: var(--bar);
+  padding: 0 var(--gutter);
+  padding-top: env(safe-area-inset-top, 0px);
+  background: linear-gradient(180deg, rgb(5 9 16 / 0.55), rgb(5 9 16 / 0));
+  transition: translate 0.4s steps(4);
+}
+body.opening-on .bar,
+body.opening-on .floors {
+  translate: 0 -120%;
+}
+body.opening-on .floors {
+  translate: 200% 0;
+}
+.mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink);
+  text-decoration: none;
+  font: 400 1.35rem/1 var(--display);
+}
+.mark svg {
+  width: 28px;
+  height: 28px;
+}
+.counter {
+  margin-left: auto;
+  font: 400 0.78rem/1 var(--script);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.counter b {
+  color: var(--lamp-ink);
+  font-weight: 400;
+}
+.stars {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: 400 0.85rem var(--script);
+  color: var(--ink-2);
+}
+.stars[hidden] {
+  display: none;
+}
+.stars svg {
+  width: 16px;
+  height: 16px;
+  fill: var(--glow);
+}
+.toast {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: var(--gutter);
+  margin: 0;
+  font: italic 400 1.05rem var(--display);
+  color: var(--glow);
+  text-shadow: 0 2px 12px rgb(0 0 0 / 0.9);
+}
+.sound {
+  border: 0;
+  background: none;
+  color: var(--ink-2);
+  font: 500 0.9rem var(--ui);
+  cursor: pointer;
+  padding: 6px 4px;
+}
+.sound[aria-pressed="true"] {
+  color: var(--lamp-ink);
+}
+
+/* The floor panel, like a lift's: one brass button per floor, the one you're on lit. */
+.floors {
+  position: fixed;
+  right: max(12px, 1.6vw);
+  top: 50%;
+  translate: 0 -50%;
+  z-index: 30;
+  transition: translate 0.4s steps(4);
+}
+.floors ol {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 12px 8px;
+  list-style: none;
+  border-radius: 20px;
+  background: linear-gradient(180deg, #2a2118, #1b150f);
+  box-shadow:
+    inset 0 0 0 1px rgb(201 151 63 / 0.35),
+    0 10px 30px rgb(0 0 0 / 0.45);
+}
+.floors a {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #e0bb73, #9a6f28 70%);
+  box-shadow:
+    inset 0 -2px 3px rgb(0 0 0 / 0.35),
+    0 1px 0 rgb(255 255 255 / 0.12);
+  color: #2a1d0c;
+  font: 700 0.7rem/1 var(--script);
+  text-decoration: none;
+}
+.floors a[aria-current="true"] {
+  background: radial-gradient(circle at 40% 35%, #fff4d6, #f0b14a 60%, #c9812a);
+  box-shadow:
+    0 0 0 2px rgb(255 226 168 / 0.35),
+    0 0 18px rgb(240 177 74 / 0.8);
+}
+.floors a span {
+  position: absolute;
+  right: calc(100% + 12px);
+  top: 50%;
+  translate: 0 -50%;
+  padding: 4px 9px;
+  border-radius: 2px;
+  background: var(--label);
+  color: var(--paper-ink);
+  font: 400 0.95rem/1.2 var(--display);
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s steps(2);
+}
+.floors a:hover span,
+.floors a:focus-visible span {
+  opacity: 1;
+}
+
+/* ---------- the chapters ---------- */
+
+main {
+  position: relative;
+  z-index: 2;
+}
+.chapter {
+  position: relative;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  min-height: 100vh;
+  min-height: 100svh;
+  padding: calc(var(--bar) + 24px) calc(var(--gutter) + 52px) 40px var(--gutter);
+  scroll-snap-align: start;
+}
+.chapter[data-side="right"] {
+  justify-content: flex-end;
+}
+.chapter[data-side="center"] {
+  justify-content: center;
+  align-items: flex-end;
+}
+.panel {
+  position: relative;
+  pointer-events: auto;
+  display: grid;
+  gap: 14px;
+  width: min(470px, 40vw);
+  padding: 26px 28px 28px;
+  border-radius: 4px;
+  background: var(--card);
+  backdrop-filter: blur(6px);
+  box-shadow:
+    inset 0 0 0 1px var(--rule),
+    0 24px 60px rgb(0 0 0 / 0.45);
+  color: var(--ink-2);
+  rotate: -0.3deg;
+}
+.chapter[data-side="right"] .panel {
+  rotate: 0.3deg;
+}
+.panel h1 {
+  font-size: clamp(2.5rem, 4.6vw, 4rem);
+  line-height: 0.98;
+  color: var(--ink);
+}
+.panel h2 {
+  font-size: clamp(1.9rem, 3.2vw, 2.7rem);
+  line-height: 1.02;
+  color: var(--ink);
+}
+.panel.hero {
+  width: min(540px, 44vw);
+  gap: 18px;
+}
+.lede {
+  font-size: 1.1rem;
+}
+.floor-tag {
+  font: 400 1.05rem/1.2 var(--display-sc);
+  letter-spacing: 0.06em;
+  color: var(--lamp-ink);
+}
+.floor-tag b {
+  font-weight: 400;
+  color: var(--glow);
+}
+.aside {
+  font: italic 400 1rem/1.4 var(--display);
+  color: var(--ink-3);
+}
+.down {
+  justify-self: start;
+  font-weight: 600;
+  text-decoration: none;
+}
+.down span {
+  display: inline-block;
+  animation: bob 1s steps(2) infinite;
+}
+@keyframes bob {
+  50% {
+    translate: 0 3px;
+  }
+}
+
+/* The hero's idea */
+.idea {
+  display: grid;
+  gap: 10px;
+}
+.idea label,
+.letter label {
+  font: 400 1.05rem var(--display-sc);
+  letter-spacing: 0.05em;
+  color: var(--ink-2);
+}
+.idea-row {
+  display: flex;
+  gap: 10px;
+}
+input {
+  font: 400 1.05rem var(--ui);
+  color: var(--paper-ink);
+  background: var(--label);
+  border: 0;
+  border-radius: 3px;
+  padding: 0.8em 0.9em;
+  min-width: 0;
+  box-shadow: inset 0 2px 0 rgb(0 0 0 / 0.12);
+}
+input::placeholder {
+  color: var(--paper-ink-3);
+}
+.idea-row input {
+  flex: 1;
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.chip {
+  border: 1px dashed var(--rule-2);
+  background: transparent;
+  color: var(--ink-2);
+  font: 400 0.88rem var(--ui);
+  padding: 5px 10px;
+  border-radius: 2px;
+  cursor: pointer;
+}
+.chip:hover {
+  color: var(--ink);
+  border: 1px solid var(--lamp);
+}
+.said {
+  min-height: 1.5em;
+  font: italic 400 1.02rem/1.4 var(--display);
+  color: var(--lamp-ink);
+}
+
+/* Writer: languages and the typed page */
+.langs,
+.records,
+.styles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.langs button,
+.styles button {
+  border: 1px solid var(--rule-2);
+  background: transparent;
+  color: var(--ink-2);
+  font: 500 0.86rem var(--ui);
+  padding: 5px 10px;
+  border-radius: 2px;
+  cursor: pointer;
+}
+.langs button[aria-pressed="true"],
+.styles button[aria-pressed="true"] {
+  background: var(--lamp);
+  border-color: var(--lamp);
+  color: var(--on-lamp);
+}
+.page-card {
+  padding: 16px 18px 18px;
+  background: var(--label);
+  color: var(--paper-ink);
+  font: 400 0.9rem/1.5 var(--script);
+  rotate: 0.5deg;
+  box-shadow: 0 10px 26px rgb(0 0 0 / 0.4);
+  max-height: 34vh;
+  overflow: auto;
+}
+.page-card h3 {
+  font: 700 0.95rem var(--script);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.page-card .tag {
+  margin-top: 10px;
+  font: 700 0.74rem var(--script);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #8f3528;
+}
+.page-card .pic {
+  margin-top: 4px;
+  font-style: italic;
+  font-size: 0.8rem;
+  color: var(--paper-ink-2);
+}
+.caret {
+  display: inline-block;
+  width: 0.55em;
+  height: 1.05em;
+  vertical-align: -0.15em;
+  background: var(--paper-ink);
+}
+
+/* Voice: one record per language */
+.records button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  border-radius: 999px;
+  padding: 4px 11px 4px 4px;
+  background: #16181d;
+  box-shadow: inset 0 0 0 1px var(--rule-2);
+  color: var(--ink-2);
+  font: 500 0.86rem var(--ui);
+  cursor: pointer;
+}
+.records button::before {
+  content: "";
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--lamp) 0 3px, #0d0e11 3.5px 5px, #26282e 5.5px 6px, #0d0e11 6.5px);
+}
+.records button[aria-pressed="true"] {
+  background: #2a2218;
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--lamp);
+}
+.records button[aria-pressed="true"]::before {
+  animation: spin 0.5s steps(6) infinite;
+}
+@keyframes spin {
+  to {
+    rotate: 1turn;
+  }
+}
+.line {
+  min-height: 3.2em;
+  font: 400 1.02rem/1.55 var(--script);
+  color: var(--ink-3);
+}
+.line .on {
+  color: var(--lamp-ink);
+}
+.line .done {
+  color: var(--ink);
+}
+
+/* Motion: the shutter */
+.shutter-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.frames {
+  font: 400 0.95rem var(--script);
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Mix: the desk */
+.desk {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 12px 18px;
+  padding: 14px 16px;
+  border-radius: 4px;
+  background: rgb(0 0 0 / 0.3);
+  box-shadow: inset 0 0 0 1px var(--rule);
+}
+.desk .btn {
+  grid-row: span 2;
+}
+.fader {
+  display: grid;
+  grid-template-columns: 3.4em 1fr;
+  align-items: center;
+  gap: 8px;
+  font: 400 0.85rem var(--script);
+  color: var(--ink-2);
+}
+.fader input {
+  accent-color: var(--lamp);
+  padding: 0;
+  background: none;
+  box-shadow: none;
+}
+.lufs {
+  grid-column: 1 / -1;
+  font: 700 0.9rem var(--script);
+  color: var(--lamp-ink);
+  letter-spacing: 0.06em;
+}
+
+/* The show */
+.show-panel {
+  width: min(640px, 92vw);
+  text-align: center;
+  justify-items: center;
+  rotate: none;
+  margin-bottom: 4vh;
+}
+.meta {
+  color: var(--ink-3);
+}
+.show-row {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.ctl-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+}
+select {
+  font: 500 0.9rem var(--ui);
+  color: var(--ink);
+  background: #1b2433;
+  border: 1px solid var(--rule-2);
+  border-radius: 3px;
+  padding: 6px 8px;
+}
+
+.ctl-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+}
+.ctl-check input {
+  accent-color: var(--lamp);
+  width: 16px;
+  height: 16px;
+  box-shadow: none;
+}
+/* The film plays on the set's screen; the element itself only shows when asked for full screen. */
+.film {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.film:fullscreen {
+  opacity: 1;
+  background: #000;
+}
+.film-subs {
+  position: fixed;
+  z-index: 20;
+  left: 50%;
+  bottom: 8vh;
+  translate: -50% 0;
+  width: max-content;
+  max-width: min(760px, 88vw);
+  padding: 0.25em 0.7em;
+  border-radius: 3px;
+  background: rgb(5 8 15 / 0.7);
+  color: #fff;
+  font: 600 clamp(1rem, 2vw, 1.35rem) / 1.35 var(--ui);
+  text-align: center;
+  text-wrap: balance;
+}
+.film-subs:empty {
+  display: none;
+}
+/* While the film plays, the card folds down to its controls in a corner, out of the picture. */
+body.screening .show-panel {
+  position: fixed;
+  right: var(--gutter);
+  bottom: max(16px, env(safe-area-inset-bottom));
+  width: auto;
+  padding: 10px 14px;
+}
+body.screening .show-panel > :not(.show-row) {
+  display: none;
+}
+body.screening .floors {
+  opacity: 0.2;
+}
+
+/* The letter */
+.letter {
+  display: grid;
+  gap: 8px;
+  padding: 20px 22px 22px;
+  background: var(--label);
+  color: var(--paper-ink);
+  rotate: -0.6deg;
+  box-shadow: 0 16px 40px rgb(0 0 0 / 0.45);
+}
+.letter label {
+  color: var(--paper-ink-2);
+  margin-top: 6px;
+}
+.letter input {
+  background: #fbf7ee;
+  box-shadow: inset 0 0 0 1px #cfc3a8;
+}
+.letter .btn {
+  margin-top: 12px;
+  justify-self: start;
+}
+.trap {
+  position: absolute;
+  left: -9999px;
+}
+.status {
+  min-height: 1.4em;
+  font-weight: 600;
+}
+.status.ok {
+  color: #2d7560;
+}
+.status.err {
+  color: #8f3528;
+}
+.fine {
+  font-size: 0.82rem;
+  color: var(--paper-ink-3);
+}
+
+/* ---------- notes and the foot ---------- */
+
+.notes {
+  position: relative;
+  padding: 120px var(--gutter) 30px;
+  background: linear-gradient(180deg, transparent, rgb(7 13 23 / 0.92) 22%, var(--hall-deep));
+  scroll-snap-align: end;
+}
+.notes h2 {
+  max-width: 1100px;
+  margin: 0 auto 28px;
+  font-size: clamp(1.8rem, 3vw, 2.4rem);
+}
+.notes dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 26px 48px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+.notes dt {
+  font: 400 1.3rem var(--display);
+  margin-bottom: 6px;
+}
+.notes dd {
+  margin: 0;
+  color: var(--ink-2);
+}
+.foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+  max-width: 1100px;
+  margin: 70px auto 0;
+  padding: 22px 0 calc(10px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--rule);
+  color: var(--ink-3);
+  font-size: 0.88rem;
+}
+
+/* Without WebGL the page is title cards over a still from Luna's film. */
+body.flat {
+  background:
+    linear-gradient(90deg, rgb(7 13 23 / 0.8), rgb(7 13 23 / 0.2)),
+    url("poster.jpg") center / cover fixed,
+    #0b1628;
+}
+body.flat #set {
+  display: none;
+}
+
+/* ---------- narrow screens ---------- */
+
+@media (max-width: 860px) {
+  .counter {
+    display: none;
+  }
+  .sound {
+    margin-left: auto;
+  }
+  .chapter,
+  .chapter[data-side="right"] {
+    align-items: flex-end;
+    justify-content: center;
+    padding: calc(var(--bar) + 12px) 12px 16px;
+  }
+  .panel,
+  .panel.hero {
+    width: 100%;
+    padding: 20px 18px 22px;
+    rotate: none;
+  }
+  .panel h1 {
+    font-size: clamp(2.1rem, 9vw, 2.8rem);
+  }
+  .floors {
+    right: 6px;
+    top: auto;
+    bottom: 40%;
+    translate: none;
+  }
+  .floors ol {
+    gap: 7px;
+    padding: 8px 5px;
+  }
+  .floors a {
+    width: 20px;
+    height: 20px;
+    font-size: 0.6rem;
+  }
+  .notes dl {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 560px) {
+  .bar .btn,
+  .floors {
+    display: none;
+  }
+  /* On a phone the set gets the top half of the screen and the card the bottom half. */
+  .chapter,
+  .chapter[data-side="right"] {
+    padding-top: 46svh;
+  }
+  .panel,
+  .panel.hero {
+    gap: 10px;
+    padding: 16px 16px 18px;
+    font-size: 0.98rem;
+  }
+  .panel h1 {
+    font-size: 2rem;
+  }
+  .panel h2 {
+    font-size: 1.7rem;
+  }
+  .lede {
+    font-size: 1rem;
+  }
+  .chips .chip:nth-child(n + 3) {
+    display: none;
+  }
+  .idea-row {
+    flex-direction: column;
+  }
+  .idea-row .btn {
+    align-self: start;
+  }
+  .page-card {
+    max-height: 26vh;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .down span,
+  .records button[aria-pressed="true"]::before {
+    animation: none;
+  }
+}

@@ -1,0 +1,19 @@
+// The public site at lanternist.dev: static files from public/, and worker.js for the invitation list.
+{
+  "name": "lanternist-site",
+  "main": "worker.js",
+  "compatibility_date": "2026-07-01",
+  "assets": { "directory": "./public" },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "lanternist-site",
+      "database_id": "00d9a2f6-b8da-40d7-829d-bbd6ad0b9688",
+      "migrations_dir": "migrations",
+    },
+  ],
+  // Five sign-ups a minute from one address is plenty for a person.
+  "ratelimits": [{ "name": "LIMIT", "namespace_id": "1001", "simple": { "limit": 5, "period": 60 } }],
+  "routes": [{ "pattern": "lanternist.dev", "custom_domain": true }],
+  "observability": { "enabled": true },
+}

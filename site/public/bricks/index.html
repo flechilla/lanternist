@@ -1,0 +1,583 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Lanternist · Brick by brick</title>
+    <meta
+      name="description"
+      content="Snap together a hero, a place and a wish. Lanternist writes the story, reads it aloud in your language, draws every picture and makes it a film. See how, one bag of bricks at a time."
+    />
+    <meta property="og:title" content="Lanternist · Brick by brick" />
+    <meta property="og:description" content="Your idea is the first brick. Lanternist builds the rest." />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="https://lanternist.dev/bricks/og.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="theme-color" content="#ffc40c" />
+    <meta name="color-scheme" content="light" />
+    <link rel="icon" type="image/svg+xml" href="icon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:ital,wght@0,400;0,600;0,700;0,800;1,600&display=swap"
+    />
+    <link rel="stylesheet" href="bricks.css" />
+    <script type="module" src="main.js"></script>
+  </head>
+  <body>
+    <header class="bar">
+      <a class="mark" href="#top" aria-label="Lanternist, back to the top">
+        <svg viewBox="0 0 36 32" aria-hidden="true">
+          <rect x="7" y="1" width="8" height="4" rx="1" fill="#8f4a24" />
+          <rect x="21" y="1" width="8" height="4" rx="1" fill="#8f4a24" />
+          <rect x="3" y="4" width="30" height="8" rx="2" fill="#8f4a24" />
+          <rect x="6" y="12" width="24" height="12" rx="2" fill="#ffc40c" />
+          <rect x="9" y="14" width="18" height="3" rx="1.5" fill="#fff3b0" />
+          <rect x="3" y="23" width="30" height="8" rx="2" fill="#8f4a24" />
+        </svg>
+        <span>Lanternist</span>
+      </a>
+      <nav class="bar-nav" aria-label="On this page">
+        <a href="#bag-1">How it's built</a>
+        <a href="#bag-5">The film</a>
+        <a href="#grown-ups">For grown-ups</a>
+      </nav>
+      <p
+        class="found"
+        id="found"
+        title="Five little red bricks are lost on this page. Can you find them all?"
+      >
+        <svg viewBox="0 0 24 18" aria-hidden="true">
+          <rect x="3" y="0" width="6" height="3" rx="1" fill="#e0261d" />
+          <rect x="15" y="0" width="6" height="3" rx="1" fill="#e0261d" />
+          <rect x="0" y="3" width="24" height="15" rx="2" fill="#e0261d" />
+          <circle cx="8" cy="9" r="2.6" fill="#fff" />
+          <circle cx="16" cy="9" r="2.6" fill="#fff" />
+          <circle cx="8.6" cy="9.2" r="1.3" fill="#232428" />
+          <circle cx="16.6" cy="9.2" r="1.3" fill="#232428" />
+        </svg>
+        <span class="sr">Lost bricks found:</span> <b id="found-n">0</b>/5
+      </p>
+      <button class="sound" id="sound" type="button" aria-pressed="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor" />
+          <path class="waves" d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" />
+        </svg>
+        <span id="sound-label">Sound off</span>
+      </button>
+      <a class="brick red small" href="#turn">Get an invitation</a>
+    </header>
+
+    <main>
+      <!-- The box: the visitor snaps an idea together and the box art rebuilds around it. -->
+      <section class="hero" id="top" aria-labelledby="hero-title">
+        <div class="hero-copy">
+          <p class="kicker">Story films for young builders</p>
+          <h1 id="hero-title"><span>Your idea is</span> <span>the first brick.</span></h1>
+          <p class="lede">
+            Snap together a hero, a place and a wish. Lanternist builds the rest: it writes the story, reads
+            it out loud in your language, draws every picture and turns it into a film.
+          </p>
+        </div>
+
+        <figure class="set" id="set">
+          <div class="set-face">
+            <div class="set-top">
+              <span class="set-brand">
+                <svg viewBox="0 0 36 32" aria-hidden="true">
+                  <rect x="3" y="4" width="30" height="8" rx="2" fill="#8f4a24" />
+                  <rect x="6" y="12" width="24" height="12" rx="2" fill="#ffc40c" />
+                  <rect x="3" y="23" width="30" height="8" rx="2" fill="#8f4a24" />
+                </svg>
+                Lanternist <small>Story set</small>
+              </span>
+              <span class="set-age"><b>2+</b><small>years</small></span>
+            </div>
+            <p class="set-title" id="set-title" aria-live="polite"></p>
+            <div class="set-art">
+              <canvas id="box-art" aria-hidden="true"></canvas>
+              <button
+                class="lost"
+                type="button"
+                data-lost="0"
+                aria-label="A lost brick! Pick it up."
+              ></button>
+            </div>
+            <div class="set-foot">
+              <span><b id="set-pieces">0</b> pieces</span>
+              <span>10 languages</span>
+              <span>1 film</span>
+            </div>
+          </div>
+          <figcaption>
+            Your idea as a quick sketch in bricks. In the app, the writer turns your line into a whole story,
+            and image models draw it in the style you pick.
+          </figcaption>
+        </figure>
+
+        <div class="builder" id="builder">
+          <fieldset class="tray" data-part="hero">
+            <legend>Who?</legend>
+            <div class="words"></div>
+          </fieldset>
+          <fieldset class="tray" data-part="place">
+            <legend>Where?</legend>
+            <div class="words"></div>
+          </fieldset>
+          <fieldset class="tray" data-part="wish">
+            <legend>What happens?</legend>
+            <div class="words"></div>
+          </fieldset>
+          <div class="builder-row">
+            <button class="brick yellow" id="shuffle" type="button">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="3" y="3" width="18" height="18" rx="4" fill="#fff" />
+                <circle cx="8" cy="8" r="1.8" />
+                <circle cx="16" cy="16" r="1.8" />
+                <circle cx="12" cy="12" r="1.8" />
+                <circle cx="16" cy="8" r="1.8" />
+                <circle cx="8" cy="16" r="1.8" />
+              </svg>
+              Surprise me
+            </button>
+            <button class="link" id="type-own" type="button" aria-expanded="false" aria-controls="own">
+              Or type your own idea
+            </button>
+          </div>
+          <form class="own" id="own" hidden>
+            <label for="own-idea">Your idea, in one line</label>
+            <div class="own-row">
+              <input
+                id="own-idea"
+                name="idea"
+                maxlength="120"
+                autocomplete="off"
+                placeholder="A penguin who wants to be a chef"
+              />
+              <button class="brick blue" type="submit">Build it</button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <!-- Here's one we built earlier: the five bags that follow build "The Little Red Brick". -->
+      <section class="inside" id="inside" aria-labelledby="inside-title">
+        <p class="kicker">Here's one we built earlier</p>
+        <h2 id="inside-title">Inside every box: five bags of bricks, and one film.</h2>
+        <p>
+          We gave Lanternist one line, <q>A little brick that falls off the table</q>, and it built
+          <cite>The Little Red Brick</cite>. Open the bags to see how, one step at a time.
+        </p>
+        <ol class="bag-links">
+          <li>
+            <a href="#bag-1"><span>1</span>The story</a>
+          </li>
+          <li>
+            <a href="#bag-2"><span>2</span>The voice</a>
+          </li>
+          <li>
+            <a href="#bag-3"><span>3</span>The pictures</a>
+          </li>
+          <li>
+            <a href="#bag-4"><span>4</span>The motion</a>
+          </li>
+          <li>
+            <a href="#bag-5"><span>5</span>The film</a>
+          </li>
+        </ol>
+      </section>
+
+      <!-- Bag 1: the writer. The storyboard is shown as a building booklet: a page a paragraph, a step a shot. -->
+      <section class="bag" id="bag-1" data-tint="yellow" aria-labelledby="bag-1-title">
+        <header class="bag-head">
+          <div class="bag-art" data-n="1" aria-hidden="true"></div>
+          <p class="bag-no">Bag 1 · The story</p>
+          <h2 id="bag-1-title">It writes the story.</h2>
+        </header>
+        <div class="bag-body">
+          <div class="bag-copy">
+            <p class="big">Then it plans the film like a set of building instructions.</p>
+            <p>
+              You give it one line, who the story is for and what kind of story it is. A language model writes
+              it, then plans it page by page: each page is a paragraph, and each step on the page is one
+              picture, with who is in it and what we see.
+            </p>
+            <dl class="picks">
+              <div>
+                <dt>For</dt>
+                <dd>
+                  <span>ages 2 to 4</span> <b>ages 5 to 8</b> <span>9 to 12</span> <span>teens</span>
+                  <span>grown-ups</span>
+                </dd>
+              </div>
+              <div>
+                <dt>Kind</dt>
+                <dd>
+                  <span>bedtime</span> <b>adventure</b> <span>funny</span> <span>learn something</span>
+                  <span>fable</span>
+                </dd>
+              </div>
+            </dl>
+            <p class="note">
+              <b>For grown-ups</b> The whole story is written before a single picture is drawn. Read it,
+              change any line, and only then make the film.
+            </p>
+          </div>
+          <div class="bag-stage">
+            <div class="booklet" id="booklet">
+              <div class="booklet-bar">
+                <div class="tabs" id="story-langs" role="group" aria-label="The story's language"></div>
+                <p class="booklet-page" id="booklet-page" aria-live="polite"></p>
+                <div class="booklet-nav">
+                  <button class="round" id="page-prev" type="button" aria-label="Previous page">‹</button>
+                  <button class="round" id="page-next" type="button" aria-label="Next page">›</button>
+                </div>
+              </div>
+              <div class="pages" id="pages"></div>
+              <button
+                class="lost"
+                type="button"
+                data-lost="1"
+                aria-label="A lost brick! Pick it up."
+              ></button>
+            </div>
+            <p class="hint">
+              The story is written in its own language. The notes for the pictures stay in English, which
+              picture models follow best.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Bag 2: the narrator. Each picture brick is as long as its words take to say. -->
+      <section class="bag flip" id="bag-2" data-tint="blue" aria-labelledby="bag-2-title">
+        <header class="bag-head">
+          <div class="bag-art" data-n="2" aria-hidden="true"></div>
+          <p class="bag-no">Bag 2 · The voice</p>
+          <h2 id="bag-2-title">It reads it out loud.</h2>
+        </header>
+        <div class="bag-body">
+          <div class="bag-copy">
+            <p class="big">The voice comes first, and the pictures wait for it.</p>
+            <p>
+              The story is narrated before anything is drawn, so every picture stays on screen exactly as long
+              as its words take to say. Spanish is read a little slower than English, so in Spanish the
+              pictures stay a little longer. Switch the language and watch the bricks grow.
+            </p>
+            <p class="note">
+              <b>For grown-ups</b> In the app a voice model narrates, and you choose the narrator's voice. On
+              this page your browser reads with its own.
+            </p>
+          </div>
+          <div class="bag-stage">
+            <div class="reel panel" id="reel">
+              <div class="reel-bar">
+                <div class="tabs" id="voice-langs" role="group" aria-label="The narration's language"></div>
+                <button class="brick blue small" id="voice-play" type="button" aria-pressed="false">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M7 4l13 8-13 8z" fill="currentColor" />
+                  </svg>
+                  <span>Read it to me</span>
+                </button>
+              </div>
+              <ol class="strip" id="strip" aria-label="The eight pictures, each as long as its words"></ol>
+              <p class="words-line" id="words-line" aria-live="polite"></p>
+              <p class="reel-total" id="reel-total"></p>
+            </div>
+            <div class="hello">
+              <p class="hello-title">Hear the first line in any of the ten languages</p>
+              <div class="hello-langs" id="hello-langs" role="group" aria-label="Languages"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Bag 3: the painter. A picture comes out of a jumble of studs; the cast sheet keeps everyone the same. -->
+      <section class="bag" id="bag-3" data-tint="green" aria-labelledby="bag-3-title">
+        <header class="bag-head">
+          <div class="bag-art" data-n="3" aria-hidden="true"></div>
+          <p class="bag-no">Bag 3 · The pictures</p>
+          <h2 id="bag-3-title">It draws every picture.</h2>
+        </header>
+        <div class="bag-body">
+          <div class="bag-copy">
+            <p class="big">With the same friends in each one.</p>
+            <p>
+              An image model draws a cast sheet first, every character once. Then it draws each picture from
+              the portraits of the characters in it, so the little red brick is the same brick from the first
+              picture to the last.
+            </p>
+            <p>
+              A picture starts as a jumble of colours, and the model finds the picture in it, a little clearer
+              at every step.
+            </p>
+            <ul class="styles" aria-label="Picture styles in the app">
+              <li>Watercolour</li>
+              <li>Paper cut-out</li>
+              <li>Clay</li>
+              <li>Ink and pencil</li>
+              <li>Anime</li>
+              <li>3D film</li>
+            </ul>
+            <p class="note">
+              <b>For grown-ups</b> Don't like a picture? Draw it again. The others stay exactly as they are,
+              and only that one picture is made again.
+            </p>
+          </div>
+          <div class="bag-stage">
+            <div class="studio panel" id="studio">
+              <div class="cast" id="cast" aria-label="The cast sheet"></div>
+              <div class="easel">
+                <canvas id="mosaic" aria-label="Picture 3 of the story, drawn in studs"></canvas>
+                <p class="easel-step" id="easel-step" aria-live="polite"></p>
+              </div>
+              <div class="easel-bar">
+                <button class="brick green" id="redraw" type="button">Draw it again</button>
+                <ol class="locks" id="locks" aria-label="The other pictures stay as they are"></ol>
+              </div>
+              <button
+                class="lost"
+                type="button"
+                data-lost="2"
+                aria-label="A lost brick! Pick it up."
+              ></button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Bag 4: the animator. Take the frames yourself, then choose which pictures the video model moves. -->
+      <section class="bag flip" id="bag-4" data-tint="pink" aria-labelledby="bag-4-title">
+        <header class="bag-head">
+          <div class="bag-art" data-n="4" aria-hidden="true"></div>
+          <p class="bag-no">Bag 4 · The motion</p>
+          <h2 id="bag-4-title">You choose what moves.</h2>
+        </header>
+        <div class="bag-body">
+          <div class="bag-copy">
+            <p class="big">Twelve pictures make one second of film.</p>
+            <p>
+              Try it: every press takes one picture, and your hero moves on a little in between. That is how
+              films with toy bricks are made by hand.
+            </p>
+            <p>
+              In the app nobody has to. A video model brings to life the pictures you mark; the others stay as
+              pictures, with a slow camera move across them, which costs less.
+            </p>
+            <p class="note">
+              <b>For grown-ups</b> Before anything runs, Lanternist shows what the film will cost. Moving
+              pictures cost more, so you choose where they matter.
+            </p>
+          </div>
+          <div class="bag-stage">
+            <div class="animator panel" id="animator">
+              <canvas id="set-stage" aria-hidden="true"></canvas>
+              <div class="animator-bar">
+                <button class="brick red" id="snap" type="button">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <rect x="2" y="7" width="20" height="14" rx="3" fill="currentColor" />
+                    <rect x="8" y="4" width="8" height="4" rx="1.5" fill="currentColor" />
+                    <circle cx="12" cy="14" r="4.2" fill="#fff" />
+                    <circle cx="12" cy="14" r="2.4" fill="currentColor" />
+                  </svg>
+                  Take a picture
+                </button>
+                <button class="brick white" id="replay" type="button" disabled>Play it</button>
+                <span class="frames" id="frames" aria-live="polite">0 of 12 pictures</span>
+              </div>
+              <ol class="filmstrip" id="filmstrip" aria-label="Your pictures"></ol>
+              <button
+                class="lost"
+                type="button"
+                data-lost="3"
+                aria-label="A lost brick! Pick it up."
+              ></button>
+            </div>
+            <div class="movers">
+              <p class="movers-title">Which pictures move in the film below?</p>
+              <ol class="toggles" id="toggles"></ol>
+              <p class="tally" id="tally" aria-live="polite"></p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Bag 5: the mix, and the film itself on a television built of bricks. -->
+      <section class="bag film" id="bag-5" data-tint="night" aria-labelledby="bag-5-title">
+        <header class="bag-head">
+          <div class="bag-art" data-n="5" aria-hidden="true"></div>
+          <p class="bag-no">Bag 5 · The film</p>
+          <h2 id="bag-5-title">Then it all clicks together.</h2>
+        </header>
+        <div class="mix" id="mix" aria-label="What goes into the film">
+          <span class="layer" style="--c: var(--blue)">The pictures</span>
+          <span class="layer" style="--c: var(--red)">The voice</span>
+          <span class="layer" style="--c: var(--green)">The sounds</span>
+          <span class="layer" style="--c: var(--orange)">The words at the bottom</span>
+        </div>
+        <p class="mix-copy">
+          The voice goes over the pictures, and each moving picture keeps its own sound underneath. Inside a
+          paragraph the pictures cut; between paragraphs one melts into the next. The words go on, and the
+          sound is set so it's comfortable on a phone.
+        </p>
+        <div class="tv" id="tv">
+          <div class="tv-body">
+            <div class="tv-picture" id="tv-picture">
+              <div class="tv-screen">
+                <canvas id="film" aria-label="The Little Red Brick, a film built in bricks"></canvas>
+                <div class="tv-card" id="tv-start">
+                  <p class="tv-title" id="tv-title">The Little Red Brick</p>
+                  <p class="tv-meta">An adventure for ages 5 to 8 · 8 pictures · about a minute</p>
+                  <button class="brick red" id="play-big" type="button">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M7 4l13 8-13 8z" fill="currentColor" />
+                    </svg>
+                    Play the film
+                  </button>
+                </div>
+                <div class="tv-card" id="tv-end" hidden>
+                  <p class="tv-title">The End</p>
+                  <a class="brick yellow" href="#turn">Build your own</a>
+                  <button class="brick white" id="again" type="button">Watch again</button>
+                </div>
+              </div>
+              <p class="subs" id="subs" aria-live="polite">The words appear here as the story is told.</p>
+            </div>
+            <div class="tv-side" aria-hidden="true">
+              <span class="knob"></span>
+              <span class="knob"></span>
+              <span class="grille"></span>
+            </div>
+          </div>
+          <div class="tv-controls">
+            <button class="round big" id="play" type="button" aria-label="Play">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M7 4l13 8-13 8z" fill="currentColor" />
+              </svg>
+            </button>
+            <ol class="ticks" id="ticks" aria-label="Pictures"></ol>
+            <label class="field">
+              Language
+              <select id="film-lang">
+                <option value="en">English</option>
+                <option value="es">Español</option>
+                <option value="pt">Português</option>
+              </select>
+            </label>
+            <label class="check"><input type="checkbox" id="subs-on" checked /> Words</label>
+            <label class="check"><input type="checkbox" id="voice-on" /> Read aloud</label>
+            <button class="round" id="full" type="button" aria-label="Full screen">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.4"
+                />
+              </svg>
+            </button>
+          </div>
+        </div>
+        <p class="film-note">
+          This film was built by hand in bricks for this page, from the storyboard in bag 1. Films made in the
+          app are drawn by image models in the style you choose and narrated by a voice model.
+        </p>
+      </section>
+
+      <!-- The back of the box: the invitation, with the visitor's idea carried down from the top. -->
+      <section class="turn" id="turn" aria-labelledby="turn-title">
+        <div class="turn-art">
+          <canvas id="turn-art" aria-hidden="true"></canvas>
+          <p class="turn-idea" id="turn-idea"></p>
+        </div>
+        <div class="turn-copy">
+          <p class="kicker">Your turn</p>
+          <h2 id="turn-title">What will you build first?</h2>
+          <p>
+            Lanternist is opening to a small first group of families. Leave a grown-up's email and the story
+            you'd build first, and we'll write when there's a place for you.
+          </p>
+          <form class="join" id="join" novalidate>
+            <label for="join-idea">The story you'd build first</label>
+            <input id="join-idea" name="idea" maxlength="200" autocomplete="off" />
+            <label for="join-email">A grown-up's email</label>
+            <input
+              id="join-email"
+              name="email"
+              type="email"
+              maxlength="254"
+              autocomplete="email"
+              required
+              placeholder="you@example.com"
+            />
+            <label class="trap" aria-hidden="true"
+              >Leave this empty <input name="website" tabindex="-1" autocomplete="off"
+            /></label>
+            <button class="brick red" type="submit">Ask for an invitation</button>
+            <p class="status" id="join-status" role="status"></p>
+            <p class="fine">
+              We use the email only to invite you, and delete it whenever you ask at
+              <a href="mailto:hello@lanternist.dev">hello@lanternist.dev</a>.
+            </p>
+          </form>
+        </div>
+      </section>
+
+      <section class="grownups" id="grown-ups" aria-labelledby="gu-title">
+        <h2 id="gu-title">For grown-ups</h2>
+        <p class="gu-lede">The small print on the side of the box, in big letters.</p>
+        <dl class="gu">
+          <div>
+            <dt>Made for their age</dt>
+            <dd>
+              You choose who the story is for. For toddlers: very simple words, gentle repetition and nothing
+              scary at all. For ages 5 to 8: mild peril at most, and always a kind ending.
+            </dd>
+          </div>
+          <div>
+            <dt>You read it first</dt>
+            <dd>
+              The whole story is written before a single picture is drawn. Read it, change any line, then make
+              the film. Change one scene later and only that scene is made again.
+            </dd>
+          </div>
+          <div>
+            <dt>Bedtime, winding down</dt>
+            <dd>A bedtime story slows down in its last third and winds gently toward sleep.</dd>
+          </div>
+          <div>
+            <dt>In your language</dt>
+            <dd>
+              Stories are written and read aloud in English, Spanish, Portuguese, French, German, Italian,
+              Russian, Chinese, Japanese and Korean, with the words on screen.
+            </dd>
+          </div>
+          <div>
+            <dt>The price first</dt>
+            <dd>
+              You buy credits. Before anything runs, Lanternist shows what the film will cost, and afterwards
+              it charges only for the steps that ran.
+            </dd>
+          </div>
+          <div>
+            <dt>Nothing to install</dt>
+            <dd>
+              A phone, a tablet or a computer is enough. Lanternist runs the models for you: there's no
+              graphics card or keys to bring.
+            </dd>
+          </div>
+        </dl>
+        <button class="lost" type="button" data-lost="4" aria-label="A lost brick! Pick it up."></button>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <p>Built from toy bricks, a few models and a lot of clicking. © 2026 Lanternist</p>
+      <p>
+        Two more ways in: <a href="../">the paper lantern show</a> · <a href="../studio/">the night crew</a>
+      </p>
+    </footer>
+    <p class="toast" id="toast" role="status"></p>
+  </body>
+</html>

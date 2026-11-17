@@ -389,7 +389,7 @@ A lawyer reviews this section before Phase I (#29). The business is in the US (d
 - **Model pickers** show locked models with the plan that unlocks them.
 - **A Billing page:** the plan, the credit packs, the Customer Portal, and the history (ledger rows, one line per job, not per step).
 - **What the hosted edition leaves out:** the key rows and the local-engine rows on the Settings page, the doctor's GPU rows, and voice uploads. `/api/options` says which edition it is, so the web app reads it rather than guessing.
-- **The landing page** is a separate static site. The app itself stays a static React build served by FastAPI, as the blueprint decided.
+- **The landing page** is a separate static site, `site/`, on Cloudflare at lanternist.dev. Until sign-up opens, it keeps its own invitation list. The app itself stays a static React build served by FastAPI, as the blueprint decided.
 - **Language.** The app's own words are English today. The stories are in any language, but the users we expect speak Spanish and Portuguese. Translating the interface is decision 7.
 
 ### 1.13 Tests
@@ -567,7 +567,7 @@ On Stripe Managed Payments (decision 2), once it's on for Monsoft's account (#31
 - [ ] fal's written answer on the service-bureau clause, and a raised concurrency limit.
 - [ ] OpenRouter's capped runtime key; the real C2PA certificate.
 - [ ] Account deletion (definition of done 8).
-- [ ] The landing page; open sign-up.
+- [ ] The landing page (built in `site/`, with an invitation list until then); open sign-up.
 
 **Exit:**
 - [ ] Items 1–10 of the definition of done, on production.

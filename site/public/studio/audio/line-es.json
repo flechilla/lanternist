@@ -1,0 +1,22 @@
+[
+  { "text": "En", "start": 0.0, "end": 0.08 },
+  { "text": "una", "start": 0.14, "end": 0.32 },
+  { "text": "roca,", "start": 0.4, "end": 1.2 },
+  { "text": "a", "start": 1.24, "end": 1.28 },
+  { "text": "la", "start": 1.333, "end": 1.44 },
+  { "text": "orilla", "start": 1.493, "end": 1.76 },
+  { "text": "del", "start": 1.8, "end": 1.92 },
+  { "text": "mar,", "start": 2.02, "end": 2.72 },
+  { "text": "había", "start": 2.8, "end": 3.2 },
+  { "text": "un", "start": 3.253, "end": 3.36 },
+  { "text": "faro,", "start": 3.44, "end": 4.32 },
+  { "text": "y", "start": 4.36, "end": 4.4 },
+  { "text": "en", "start": 4.453, "end": 4.56 },
+  { "text": "él", "start": 4.693, "end": 4.96 },
+  { "text": "vivía", "start": 5.04, "end": 5.44 },
+  { "text": "una", "start": 5.5, "end": 5.68 },
+  { "text": "gatita", "start": 5.72, "end": 6.08 },
+  { "text": "gris", "start": 6.144, "end": 6.4 },
+  { "text": "llamada", "start": 6.464, "end": 6.96 },
+  { "text": "Luna.", "start": 7.072, "end": 7.6 }
+]

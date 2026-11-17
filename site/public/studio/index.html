@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Lanternist · The night crew</title>
+    <meta
+      name="description"
+      content="Give Lanternist one line and it makes a narrated story film. A crew of clay mice in a lighthouse shows you how: the writer, the voice, the painter, the animator and the mix."
+    />
+    <meta property="og:title" content="Lanternist · The night crew" />
+    <meta
+      property="og:description"
+      content="Every night, in a lighthouse at the edge of the sea, a small crew turns one line into a film."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="https://lanternist.dev/studio/poster.jpg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="theme-color" content="#070d17" />
+    <meta name="color-scheme" content="dark" />
+    <link rel="icon" type="image/svg+xml" href="../lantern.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&family=Figtree:wght@400;500;600;700&family=IM+Fell+Double+Pica:ital@0;1&family=IM+Fell+Double+Pica+SC&display=swap"
+    />
+    <link rel="stylesheet" href="studio.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/+esm",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/",
+          "three/examples/jsm/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/",
+          "postprocessing": "https://cdn.jsdelivr.net/npm/postprocessing@6.39.5/build/index.min.js",
+          "n8ao": "https://cdn.jsdelivr.net/npm/n8ao@2.0.1/dist/N8AO.min.js"
+        }
+      }
+    </script>
+    <script>
+      // Before the set has loaded: a visitor who has seen the opening goes straight in, and Skip works at once.
+      try {
+        if (localStorage.getItem("lanternist-crew-seen") && !location.search.includes("opening"))
+          document.documentElement.dataset.skip = "1";
+      } catch {
+        // Storage can be off in a private window; the opening then plays.
+      }
+      addEventListener(
+        "click",
+        (e) => e.target.id === "skip" && (document.documentElement.dataset.skip = "1"),
+      );
+    </script>
+    <script type="module" src="main.js"></script>
+  </head>
+  <body>
+    <canvas id="set" aria-hidden="true"></canvas>
+    <div class="grain" aria-hidden="true"></div>
+
+    <div class="opening" id="opening" role="dialog" aria-labelledby="opening-title">
+      <div class="opening-card">
+        <p class="sc">Lanternist presents</p>
+        <h1 id="opening-title">The night crew</h1>
+        <p class="opening-line">A short film about how one line becomes a story. Made in clay.</p>
+        <button class="btn lamp" id="strike" type="button" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M5 20L16 9" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" />
+            <path
+              d="M17.5 3.5c2.5 2 2.8 4.6.8 6.4-1.7 1.5-4.4 1-5.3-1.2-.8-2 .8-3.2 1.6-5.2.6 1 1.6 1.2 2.9 0z"
+              fill="currentColor"
+            />
+          </svg>
+          <span id="strike-label">Setting up the lights…</span>
+        </button>
+        <p class="opening-small">
+          The film has sound. <button class="link" id="skip" type="button">Skip to the studio</button>
+        </p>
+      </div>
+      <p class="opening-foot" id="opening-foot" hidden></p>
+      <div class="title-card" id="title-card" hidden>
+        <p class="tc-name">Lanternist</p>
+        <p class="tc-line">Give it one line. It puts on the show.</p>
+      </div>
+    </div>
+
+    <header class="bar" id="bar">
+      <a class="mark" href="#lamp" aria-label="Lanternist, back to the lamp room">
+        <svg viewBox="0 0 32 32" aria-hidden="true">
+          <rect x="3" y="6" width="26" height="20" rx="3" fill="#7B5230" />
+          <circle cx="16" cy="16" r="7.5" fill="#F0B14A" />
+          <circle cx="16" cy="16" r="4" fill="#FFE2A8" />
+        </svg>
+        <span>Lanternist</span>
+      </a>
+      <span class="counter" aria-hidden="true">frame <b id="frame">000000</b></span>
+      <span class="stars" id="stars" title="Seven paper stars are hidden in the lighthouse. Find them."
+        ><svg viewBox="-12 -12 24 24" aria-hidden="true">
+          <path d="M0-11L3.2-3.4 11-3.4 4.8 1.6 7 9.6 0 5 -7 9.6 -4.8 1.6 -11-3.4 -3.2-3.4Z" /></svg
+        ><b id="stars-n">0</b>/7</span
+      >
+      <p class="toast" id="toast" role="status"></p>
+      <button class="sound" id="sound" type="button" aria-pressed="false">Sound off</button>
+      <a class="btn lamp small" href="#turn">Get an invitation</a>
+    </header>
+
+    <nav class="floors" aria-label="Floors of the lighthouse"><ol id="floors"></ol></nav>
+    <p class="film-subs" id="film-subs"></p>
+    <video
+      class="film"
+      id="film"
+      crossorigin="anonymous"
+      playsinline
+      preload="none"
+      aria-label="Luna and the Lamp"
+    ></video>
+
+    <main id="page">
+      <section class="chapter" id="lamp" data-shot="lamp" data-side="left" aria-labelledby="lamp-title">
+        <div class="panel hero">
+          <p class="eyebrow">A magic lantern for your stories</p>
+          <h1 id="lamp-title">Give it one line. It&nbsp;puts on the&nbsp;show.</h1>
+          <p class="lede">
+            Lanternist turns an idea into a narrated film. It writes the story, reads it aloud in your
+            language, draws every scene with the same cast, and sets the moments you choose in motion.
+          </p>
+          <form class="idea" id="idea-form">
+            <label for="idea">Your idea, in one line</label>
+            <div class="idea-row">
+              <input
+                id="idea"
+                name="idea"
+                maxlength="120"
+                autocomplete="off"
+                placeholder="A lighthouse cat afraid of the dark"
+              />
+              <button class="btn lamp" type="submit">Light it</button>
+            </div>
+            <div class="chips" aria-label="Or try one of these">
+              <button type="button" class="chip">A dragon who collects lost socks</button>
+              <button type="button" class="chip">A robot learning to whistle</button>
+              <button type="button" class="chip" lang="es">Un zorro que le teme a la nieve</button>
+              <button type="button" class="chip" lang="pt">Uma baleia que canta para as estrelas</button>
+            </div>
+            <p class="said" id="idea-said" role="status"></p>
+          </form>
+          <a class="down" href="#writer"><span aria-hidden="true">↓</span> Go down and meet the crew</a>
+        </div>
+      </section>
+
+      <section class="chapter" id="writer" data-shot="writer" data-side="left" aria-labelledby="writer-title">
+        <div class="panel">
+          <p class="floor-tag"><b>Quill</b>, the writer</p>
+          <h2 id="writer-title">Every film starts as one line.</h2>
+          <p>
+            Quill turns your idea into a story, then into a storyboard: who is in it, where it happens, and a
+            list of shots. Each paragraph is cut on its sentences into one to three shots, the way an editor
+            would: a wide shot, then a close one.
+          </p>
+          <p>
+            The story is written in its own language. The notes for the pictures stay in English, which
+            picture models follow best. Pick a language and Quill types it again.
+          </p>
+          <div class="langs" id="langs" role="group" aria-label="The story's language"></div>
+          <article class="page-card" id="script" aria-live="polite"></article>
+          <p class="aside">In the app, Quill is a language model.</p>
+        </div>
+      </section>
+
+      <section class="chapter" id="voice" data-shot="voice" data-side="right" aria-labelledby="voice-title">
+        <div class="panel">
+          <p class="floor-tag"><b>Echo</b>, the voice</p>
+          <h2 id="voice-title">The voice comes first.</h2>
+          <p>
+            Echo records the narration before anything is drawn, so each picture stays on screen exactly as
+            long as its words. Spanish is read a little slower than English, and the shots stretch to fit.
+          </p>
+          <p>Put on a record to hear the first line of Luna's story in any of ten languages.</p>
+          <div class="records" id="records" role="group" aria-label="Records, one for each language"></div>
+          <p class="line" id="line" aria-live="polite"></p>
+          <p class="aside">In the app, Echo is a voice model. These recordings were made by one.</p>
+        </div>
+      </section>
+
+      <section class="chapter" id="paint" data-shot="paint" data-side="left" aria-labelledby="paint-title">
+        <div class="panel">
+          <p class="floor-tag"><b>Dab</b>, the painter</p>
+          <h2 id="paint-title">Everyone looks like themselves, every time.</h2>
+          <p>
+            Dab paints a cast sheet first, then every picture from the portraits of the characters in it. Luna
+            keeps her grey coat and her amber eyes from the first shot to the last.
+          </p>
+          <p>Choose a style, and Dab paints the cast in it.</p>
+          <div class="styles" id="styles" role="group" aria-label="Picture styles"></div>
+          <p>
+            Don't like a picture? Draw it again. The other pictures stay as they are.
+            <button class="btn ghost small" id="redraw" type="button">Draw it again</button>
+          </p>
+          <p class="aside" id="paint-aside">In the app, Dab is an image model.</p>
+        </div>
+      </section>
+
+      <section
+        class="chapter"
+        id="motion"
+        data-shot="motion"
+        data-side="right"
+        aria-labelledby="motion-title"
+      >
+        <div class="panel">
+          <p class="floor-tag"><b>Nudge</b>, the animator</p>
+          <h2 id="motion-title">You choose which scenes move.</h2>
+          <p>
+            Nudge moves Luna by hand, a frame at a time: twelve frames for every second of film. Try it. Each
+            press of the shutter takes one frame, and Nudge moves her on a little.
+          </p>
+          <div class="shutter-row">
+            <button class="btn lamp" id="shutter" type="button">Take a frame</button>
+            <span class="frames" id="frames" aria-live="polite">0 of 12 frames</span>
+          </div>
+          <p>
+            In the app, a video model moves the shots you mark, so nobody has to. The rest stay pictures with
+            a slow camera move across them, and cost less.
+          </p>
+        </div>
+      </section>
+
+      <section class="chapter" id="mix" data-shot="mix" data-side="left" aria-labelledby="mix-title">
+        <div class="panel">
+          <p class="floor-tag"><b>Splice</b>, the editor</p>
+          <h2 id="mix-title">Then it is all put together.</h2>
+          <p>
+            Splice lays the narration over the pictures and sets each moving shot's own sound under the voice.
+            Shots cut inside a paragraph and dissolve between paragraphs. Subtitles go on, and the whole film
+            is levelled to −16&nbsp;LUFS, easy on a phone speaker.
+          </p>
+          <div class="desk" id="desk">
+            <button class="btn lamp" id="mix-play" type="button" aria-pressed="false">Play the mix</button>
+            <label class="fader"
+              >Voice <input type="range" id="fader-voice" min="0" max="100" value="80"
+            /></label>
+            <label class="fader"
+              >Sea <input type="range" id="fader-sea" min="0" max="100" value="45"
+            /></label>
+            <output class="lufs" id="lufs" for="fader-voice fader-sea">−16 LUFS</output>
+          </div>
+          <p>
+            Change one scene later, and only that scene and the mix are made again. The rest comes from the
+            cache.
+          </p>
+        </div>
+      </section>
+
+      <section class="chapter" id="show" data-shot="cinema" data-side="center" aria-labelledby="show-title">
+        <div class="panel show-panel">
+          <p class="eyebrow">Tonight's film</p>
+          <h2 id="show-title">Luna and the Lamp</h2>
+          <p class="meta">A bedtime story for ages 5 to 8 · 7 shots · about a minute</p>
+          <div class="show-row">
+            <button class="btn lamp" id="play" type="button">Play the film</button>
+            <label class="ctl-field">
+              Language
+              <select id="film-lang">
+                <option value="en">English</option>
+                <option value="es">Español</option>
+                <option value="pt">Português</option>
+              </select>
+            </label>
+            <label class="ctl-check"><input type="checkbox" id="subs-on" checked /> Subtitles</label>
+            <button class="btn ghost small" id="full" type="button">Full screen</button>
+          </div>
+          <p class="aside" id="film-note">
+            Lanternist made this film from the storyboard on the writer's floor: a voice model read it, an
+            image model drew it in clay from one cast sheet, and the app timed and mixed it.
+          </p>
+        </div>
+      </section>
+
+      <section class="chapter" id="turn" data-shot="jetty" data-side="left" aria-labelledby="turn-title">
+        <div class="panel">
+          <p class="eyebrow">Your turn</p>
+          <h2 id="turn-title">What will you put on the screen?</h2>
+          <p>
+            Lanternist is opening to a small first audience. Post your email and the film you'd make first,
+            and we'll write when there's a seat for you.
+          </p>
+          <form class="letter" id="join" novalidate>
+            <label for="join-idea">Your first film</label>
+            <input
+              id="join-idea"
+              name="idea"
+              maxlength="200"
+              autocomplete="off"
+              placeholder="A lighthouse cat afraid of the dark"
+            />
+            <label for="join-email">Your email</label>
+            <input
+              id="join-email"
+              name="email"
+              type="email"
+              maxlength="254"
+              autocomplete="email"
+              required
+              placeholder="you@example.com"
+            />
+            <label class="trap" aria-hidden="true"
+              >Leave this empty <input name="website" tabindex="-1" autocomplete="off"
+            /></label>
+            <button class="btn lamp" type="submit">Post it</button>
+            <p class="status" id="join-status" role="status"></p>
+            <p class="fine">
+              We use your email only to invite you, and delete it whenever you ask at
+              <a href="mailto:hello@lanternist.dev">hello@lanternist.dev</a>.
+            </p>
+          </form>
+        </div>
+      </section>
+
+      <section class="notes" id="notes" data-shot="night" data-side="center" aria-labelledby="notes-title">
+        <h2 id="notes-title">The lanternist's notes</h2>
+        <dl>
+          <div>
+            <dt>What do I need?</dt>
+            <dd>
+              A phone or a computer. Lanternist runs the models for you, so there's nothing to install and no
+              graphics card or API keys to bring.
+            </dd>
+          </div>
+          <div>
+            <dt>What does a film cost?</dt>
+            <dd>
+              You buy credits. Before anything runs, Lanternist shows what the film will cost, and afterwards
+              it charges only for the steps that ran.
+            </dd>
+          </div>
+          <div>
+            <dt>Can I change things?</dt>
+            <dd>
+              Every line of the script, every picture, which shots move, the narrator's voice and the style.
+              Changing one scene makes only that scene again.
+            </dd>
+          </div>
+          <div>
+            <dt>Which languages?</dt>
+            <dd>
+              Stories are written and narrated in English, Spanish, Portuguese, French, German, Italian,
+              Russian, Chinese, Japanese and Korean.
+            </dd>
+          </div>
+        </dl>
+        <footer class="foot">
+          <p>Made of clay, light and a few models. © 2026</p>
+          <p>
+            <button class="link" id="replay" type="button">Watch the opening again</button> ·
+            <a href="../">See the paper lantern show</a>
+          </p>
+        </footer>
+      </section>
+    </main>
+  </body>
+</html>
