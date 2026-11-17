@@ -3,11 +3,12 @@ Luna's film. These tests keep the copies in step with the app."""
 
 import re
 from pathlib import Path
+from typing import get_args
 
 from lanternist import storyboard, text, writer
 
 PUBLIC = Path(__file__).parent.parent / "site" / "public"
-STORY = (PUBLIC / "story.js").read_text()
+STORY = (PUBLIC / "story.js").read_text(encoding="utf-8")
 
 
 def _object(name: str) -> dict[str, str]:
@@ -33,7 +34,7 @@ def test_the_site_rerolls_like_the_app() -> None:
 
 
 def test_the_studio_paints_the_apps_styles() -> None:
-    rooms = (PUBLIC / "studio" / "rooms.js").read_text()
+    rooms = (PUBLIC / "studio" / "rooms.js").read_text(encoding="utf-8")
     body = re.search(r"export const STYLES = \[(.*?)\];", rooms, re.DOTALL)
     assert body, "rooms.js has no STYLES"
     assert re.findall(r'\["(\w+)",', body.group(1)) == list(writer.STYLES)
@@ -45,7 +46,7 @@ def test_every_style_has_its_cast_sheets() -> None:
 
 
 def test_the_brick_page_offers_the_apps_choices() -> None:
-    page = (PUBLIC / "bricks" / "index.html").read_text()
+    page = (PUBLIC / "bricks" / "index.html").read_text(encoding="utf-8")
     styles = re.search(r'<ul class="styles"[^>]*>(.*?)</ul>', page, re.DOTALL)
     assert styles, "the brick page lists no picture styles"
     assert len(re.findall(r"<li>", styles.group(1))) == len(writer.STYLES)
@@ -57,7 +58,34 @@ def test_the_brick_page_offers_the_apps_choices() -> None:
 
 
 def test_the_brick_page_reads_its_first_line_in_every_language() -> None:
-    tale = (PUBLIC / "bricks" / "tale.js").read_text()
+    tale = (PUBLIC / "bricks" / "tale.js").read_text(encoding="utf-8")
     body = re.search(r"export const FIRST_LINE = \{(.*?)\n\};", tale, re.DOTALL)
     assert body, "tale.js has no FIRST_LINE"
     assert re.findall(r"^  (\w+):", body.group(1), re.MULTILINE) == list(text.LANGUAGES)
+
+
+def test_the_shots_move_as_the_app_names_it() -> None:
+    stage = (PUBLIC / "stage.js").read_text(encoding="utf-8")
+    camera = re.search(r"const CAMERA = \{(.*?)\n\};", stage, re.DOTALL)
+    assert camera, "stage.js has no CAMERA"
+    assert set(re.findall(r"^  (\w+):", camera.group(1), re.MULTILINE)) == set(
+        get_args(storyboard.Camera)
+    ) - {"auto"}
+    for shots in (STORY, (PUBLIC / "bricks" / "tale.js").read_text(encoding="utf-8")):
+        assert set(re.findall(r'^    camera: "(\w+)"', shots, re.MULTILINE)) <= set(
+            get_args(storyboard.Camera)
+        )
+        assert set(re.findall(r'^    mode: "(\w+)"', shots, re.MULTILINE)) <= set(get_args(storyboard.Mode))
+
+
+def test_the_lantern_show_counts_the_apps_choices() -> None:
+    facts = re.search(
+        r'<ul class="facts">(.*?)</ul>', (PUBLIC / "index.html").read_text(encoding="utf-8"), re.DOTALL
+    )
+    assert facts, "index.html lists no facts"
+    numbers = {"Five": 5, "Six": 6, "Ten": 10}
+    counts = [
+        numbers[n]
+        for n in re.findall(r"<b>(\w+)</b> (?:narration languages|picture styles|audiences)", facts.group(1))
+    ]
+    assert counts == [len(text.LANGUAGES), len(writer.STYLES), len(writer.AUDIENCES)]

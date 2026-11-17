@@ -7,6 +7,7 @@ import * as THREE from "three";
 import { calm, studio } from "./engine.js";
 import { foley } from "./foley.js";
 import { opening } from "./intro.js";
+import { join } from "../join.js";
 import { rig } from "./rig.js";
 import { hideStars } from "./stars.js";
 import { buildRooms, HOP, scriptFor, STYLES } from "./rooms.js";
@@ -622,34 +623,15 @@ ctx.onFilm = () => {
 };
 
 // The jetty: the invitation, posted.
-const join = $("#join");
-const status = $("#join-status");
+const form = $("#join");
 ctx.onPost = () => $("#join-email").focus();
-join.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const data = Object.fromEntries(new FormData(join));
-  status.className = "status";
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) {
-    status.classList.add("err");
-    status.textContent = "That email address looks incomplete. Check it and try again.";
-    return;
-  }
-  status.textContent = "Posting…";
-  try {
-    const res = await fetch("/api/waitlist", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ...data, lang: navigator.language }),
-    });
-    if (!res.ok) throw new Error(String(res.status));
-    status.classList.add("ok");
-    status.textContent = `Posted. We'll write to ${data.email} when there's a seat for you.`;
+join(form, $("#join-status"), {
+  sending: "Posting…",
+  sent: (email) => `Posted. We'll write to ${email} when there's a seat for you.`,
+  after: () => {
     rooms.jetty?.post(s?.frame ?? 0);
-    join.reset();
-  } catch {
-    status.classList.add("err");
-    status.textContent = "That didn't reach us. Try again in a minute.";
-  }
+    form.reset();
+  },
 });
 
 /* ---------- sound ---------- */

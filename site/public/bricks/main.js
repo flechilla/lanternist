@@ -9,6 +9,7 @@ import { BRICK, HEROES, PICKLE_ASLEEP, PLACES, ROCKET, WISHES, face, ground } fr
 import { Film, picture } from "./film.js";
 import { CAST, FIRST_LINE, PARAGRAPHS, PLACE, SHOTS, TITLE, seconds } from "./tale.js";
 import { LANGUAGES } from "../story.js";
+import { join as invite } from "../join.js";
 import { sound } from "./sound.js";
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -1096,34 +1097,14 @@ function backOfTheBox() {
   drawBox(s, 0, { done: true });
   whileSeen($("#turn-art"), () => drawBox(s, ++t, { done: true }));
 
-  const form = $("#join");
-  const status = $("#join-status");
-  form.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const data = Object.fromEntries(new FormData(form));
-    status.className = "status";
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) {
-      status.classList.add("err");
-      status.textContent = "That email address looks incomplete. Check it and try again.";
-      return;
-    }
-    status.textContent = "Sending…";
-    try {
-      const res = await fetch("/api/waitlist", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ ...data, lang: navigator.language }),
-      });
-      if (!res.ok) throw new Error(String(res.status));
-      status.classList.add("ok");
-      status.textContent = `Sent! We'll write to ${data.email} when there's a place for you.`;
+  invite($("#join"), $("#join-status"), {
+    sending: "Sending…",
+    sent: (email) => `Sent! We'll write to ${email} when there's a place for you.`,
+    after: () => {
       $("#join-email").value = "";
       confetti();
       sound.play("fanfare");
-    } catch {
-      status.classList.add("err");
-      status.textContent = "That didn't reach us. Try again in a minute.";
-    }
+    },
   });
 }
 

@@ -6,6 +6,7 @@
 import { boat, critter, hand, magicLantern, scissors, tomas } from "./art.js";
 import { HOLD, LOOP, SCENES } from "./scenes.js";
 import { describe, slide, title } from "./sketch.js";
+import { join } from "./join.js";
 import { SHOT_MOODS, sound } from "./sound.js";
 import { calm, drop, FPS, noise, onFrame, seek, stage, watch } from "./stage.js";
 import { CAST, cues, LANGUAGES, nextSeed, SEED, seconds, SHOTS, TITLE } from "./story.js";
@@ -881,32 +882,11 @@ for (const section of document.querySelectorAll("[data-mood]")) {
 
 /* ---------- the invitation ---------- */
 
-const join = $("#join");
-const status = $("#join-status");
-join.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const data = Object.fromEntries(new FormData(join));
-  status.className = "status";
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) {
-    status.classList.add("err");
-    status.textContent = "That email address looks incomplete. Check it and try again.";
-    return;
-  }
-  status.textContent = "Sending…";
-  try {
-    const res = await fetch("/api/waitlist", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ...data, lang: navigator.language }),
-    });
-    if (!res.ok) throw new Error(String(res.status));
-    status.classList.add("ok");
-    status.textContent = `You're on the list. We'll write to ${data.email} when there's a seat for you.`;
-    join.reset();
-  } catch {
-    status.classList.add("err");
-    status.textContent = "That didn't reach us. Try again in a minute.";
-  }
+const form = $("#join");
+join(form, $("#join-status"), {
+  sending: "Sending…",
+  sent: (email) => `You're on the list. We'll write to ${email} when there's a seat for you.`,
+  after: () => form.reset(),
 });
 
 /* ---------- first paint ---------- */

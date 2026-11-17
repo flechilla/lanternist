@@ -63,14 +63,15 @@ Deploy it (the domain is on Cloudflare):
 
 ```bash
 cd site
-wrangler deploy                            # the first time, this creates the database and writes its id here
-wrangler d1 migrations apply DB --remote   # right after the first deploy: until then the form can't save
+wrangler d1 migrations apply DB --remote   # first, when migrations/ has a new file: until then the form can't save
+wrangler deploy
 ```
 
-Read the list:
+Read the list, and delete an address when its owner asks (the pages promise it, at hello@lanternist.dev):
 
 ```bash
 wrangler d1 execute DB --remote --command "SELECT email, idea, lang, created_at FROM waitlist ORDER BY created_at"
+wrangler d1 execute DB --remote --command "DELETE FROM waitlist WHERE email = 'someone@example.com'"
 ```
 
 To move to another domain, change `routes` in `wrangler.jsonc` and the `og:image` addresses in
